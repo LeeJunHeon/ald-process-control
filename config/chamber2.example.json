@@ -1,0 +1,388 @@
+{
+  "chamber": {
+    "id": "ald2",
+    "name": "ALD-2",
+    "subtitle": "챔버 2"
+  },
+  "server": {
+    "host": "127.0.0.1",
+    "port": 8002
+  },
+  "ui": {
+    "theme": "dark",
+    "accent": "#5b3a94",
+    "window": {
+      "side": "right"
+    }
+  },
+  "plc": {
+    "ip": "192.168.10.22",
+    "port": 502,
+    "unit_id": 1,
+    "poll_ms": 200,
+    "heartbeat_s": 1.0,
+    "timeout_s": 3.0
+  },
+  "demo": {
+    "enabled": true,
+    "scenario": "idle",
+    "sample": {
+      "name": "HfO2_TDMAHf-H2O_250C",
+      "memo": "TDMAHf/H2O 250 °C 표준",
+      "film": "HfO2",
+      "precursor_line": "P1",
+      "precursor_mode": "carrier",
+      "reactant_line": "R1",
+      "reactant_mode": "vapor",
+      "carrier_sccm": 50,
+      "stage_sv": 250,
+      "soak_min": 10,
+      "throttle_pct": 35,
+      "cycles": 200,
+      "pre_purge_s": 60,
+      "post_purge_s": 120,
+      "pulse_p_s": 0.5,
+      "purge1_s": 20,
+      "pulse_r_s": 0.1,
+      "purge2_s": 20
+    }
+  },
+  "modes": {
+    "vapor": {
+      "label": "증기압",
+      "open": [
+        "OUT",
+        "BYP",
+        "ALD"
+      ],
+      "kinds": [
+        "canister"
+      ]
+    },
+    "carrier": {
+      "label": "캐리어",
+      "open": [
+        "IN",
+        "OUT",
+        "ALD"
+      ],
+      "kinds": [
+        "canister"
+      ]
+    },
+    "direct": {
+      "label": "직공급",
+      "open": [
+        "ALD"
+      ],
+      "kinds": [
+        "n2",
+        "gas"
+      ]
+    }
+  },
+  "lines": [
+    {
+      "id": "PN",
+      "kind": "n2",
+      "side": "precursor",
+      "enabled": true,
+      "label": "전구체측 N2",
+      "material": "N2",
+      "heated": false,
+      "mfc": {
+        "full_scale": 500,
+        "gas": "N2",
+        "purge_sccm": 100
+      },
+      "valves": {
+        "ALD": "PN-ALD"
+      }
+    },
+    {
+      "id": "P1",
+      "kind": "canister",
+      "side": "precursor",
+      "enabled": true,
+      "label": "TDMAHf 캐리어",
+      "material": "TDMAHf",
+      "heated": true,
+      "mfc": {
+        "full_scale": 500,
+        "gas": "N2"
+      },
+      "valves": {
+        "IN": "P1-IN",
+        "OUT": "P1-OUT",
+        "ALD": "P1-ALD"
+      }
+    },
+    {
+      "id": "P2",
+      "kind": "canister",
+      "side": "precursor",
+      "enabled": true,
+      "label": "TEMAZr 캐리어",
+      "material": "TEMAZr",
+      "heated": false,
+      "mfc": {
+        "full_scale": 500,
+        "gas": "N2"
+      },
+      "valves": {
+        "IN": "P2-IN",
+        "OUT": "P2-OUT",
+        "BYP": "P2-BYP",
+        "ALD": "P2-ALD"
+      }
+    },
+    {
+      "id": "P3",
+      "kind": "canister",
+      "side": "precursor",
+      "enabled": false,
+      "label": "",
+      "material": "",
+      "heated": false,
+      "mfc": {
+        "full_scale": 500,
+        "gas": "N2"
+      },
+      "valves": {
+        "IN": "P3-IN",
+        "OUT": "P3-OUT",
+        "ALD": "P3-ALD"
+      }
+    },
+    {
+      "id": "RN",
+      "kind": "n2",
+      "side": "reactant",
+      "enabled": true,
+      "label": "반응물측 N2",
+      "material": "N2",
+      "heated": false,
+      "mfc": {
+        "full_scale": 500,
+        "gas": "N2",
+        "purge_sccm": 100
+      },
+      "valves": {
+        "ALD": "RN-ALD"
+      }
+    },
+    {
+      "id": "R1",
+      "kind": "canister",
+      "side": "reactant",
+      "enabled": true,
+      "label": "H2O 캐리어",
+      "material": "H2O",
+      "heated": false,
+      "mfc": {
+        "full_scale": 500,
+        "gas": "N2"
+      },
+      "valves": {
+        "IN": "R1-IN",
+        "OUT": "R1-OUT",
+        "BYP": "R1-BYP",
+        "ALD": "R1-ALD"
+      }
+    },
+    {
+      "id": "R2",
+      "kind": "gas",
+      "side": "reactant",
+      "enabled": true,
+      "label": "O3 발생기 공급",
+      "material": "O3",
+      "heated": false,
+      "generator": "O3 발생기",
+      "mfc": {
+        "full_scale": 1000,
+        "gas": "O2"
+      },
+      "valves": {
+        "ALD": "R2-ALD"
+      }
+    }
+  ],
+  "process": {
+    "always_open": [
+      "PN-ALD",
+      "RN-ALD"
+    ]
+  },
+  "chamber_io": {
+    "vent": {
+      "tag": "VENT",
+      "label": "Vent N2"
+    },
+    "rv": {
+      "tag": "RV",
+      "label": "러핑 밸브"
+    },
+    "tv": {
+      "tag": "TV",
+      "label": "스로틀 밸브"
+    },
+    "dry_pump": {
+      "label": "Dry pump"
+    },
+    "hot_trap": {
+      "label": "Hot trap"
+    }
+  },
+  "gauges": {
+    "baratron": {
+      "label": "Baratron",
+      "unit": "Torr",
+      "note": "공정"
+    },
+    "convectron": {
+      "label": "Convectron",
+      "unit": "Torr",
+      "note": ""
+    }
+  },
+  "stage_heater": "stage",
+  "heaters": [
+    {
+      "id": "stage",
+      "label": "Stage",
+      "default_sv": 250,
+      "max": 450,
+      "dev_warn": 3.0,
+      "stable_band": 1.0,
+      "stable_sec": 60,
+      "enabled": true
+    },
+    {
+      "id": "wall",
+      "label": "Chamber wall",
+      "default_sv": 150,
+      "max": 200,
+      "dev_warn": 5.0,
+      "stable_band": 2.0,
+      "stable_sec": 60,
+      "enabled": true
+    },
+    {
+      "id": "lid",
+      "label": "Lid",
+      "default_sv": 150,
+      "max": 200,
+      "dev_warn": 5.0,
+      "stable_band": 2.0,
+      "stable_sec": 60,
+      "enabled": true
+    },
+    {
+      "id": "pline",
+      "label": "Precursor line",
+      "default_sv": 120,
+      "max": 150,
+      "dev_warn": 5.0,
+      "enabled": true
+    },
+    {
+      "id": "rline",
+      "label": "Reactant line",
+      "default_sv": 110,
+      "max": 150,
+      "dev_warn": 5.0,
+      "enabled": true
+    },
+    {
+      "id": "canP1",
+      "label": "P1 캐니스터",
+      "line": "P1",
+      "default_sv": 75,
+      "max": 100,
+      "dev_warn": 2.0,
+      "stable_band": 0.5,
+      "stable_sec": 120,
+      "enabled": true
+    },
+    {
+      "id": "canP2",
+      "label": "P2 캐니스터",
+      "line": "P2",
+      "default_sv": 0,
+      "max": 100,
+      "dev_warn": 2.0,
+      "stable_band": 0.5,
+      "stable_sec": 120,
+      "enabled": false
+    },
+    {
+      "id": "canP3",
+      "label": "P3 캐니스터",
+      "line": "P3",
+      "default_sv": 0,
+      "max": 100,
+      "dev_warn": 2.0,
+      "enabled": false
+    },
+    {
+      "id": "hottrap",
+      "label": "Hot trap",
+      "default_sv": 180,
+      "max": 250,
+      "dev_warn": 5.0,
+      "enabled": true
+    },
+    {
+      "id": "pumpline",
+      "label": "Pumping line",
+      "default_sv": 120,
+      "max": 150,
+      "dev_warn": 5.0,
+      "enabled": true
+    }
+  ],
+  "interlocks": [
+    {
+      "id": "air",
+      "label": "공압"
+    },
+    {
+      "id": "water",
+      "label": "냉각수"
+    },
+    {
+      "id": "lid",
+      "label": "리드"
+    },
+    {
+      "id": "atm",
+      "label": "ATM"
+    },
+    {
+      "id": "plc_hb",
+      "label": "PLC"
+    }
+  ],
+  "alarms": {
+    "mfc_dev_pct_fs": 2.0,
+    "mfc_delay_s": 5,
+    "mfc_action": "경고만"
+  },
+  "vacuum": {
+    "start_base_torr": 0.05,
+    "base_timeout_s": 600,
+    "vent_timeout_s": 300,
+    "process_dev_pct": 20
+  },
+  "log": {
+    "enabled": true,
+    "level": "info",
+    "keep_days": 90,
+    "datalog_interval_s": 1,
+    "datalog_keep_days": 180
+  },
+  "access": {
+    "local_only": true
+  }
+}
