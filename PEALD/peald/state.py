@@ -14,6 +14,8 @@ from . import addresses as A
 from . import device as DEV
 from . import logger
 from . import version
+from . import recipe as R
+from . import storage
 from .convert import heater_temp
 
 # PC 자체 알림(PLC 알람이 아니라 프로그램이 판단한 것). 화면에서 구분해 보여 준다.
@@ -80,6 +82,12 @@ class State:
         self.alarms = AlarmTracker()
         self._last_new_alarm = 0
         self.alarm_popup = False        # D00007 이 0→1 이 되면 화면에 알람 창을 띄운다
+        self.runner = None              # ProcessRunner (공정 시작 흐름·진행)
+        self.datalog = None             # DataLog
+        self.recipe_check = {}          # 고른 레시피의 검증 결과
+        self.plc_recipe = {}            # 지금 PLC 에 올라가 있는 레시피 요약
+        self.manual_unlock_until = 0.0  # 수동 밸브 잠금 해제 만료 시각
+        self.o3_off_at = 0.0            # O3 발생기를 끈 시각 + 지연 (화면이 마무리를 부른다)
 
     # ===================== 로그 =====================
     def add_log(self, level: str, msg: str):
@@ -146,6 +154,13 @@ class State:
             "alarms": self.alarms.list(),
             "alarm_new": bool(conn and link.status[A.D_ALARM_NEW]),
             "alarm_popup": self.alarm_popup,
+            "process": self.runner.progress() if self.runner else {},
+            "manual": self.manual_state(),
+            "datalog": {
+                "active": bool(self.datalog and self.datalog.active),
+                "file": (self.datalog.name if (self.datalog and self.datalog.active) else ""),
+                "error": (self.datalog.error if self.datalog else ""),
+            },
         }
         if not conn:
             out.update({"state": None, "seq": None, "valves": None, "aux": None,
@@ -253,6 +268,29 @@ class State:
             return link.sync_regs[A.D_HEATER_POWER - A.SYNC_BASE]
         return 0
 
+    def manual_state(self) -> dict:
+        """수동 조작 화면이 쓰는 값. 요청과 실제 반영을 나란히 보여 준다 —
+        요청했는데 안 열린 밸브(허가 대기)를 운전자가 알아야 한다."""
+        import time as _t
+        link = self.link
+        conn = bool(link and link.connected)
+        req = link.manual_valve if conn else 0
+        applied = link.applied_valve if conn else 0
+        pending = []
+        for v in DEV.VALVES:
+            bit = 1 << v["bit"]
+            if (req & bit) and not (applied & bit):
+                pending.append(v["tag"])
+        return {
+            "unlocked": _t.monotonic() < self.manual_unlock_until,
+            "unlock_left_s": max(0, int(self.manual_unlock_until - _t.monotonic())),
+            "valve_request": req,
+            "valve_applied": applied,
+            "aux_request": link.manual_aux if conn else 0,
+            "aux_applied": link.applied_aux if conn else 0,
+            "pending": pending,
+        }
+
     def snapshot(self, access_local: bool = True) -> dict:
         """접속할 때와 구조가 바뀔 때 보내는 전체 스냅샷."""
         return {
@@ -265,6 +303,15 @@ class State:
             "alarm_history": list(self.alarms.history),
             "logs": list(self.logs),
             "sim_faults": self.sim_faults(),
+            "recipes": storage.list_recipes(),
+            "recipe_limits": {
+                "step_max": R.STEP_MAX, "block_max": R.BLOCK_MAX, "group_max": R.GROUP_MAX,
+                "step_ms_min": R.STEP_MS_MIN, "step_ms_max": R.STEP_MS_MAX,
+                "block_repeat_max": R.BLOCK_REPEAT_MAX, "group_repeat_max": R.GROUP_REPEAT_MAX,
+                "recipe_valves": DEV.RECIPE_VALVES, "assist_pair": DEV.ASSIST_PAIR,
+                "mfc_count": DEV.MFC_COUNT, "format": DEV.RECIPE_FORMAT,
+            },
+            "plc_recipe": self.plc_recipe,
             "access": {"local": bool(access_local)},
             "live": self.live(),
         }

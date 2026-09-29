@@ -30,7 +30,9 @@ from . import commands
 from . import config as config_mod
 from . import device as DEV
 from .convert import Converters
+from .datalog import DataLog, cleanup as datalog_cleanup
 from .plclink import PlcLink
+from .process import ProcessRunner
 from .simulator import PlcSim, SimServer
 from .state import state
 from .connection import manager
@@ -75,6 +77,10 @@ def create_app(config_path: str = "", single_instance: bool = True) -> FastAPI:
 
     link = PlcLink(cfg, state.conv, on_event=loops.on_link_event)
     state.link = link
+    state.runner = ProcessRunner(state)
+    state.datalog = DataLog(state)
+    state.recipe_check = {}
+    datalog_cleanup((cfg.get("log") or {}).get("datalog_keep_days", 180))
 
     @contextlib.asynccontextmanager
     async def lifespan(_app: FastAPI):
@@ -109,9 +115,13 @@ def create_app(config_path: str = "", single_instance: bool = True) -> FastAPI:
                 logger.write("err", sim_server.error)
         link.start()
         tasks = loops.start_all()
+        # PC 를 다시 켰을 때 PLC 가 이미 공정 중이면 레시피를 되찾아 이어 간다.
+        tasks.append(asyncio.create_task(_adopt_later()))
         try:
             yield
         finally:
+            if state.datalog:
+                state.datalog.close()
             await loops.stop_all(tasks)
             with contextlib.suppress(Exception):
                 await link.stop()
@@ -122,6 +132,17 @@ def create_app(config_path: str = "", single_instance: bool = True) -> FastAPI:
     app = FastAPI(lifespan=lifespan)
     _routes(app)
     return app
+
+
+async def _adopt_later():
+    """링크가 붙을 때까지 기다렸다가 진행 중인 공정을 이어받는다."""
+    from .connection import push_log
+    for _ in range(100):
+        await asyncio.sleep(0.2)
+        if state.link and state.link.connected:
+            with contextlib.suppress(Exception):
+                await state.runner.adopt_running(push_log)
+            return
 
 
 def _asset_version() -> str:

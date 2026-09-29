@@ -33,7 +33,15 @@ DEFAULTS = {
     "mfc": [],
     "heaters": [],
     "params": {},
-    "log": {"level": "info", "keep_days": 90},
+    "process": {
+        # 공정 시작 흐름
+        "base_wait_timeout_s": 1800,     # 베이스 압력 대기 제한
+        "base_stable_s": 3,              # 이만큼 계속 도달해 있어야 시작한다
+        "heater_ready": {"enabled": False, "band_c": 2.0, "stable_s": 60},
+        "o3_off_delay_s": 10,
+    },
+    "log": {"level": "info", "keep_days": 90,
+            "datalog_interval_s": 1, "datalog_keep_days": 180},
     "access": {"local_only": True},
 }
 
@@ -190,6 +198,29 @@ def validate(cfg: dict) -> list:
         mx = h.get("max_c")
         if sv is not None and mx is not None and float(sv) > float(mx):
             p.append(("err", f"히터 CH{h['ch']}: 기본 설정 온도({sv})가 과온 한계({mx})보다 높습니다"))
+
+    pr = cfg.get("process") or {}
+    for key, lo, hi in (("base_wait_timeout_s", 10, 86400), ("base_stable_s", 0, 3600)):
+        try:
+            v = float(pr.get(key))
+            if not (lo <= v <= hi):
+                p.append(("warn", f"process.{key} 가 권장 범위({lo}~{hi})를 벗어납니다: {v:g}"))
+        except (TypeError, ValueError):
+            p.append(("warn", f"process.{key} 값이 올바르지 않습니다"))
+    hr = pr.get("heater_ready") or {}
+    if hr.get("enabled"):
+        try:
+            if float(hr.get("band_c")) <= 0:
+                raise ValueError
+        except (TypeError, ValueError):
+            p.append(("err", "process.heater_ready.band_c 값이 올바르지 않습니다"))
+
+    lg = cfg.get("log") or {}
+    try:
+        if not (0.2 <= float(lg.get("datalog_interval_s", 1)) <= 60):
+            p.append(("warn", "log.datalog_interval_s 는 0.2~60 s 가 알맞습니다"))
+    except (TypeError, ValueError):
+        p.append(("warn", "log.datalog_interval_s 값이 올바르지 않습니다"))
 
     prm = cfg.get("params") or {}
     if prm.get("base_press_torr") is None:

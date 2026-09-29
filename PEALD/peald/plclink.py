@@ -50,7 +50,13 @@ class PlcLink:
 
         self.connected = False
         self.status = [0] * A.STATUS_COUNT      # 마지막으로 읽은 상태 영역
+        self.applied = [0] * A.APPLIED_COUNT    # PLC 가 실제로 반영한 값 (읽기 전용 영역)
         self.display = [0] * A.DISPLAY_COUNT    # 실제 출력 중인 설정값
+        # PC 가 가진 수동 요청. ★ 명령 12 는 이 전체를 한꺼번에 반영하므로,
+        #   보낼 때마다 여기 있는 값을 모두 먼저 써야 한다.
+        self.manual_valve = 0
+        self.manual_aux = 0
+        self.heater_power = 0           # 히터 전원 요청 비트 (명령 13 이 한꺼번에 반영)
         self.rtt_ms = 0
         self.prm_mismatch = []                  # 되읽기가 다른 PRM 이름 목록
 
@@ -140,7 +146,14 @@ class PlcLink:
         # ★ 명령 번호를 이어 가야 한다. 0부터 다시 시작하면 PLC 가 "이미 처리한 번호"로
         #   보고 무시하거나, 옛 명령을 다시 실행한 것처럼 보일 수 있다.
         self._cmd_no = (sync[A.D_CMD_NO - A.SYNC_BASE] + 1) & 0xFFFF
+        # PC 의 수동 요청을 PLC 에 남아 있는 값으로 맞춘다
+        self.manual_valve = A.dword(sync[A.D_MANUAL_VALVE - A.SYNC_BASE],
+                                    sync[A.D_MANUAL_VALVE + 1 - A.SYNC_BASE])
+        self.manual_aux = sync[A.D_MANUAL_AUX - A.SYNC_BASE]
+        self.heater_power = sync[A.D_HEATER_POWER - A.SYNC_BASE]
         await self._write_params()
+        self.applied = await self.client.read_holding(A.APPLIED_BASE, A.APPLIED_COUNT)
+        await self._sync_cleared_requests()
 
     async def _write_params(self):
         """공학 단위 params 를 원시값으로 바꿔 PRM 영역에 쓰고 되읽어 확인한다."""
@@ -232,7 +245,45 @@ class PlcLink:
             self._plc_hb_at = now
 
     async def _read_display(self):
-        self.display = await self.client.read_holding(A.DISPLAY_BASE, A.DISPLAY_COUNT)
+        """PLC 내부 영역(수동 적용값 + 출력 중인 설정값)을 한 번에 읽는다."""
+        self.applied = await self.client.read_holding(A.APPLIED_BASE, A.APPLIED_COUNT)
+        off = A.applied_off(A.DISPLAY_BASE)
+        self.display = self.applied[off:off + A.DISPLAY_COUNT]
+        await self._sync_cleared_requests()
+
+    @property
+    def applied_valve(self) -> int:
+        o = A.applied_off(A.D_APPLIED_VALVE)
+        return A.dword(self.applied[o], self.applied[o + 1]) if len(self.applied) > o + 1 else 0
+
+    @property
+    def applied_aux(self) -> int:
+        o = A.applied_off(A.D_APPLIED_AUX)
+        return self.applied[o] if len(self.applied) > o else 0
+
+    async def _sync_cleared_requests(self):
+        """PLC 가 스스로 지운 수동 요청을 PC 쪽에서도 지운다.
+
+        ★ PLC 는 전체 닫기·공정 시작·안전 정지 요구·대기압에서 수동 요청을 지운다.
+          PC 가 옛 요청을 그대로 들고 있으면 다음 명령 12 때 되살아난다 —
+          예를 들어 안전 정지로 꺼진 O3 라인이 밸브 하나 누르자마자 다시 켜진다.
+
+        ★ 판단 근거는 '요청 레지스터를 되읽은 값'이다. 실제 출력으로 판단하면
+          허가를 기다리는 요청(O3 발생기처럼 조건이 찰 때까지 안 나가는 것)을
+          지워 버린다.
+        """
+        regs = await self.client.read_holding(A.D_MANUAL_VALVE, 5)
+        plc_valve = A.dword(regs[0], regs[1])
+        plc_aux = regs[A.D_MANUAL_AUX - A.D_MANUAL_VALVE] & DEV.AUX_CMD_MASK
+        cleared = []
+        if self.manual_valve and plc_valve == 0:
+            cleared.append("밸브")
+            self.manual_valve = 0
+        if self.manual_aux and plc_aux == 0:
+            cleared.append("보조 출력")
+            self.manual_aux = 0
+        for what in cleared:
+            self.on_event("warn", f"PLC 가 수동 {what} 요청을 지웠습니다 — PC 요청도 맞췄습니다")
 
     @property
     def plc_hb_ok(self) -> bool:
@@ -240,6 +291,62 @@ class PlcLink:
         if not self.connected or self._plc_hb_at == 0.0:
             return False
         return (time.monotonic() - self._plc_hb_at) <= PLC_HB_STALL_S
+
+    # ===================== 레시피 올리기 =====================
+    async def upload_recipe(self, words, checksum: int):
+        """스텝·블록·그룹 영역을 먼저 쓰고 헤더를 마지막에 쓴다 → 되읽어 비교 →
+        PLC 검사 결과를 기다린다.
+
+        ★ 헤더(개수·합계)를 마지막에 쓰는 이유: PLC 는 1 s 마다 헤더를 보고 표를 검사한다.
+          헤더를 먼저 쓰면 아직 안 올라온 본문으로 검사해 '불합격'이 뜬다.
+        반환: (성공, 설명)"""
+        if not self.connected:
+            return False, "PLC 에 연결되어 있지 않습니다"
+        body_from = A.D_RCP_STEP_BASE - A.RCP_SUM_BASE
+        try:
+            async with self._cmd_lock:
+                await self.client.write_multiple(A.D_RCP_STEP_BASE, words[body_from:])
+                await self.client.write_multiple(A.RCP_SUM_BASE, words[:body_from])
+
+                back = await self.client.read_holding(A.RCP_SUM_BASE, A.RCP_AREA_COUNT)
+                if list(back) != [int(w) & 0xFFFF for w in words]:
+                    bad = next((i for i, (a, b) in enumerate(zip(back, words))
+                                if a != (int(b) & 0xFFFF)), -1)
+                    return False, f"되읽기가 다릅니다 (D{A.RCP_SUM_BASE + bad:05d})"
+
+            # PLC 는 대기 중 1 s 마다 검사한다 — 쓰기 직후 값은 이전 레시피 것일 수 있다.
+            deadline = time.monotonic() + 3.0
+            while time.monotonic() < deadline:
+                regs = await self.client.read_holding(A.D_RECIPE_SUM_PLC, 2)
+                if regs[0] == (checksum & 0xFFFF) and regs[1] == 1:
+                    return True, "PLC 검사 통과"
+                await asyncio.sleep(0.1)
+            regs = await self.client.read_holding(A.D_RECIPE_SUM_PLC, 2)
+            return False, (f"PLC 표 검사에 실패했습니다 "
+                           f"(PLC 합계 {regs[0]:#06x} / 보낸 합계 {checksum:#06x}, 통과 {regs[1]})")
+        except (ModbusTimeout, ModbusError, OSError) as e:
+            return False, f"PLC 통신 오류: {e}"
+
+    async def read_recipe_area(self):
+        """지금 PLC 에 올라가 있는 레시피 표를 읽는다(역변환용)."""
+        if not self.connected:
+            return None
+        try:
+            return await self.client.read_holding(A.RCP_SUM_BASE, A.RCP_AREA_COUNT)
+        except (ModbusTimeout, ModbusError, OSError):
+            return None
+
+    # ===================== 수동 요청 =====================
+    def manual_args(self, extra: dict = None) -> dict:
+        """명령 12 에 딸려 나갈 인자. ★ 현재 수동 요청 전체를 매번 쓴다 —
+        명령 12 는 밸브·보조·설정값을 한꺼번에 반영하므로, 빠진 값은 0 으로 반영된다."""
+        lo, hi = A.split_dword(self.manual_valve)
+        args = {
+            A.D_MANUAL_VALVE: [lo, hi, 0, 0],
+            A.D_MANUAL_AUX: self.manual_aux & 0xFFFF,
+        }
+        args.update(extra or {})
+        return args
 
     # ===================== 명령 핸드셰이크 =====================
     async def send_command(self, code: int, args: dict = None):

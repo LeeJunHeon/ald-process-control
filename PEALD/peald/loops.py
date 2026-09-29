@@ -23,11 +23,19 @@ SAMPLE_HZ = 10
 LIVE_HZ = 5
 
 
+def _log_sync(level, msg):
+    """동기 자리에서 남기는 로그(종료 감지 등). 화면에는 event_loop 가 흘려 보낸다."""
+    _pending_events.append((level, msg))
+
+
 async def sample_loop():
     period = 1.0 / SAMPLE_HZ
     while True:
         try:
             state.refresh()
+            if state.runner:
+                state.runner.tick(_log_sync)
+            _datalog_tick()
             trend.record(time.monotonic(), state.live())
         except Exception as e:  # noqa: BLE001
             logger.write("err", f"샘플링 루프 오류(계속 진행): {type(e).__name__}: {e}")
@@ -61,6 +69,20 @@ async def event_loop():
         except Exception as e:  # noqa: BLE001
             logger.write("err", f"이벤트 루프 오류(계속 진행): {e}")
         await asyncio.sleep(0.2)
+
+
+def _datalog_tick():
+    """공정이 시작되면 데이터 로그를 열고, 끝나면 조금 더 남기고 닫는다."""
+    dl, runner = state.datalog, state.runner
+    if not (dl and runner):
+        return
+    prog = runner.progress()
+    if prog.get("running") and not dl.active:
+        dl.start(runner.recipe_name, runner.recipe, runner.table,
+                 runner.progress().get("total_ms") or 0)
+    elif not prog.get("running") and dl.active:
+        dl.note_end()
+    dl.tick((state.cfg.get("log") or {}).get("datalog_interval_s", 1))
 
 
 def start_all() -> list:

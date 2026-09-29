@@ -83,6 +83,13 @@
     "o3_max": 200
   },
 
-  "log": { "level": "info", "keep_days": 90 },
+  "process": {
+    "base_wait_timeout_s": 1800,
+    "base_stable_s": 3,
+    "heater_ready": { "enabled": false, "band_c": 2.0, "stable_s": 60 },
+    "o3_off_delay_s": 10
+  },
+
+  "log": { "level": "info", "keep_days": 90, "datalog_interval_s": 1, "datalog_keep_days": 180 },
   "access": { "local_only": true }
 }

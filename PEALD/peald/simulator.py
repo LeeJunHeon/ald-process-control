@@ -945,6 +945,14 @@ class PlcSim:
         if DEV.HAS_O3:
             self.reg[A.D_O3_RAW] = self.reg[A.D_O3_SV] if self.o3_gen_on else 0
 
+        # 반영 영역 — PC 가 요청한 것 중 실제로 나가고 있는 것
+        # ★ 요청과 나란히 보여 주려면 '요청했지만 아직 안 나간 것'이 구분되어야 한다.
+        lo, hi = A.split_dword(self.valve_out & DEV.MANUAL_VALVE_MASK
+                              if not self.running else self.valve_out)
+        self.reg[A.D_APPLIED_VALVE] = lo
+        self.reg[A.D_APPLIED_VALVE + 1] = hi
+        self.reg[A.D_APPLIED_AUX] = self.reg[A.D_AUX_OUT] & DEV.AUX_CMD_MASK
+
         # 표시용 내부 영역 — 실제로 출력 중인 설정값
         base = A.DISPLAY_BASE
         for i in range(A.DISPLAY_COUNT):
