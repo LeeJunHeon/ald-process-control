@@ -31,6 +31,9 @@ VENT_TAU_S = 5.0
 ATM_INPUT_TORR = 700.0          # 이 압력을 넘으면 '챔버 대기압' 입력이 1
 HEATER_TAU_S = 25.0
 MFC_TAU_S = 1.0
+PULSE_RISE_TORR = 0.02          # 펄스 스텝에서 잠깐 오르는 폭
+FLOW_TORR_PER_SLM = 0.06        # 흐름(MFC 합)이 만드는 공정 압력 상승
+MFC_DEV_ABORT_S = 10.0          # 공정 중 MFC1 편차가 이만큼 계속되면 중단
 
 # 시뮬레이터 조작판에서 켤 수 있는 이상 입력
 FAULTS = [
@@ -48,6 +51,7 @@ FAULTS = [
     {"key": "o3_alm",    "name": "O3 발생기 알람", "dev": "powderald"},
     {"key": "o3_room",   "name": "실내 O3 감지", "dev": "powderald"},
     {"key": "bp_alm",    "name": "바이패스 펌프 알람", "dev": "powderald"},
+    {"key": "mfc1_stuck", "name": "MFC1 막힘 (현재값 0)"},
     {"key": "pc_hb_stop", "name": "PC 하트비트 멈춤 (시험)"},
 ]
 
@@ -67,7 +71,9 @@ class PlcSim:
         self.faults = {f["key"]: False for f in FAULTS}
 
         # --- 물리 상태 ---
-        self.pressure = ATM_TORR
+        self.pressure = ATM_TORR    # 화면·게이지에 나가는 값(베이스 + 흐름 + 펄스)
+        self.base_pressure = ATM_TORR   # 펌프·벤트가 만드는 바탕 압력
+        self.pulse = 0.0            # 펄스 밸브가 열릴 때 잠깐 오르는 분
         self.pump_on = False
         self.pump_run_at = None         # 펌프 기동 시각(피드백 1 s 지연)
         self.ive_cmd = False
@@ -88,6 +94,30 @@ class PlcSim:
         self.bypass_pump_on = False
         self.o3_ok_since = None
         self.rf_on = False
+
+        # --- 공정 시퀀서 ---
+        # ★ 시작하면 레시피 영역을 통째로 작업본에 복사해 그것으로 실행한다.
+        #   실행 중에 레시피 영역을 다시 써도 지금 공정에는 영향이 없다.
+        self.work = [0] * A.RCP_AREA_COUNT
+        self.running = False
+        self.seq_state = 0
+        self.blk = 0                # 현재 블록 (1부터)
+        self.step_no = 0            # 표 전체 기준 스텝 번호
+        self.cycle = 0
+        self.group_idx = 0          # 지금 불러온 그룹 번호 (1부터, 0 = 없음)
+        self.group_pass = 0
+        self.step_ms = 0.0          # 현재 스텝 경과 (실제 시간)
+        self.step_dur = 0           # 실효 스텝 시간
+        self.seq_valves = 0         # 시퀀서가 요구하는 밸브
+        self.prev_valves = 0        # 직전 출력('새로 열리는 밸브' 판정용)
+        self.rf_step = False
+        self.pause_req = False      # 일시정지 예약 (취소 명령 없음)
+        self.stop_req = False       # 사이클 후 정지 예약 (취소 명령 없음)
+        self.prep_start = None
+        self.mfc_ok_since = None
+        self.dev_bad_since = None
+        self.block_rf_raw = 0
+        self.end_reason = ""
 
         # --- 명령·통신 ---
         self.last_cmd_no = 0
@@ -133,12 +163,16 @@ class PlcSim:
         self._plc_heartbeat(now)
         self._watch_pc_heartbeat(now)
         self._handle_command(now)
+        # ★ 스텝·블록 준비 시간은 sim_speed 와 무관한 실제 시간이다 —
+        #   화면이 보여 주는 남은 시간과 맞아야 한다. 물리값만 배속을 따른다.
+        self._sequencer(dt, now)
         self._physics(sdt, now)
         self._inputs(now)
         self._alarms(now)
         self._interlocks()
         self._state()
         self._publish()
+        self._publish_seq()
         self._recipe_check(now)
 
     # ---------- 하트비트 ----------
@@ -192,15 +226,31 @@ class PlcSim:
                 return A.RESULT_RECIPE
             if not (ilk >> A.ILK_START_OK) & 1:
                 return A.RESULT_INTERLOCK
-            return A.RESULT_OK          # 공정 실행 자체는 2단계
+            self._process_start()
+            return A.RESULT_OK
         if code == A.CMD_PAUSE:
-            return A.RESULT_STATE if st != A.STATE_RUN else A.RESULT_OK
+            # 이미 일시정지 중이거나 예약돼 있으면 받지 않는다(취소 명령이 없다)
+            if st != A.STATE_RUN or self.pause_req:
+                return A.RESULT_STATE
+            self.pause_req = True
+            return A.RESULT_OK
         if code == A.CMD_RESUME:
             if st != A.STATE_PAUSE:
                 return A.RESULT_STATE
-            return A.RESULT_INTERLOCK if self.safe_stop else A.RESULT_OK
-        if code in (A.CMD_STOP_AFTER_CYCLE, A.CMD_ABORT):
-            return A.RESULT_OK if running else A.RESULT_STATE
+            if self.safe_stop:
+                return A.RESULT_INTERLOCK
+            self._resume()
+            return A.RESULT_OK
+        if code == A.CMD_STOP_AFTER_CYCLE:
+            if not running:
+                return A.RESULT_STATE
+            self.stop_req = True
+            return A.RESULT_OK
+        if code == A.CMD_ABORT:
+            if not running:
+                return A.RESULT_STATE
+            self._process_end("운전자 즉시 중단", aborted=True)
+            return A.RESULT_OK
 
         if code == A.CMD_ALARM_ACK:
             self.reg[A.D_ALARM_NEW] = 0
@@ -249,6 +299,249 @@ class PlcSim:
             return A.RESULT_OK
         return A.RESULT_UNKNOWN
 
+    # ===================== 공정 시퀀서 =====================
+    def _w(self, addr: int) -> int:
+        """작업본에서 한 워드."""
+        i = addr - A.RCP_SUM_BASE
+        return self.work[i] & 0xFFFF if 0 <= i < len(self.work) else 0
+
+    def _wd(self, addr: int) -> int:
+        return A.dword(self._w(addr), self._w(addr + 1))
+
+    def _process_start(self):
+        """레시피 영역을 작업본으로 복사하고 그룹 1·블록 1 부터 시작한다."""
+        self.work = [self.reg[a] & 0xFFFF
+                     for a in range(A.RCP_SUM_BASE, A.RCP_SUM_END + 1)]
+        self.running = True
+        self.pause_req = False
+        self.stop_req = False
+        self.end_reason = ""
+        self.dev_bad_since = None
+        self.group_idx = 1 if self._w(A.D_RCP_GROUP_COUNT) >= 1 else 0
+        self.group_pass = 1
+        self.prev_valves = 0
+        # PLC 는 공정을 시작하면 수동 밸브 요청을 스스로 지운다.
+        self.write(A.D_MANUAL_VALVE, [0, 0, 0, 0])
+        if not DEV.HAS_O3:
+            # Powder 는 공정 중에도 O3 라인(수동 보조)을 유지한다.
+            self.reg[A.D_MANUAL_AUX] = 0
+        self._load_block(1)
+
+    def _group(self, idx: int):
+        """그룹 idx(1부터)의 (시작, 끝, 반복). 없으면 None."""
+        if idx < 1 or idx > self._w(A.D_RCP_GROUP_COUNT):
+            return None
+        b = A.D_RCP_GROUP_BASE + (idx - 1) * A.RCP_GROUP_STRIDE
+        return self._w(b), self._w(b + 1), self._w(b + 2)
+
+    def _load_block(self, n: int):
+        nb = self._w(A.D_RCP_BLOCK_COUNT)
+        if n > nb:
+            self._process_end("정상 종료")
+            return
+        base = A.D_RCP_BLOCK_BASE + (n - 1) * A.RCP_BLOCK_STRIDE
+        first = self._w(base + A.RCP_BLOCK_FIRST)
+        last = self._w(base + A.RCP_BLOCK_LAST)
+        repeat = self._wd(base + A.RCP_BLOCK_REPEAT_LO)
+        ns = self._w(A.D_RCP_STEP_COUNT)
+        if first < 1 or last < first or last > ns or repeat < 1:
+            self._recipe_error(f"블록 {n} 항목이 올바르지 않습니다")
+            return
+
+        # MFC·장비 전용 설정을 블록 값으로 바꾼다
+        for i in range(8):
+            self.reg[A.D_MFC_SV + i] = self._w(base + A.RCP_BLOCK_MFC + i)
+        if DEV.HAS_PCV:
+            self.reg[A.D_PCV_SV] = self._w(base + A.RCP_BLOCK_PCV)
+        if DEV.HAS_RF:
+            # 상한으로 자른다 — 상한이 0 이면 RF 금지
+            self.block_rf_raw = min(self._w(base + A.RCP_BLOCK_RF),
+                                    self.reg[A.D_PRM_RF_MAX])
+        if DEV.HAS_O3:
+            self.reg[A.D_O3_SV] = min(self._w(base + A.RCP_BLOCK_O3),
+                                      self.reg[A.D_PRM_O3_MAX])
+
+        self.blk = n
+        self.cycle = 1
+        self.step_no = first
+        self.block_first = first
+        self.block_last = last
+        self.block_repeat = repeat
+        self.seq_valves = 0
+        self.prev_valves = 0        # 블록 준비 뒤에는 직전 출력이 전부 닫힘
+        self.rf_step = False
+        self.seq_state = 3          # 블록 준비
+        self.prep_start = time.monotonic()
+        self.mfc_ok_since = None
+
+    def _prep_tick(self, now):
+        """블록 준비 — MFC 가 안정될 때까지 기다린다."""
+        tol = self.reg[A.D_PRM_MFC_TOL]
+        stable_s = self.reg[A.D_PRM_MFC_STABLE]
+        timeout_s = self.reg[A.D_PRM_MFC_TIMEOUT] or 60
+        waited = now - (self.prep_start or now)
+
+        if tol == 0:
+            # 감시하지 않는 설정이면 안정 판정 시간만 기다린다
+            if waited >= stable_s:
+                self._load_step()
+            return
+        dev = abs(self.reg[A.D_MFC_PV] - self.reg[A.D_MFC_SV])
+        if dev <= tol:
+            if self.mfc_ok_since is None:
+                self.mfc_ok_since = now
+            if now - self.mfc_ok_since >= stable_s:
+                self._load_step()
+                return
+        else:
+            self.mfc_ok_since = None
+        if waited > timeout_s:
+            self._latch0(A.ALM0_MFC)
+            self._process_end("MFC 안정 대기 시간 초과", aborted=True)
+
+    def _load_step(self):
+        base = A.D_RCP_STEP_BASE + (self.step_no - 1) * A.RCP_STEP_STRIDE
+        t = self._wd(base + A.RCP_STEP_TIME_LO)
+        if t < 20 or t > 3_276_700:
+            self._recipe_error(f"스텝 {self.step_no} 시간이 범위를 벗어납니다 ({t} ms)")
+            return
+        valves = self._w(base + A.RCP_STEP_VALVE_LO)
+        flags = self._w(base + A.RCP_STEP_FLAGS)
+
+        # 새로 열리는 밸브가 있으면 최소 열림 시간을 보장한다
+        if (valves & ~self.prev_valves) and t < self.reg[A.D_PRM_VALVE_MIN_MS]:
+            t = self.reg[A.D_PRM_VALVE_MIN_MS]
+        if t > 60_000:
+            t = (t // 100) * 100        # 100 ms 타이머 — 나머지는 버린다
+
+        self.step_flags = flags
+        self.step_dur = t
+        self.step_ms = 0.0
+        self.seq_valves = valves
+        self.rf_step = bool(DEV.HAS_RF and (flags & A.RCP_FLAG_RF_ON))
+        self.seq_state = 4          # 스텝 실행
+        self._pulse_bump()
+
+    def _sequencer(self, dt, now):
+        if not self.running:
+            return
+        if self.safe_stop:
+            self._process_end("안전 정지 요구", aborted=True)
+            return
+        if self.seq_state == 3:
+            self._prep_tick(now)
+            return
+        if self.seq_state == 7:     # 일시정지 — 시간이 흐르지 않는다
+            self._watch_mfc(now)
+            return
+        if self.seq_state != 4:
+            return
+
+        self._watch_mfc(now)
+        if not self.running:
+            return
+        self.step_ms += dt * 1000.0
+        if self.step_ms >= self.step_dur:
+            self._step_done()
+
+    def _pulse_bump(self):
+        """펄스 밸브(전구체·반응물)가 새로 열리면 압력이 잠깐 오른다."""
+        pulse_bits = 0
+        for v in DEV.VALVES:
+            if v.get("pulse"):
+                pulse_bits |= 1 << v["bit"]
+        if (self.seq_valves & ~self.prev_valves) & pulse_bits:
+            self.pulse += PULSE_RISE_TORR
+
+    def _watch_mfc(self, now):
+        """공정 중(블록 준비 제외, 일시정지 포함) MFC1 편차가 10 s 계속되면 중단."""
+        tol = self.reg[A.D_PRM_MFC_TOL]
+        if tol == 0:
+            self.dev_bad_since = None
+            return
+        dev = abs(self.reg[A.D_MFC_PV] - self.reg[A.D_MFC_SV])
+        if dev > tol:
+            if self.dev_bad_since is None:
+                self.dev_bad_since = now
+            elif now - self.dev_bad_since >= MFC_DEV_ABORT_S:
+                self._latch0(A.ALM0_MFC)
+                self._process_end("공정 중 MFC 편차", aborted=True)
+        else:
+            self.dev_bad_since = None
+
+    def _step_done(self):
+        last_of_block = (self.step_no >= self.block_last)
+        pause_ok = bool(self.step_flags & A.RCP_FLAG_PAUSE_OK)
+        # ① 일시정지 요청 — 허용 스텝이거나 블록의 마지막 스텝에서만 멈춘다
+        if self.pause_req and (pause_ok or last_of_block):
+            self.pause_req = False
+            self.prev_valves = 0        # 일시정지 뒤에는 직전 출력이 전부 닫힘
+            self.seq_valves = 0
+            self.rf_step = False
+            self.seq_state = 7
+            return
+        self._after_step()
+
+    def _resume(self):
+        self.seq_state = 4
+        self._after_step()
+
+    def _after_step(self):
+        """스텝이 끝난 뒤(또는 일시정지에서 재개한 뒤) ②~⑤."""
+        self.prev_valves = self.seq_valves
+        if self.step_no < self.block_last:          # ② 다음 스텝
+            self.step_no += 1
+            self._load_step()
+            return
+        # ③ 사이클 끝
+        if self.stop_req:
+            self._process_end("사이클 후 정지")
+            return
+        if self.cycle < self.block_repeat:
+            self.cycle += 1
+            self.step_no = self.block_first
+            self._load_step()                       # 직전 출력 = 마지막 스텝
+            return
+        # ④ 블록 끝
+        g = self._group(self.group_idx)
+        if g and self.blk == g[1]:
+            start, _end, rep = g
+            if self.group_pass < max(1, rep):
+                self.group_pass += 1
+                self._load_block(start)
+                return
+            self.group_idx += 1
+            self.group_pass = 1
+        self._load_block(self.blk + 1)              # ⑤ 넘으면 _load_block 이 종료 처리
+
+    def _recipe_error(self, why: str):
+        self._latch0(A.ALM0_RECIPE)
+        self._process_end(f"레시피 값 오류 — {why}", aborted=True)
+
+    def _process_end(self, reason: str, aborted: bool = False):
+        """정상·중단 공통 정리."""
+        self.running = False
+        self.seq_state = 8 if aborted else 6
+        self.blk = 0
+        self.step_no = 0
+        self.cycle = 0
+        self.group_idx = 0
+        self.group_pass = 0
+        self.step_ms = 0.0
+        self.step_dur = 0
+        self.seq_valves = 0
+        self.prev_valves = 0
+        self.rf_step = False
+        self.pause_req = False
+        self.stop_req = False
+        self.end_reason = reason
+        for i in range(8):
+            self.reg[A.D_MFC_SV + i] = 0
+        if DEV.HAS_RF:
+            self.block_rf_raw = 0
+        # ★ Powder 의 O3 라인(수동 보조 요청)은 그대로 둔다 — 공정이 끝났다고
+        #   발생기를 갑자기 끄면 배관에 남은 O3 를 뺄 곳이 없다.
+
     def _pump_blocking(self) -> bool:
         a0 = self.reg[A.D_ALARM0]
         for b in (A.ALM0_EMO, A.ALM0_PUMP, A.ALM0_AIR, A.ALM0_CW):
@@ -283,7 +576,7 @@ class PlcSim:
         if self.vent_req:
             if self._vent_ok() and not self.vv_on:
                 self.vv_on = True
-            if self.pressure >= ATM_TORR * 0.99:
+            if self.base_pressure >= ATM_TORR * 0.99:
                 self.vv_on = False
                 self.vent_req = False
             elif self.vent_started and (now - self.vent_started) > (self.reg[A.D_PRM_VENT_TIMEOUT] or 300):
@@ -293,24 +586,35 @@ class PlcSim:
 
         # 압력
         ive_open = self.ive_cmd and self.ive_moved_at is not None and (now - self.ive_moved_at) >= 1.0
+        # ★ 펄스·흐름 상승분을 베이스에 직접 더하면 다음 tick 의 수렴 계산이 그 값을
+        #   출발점으로 삼아 펄스마다 베이스가 계단식으로 올라간다 — 따로 보관한다.
+        self.pulse *= pow(2.718281828, -sdt / 0.6)
         if self.vv_on:
-            self.pressure += (ATM_TORR - self.pressure) * (1 - pow(2.718281828, -sdt / VENT_TAU_S))
+            self.base_pressure += (ATM_TORR - self.base_pressure) * (1 - pow(2.718281828, -sdt / VENT_TAU_S))
         elif pump_run and ive_open:
-            self.pressure += (ULTIMATE_TORR - self.pressure) * (1 - pow(2.718281828, -sdt / PUMP_TAU_S))
+            self.base_pressure += (ULTIMATE_TORR - self.base_pressure) * (1 - pow(2.718281828, -sdt / PUMP_TAU_S))
             if (self.pump_started and self.reg[A.D_PRM_BASE_PRESS]
                     and (now - self.pump_started) > (self.reg[A.D_PRM_PUMP_TIMEOUT] or 600)
-                    and self.conv.cvg.to_raw(self.pressure) > self.reg[A.D_PRM_BASE_PRESS]):
+                    and self.conv.cvg.to_raw(self.base_pressure) > self.reg[A.D_PRM_BASE_PRESS]):
                 self._latch0(A.ALM0_BASE_TIMEOUT)
                 self.pump_started = None
-        self.pressure = max(1.0e-4, min(ATM_TORR, self.pressure))
+        self.base_pressure = max(1.0e-4, min(ATM_TORR, self.base_pressure))
+        # 흐르는 가스가 있으면 공정 압력이 베이스보다 조금 높게 유지된다
+        flow_slm = sum(self.mfc_pv[:DEV.MFC_COUNT]) / 1000.0
+        rise = flow_slm * FLOW_TORR_PER_SLM if (ive_open and pump_run) else 0.0
+        self.pressure = max(1.0e-4, min(ATM_TORR, self.base_pressure + rise + self.pulse))
 
         # 안전 정지 요구면 공정 밸브·수동 보조 요청을 지운다(자동으로 다시 켜지지 않는다)
         if self.safe_stop:
             self.write(A.D_MANUAL_VALVE, [0, 0, 0, 0])
             self.reg[A.D_MANUAL_AUX] = 0
 
-        # 수동 밸브 요청 → 실제 출력. 전구체와 반응물이 함께 요청되면 둘 다 막는다.
-        req = self.reg[A.D_MANUAL_VALVE] & DEV.MANUAL_VALVE_MASK
+        # 공정 중에는 시퀀서가 밸브를 쥔다. 아니면 수동 요청.
+        # 전구체와 반응물이 함께 요청되면 어느 쪽이든 둘 다 막는다.
+        if self.running:
+            req = self.seq_valves & DEV.MANUAL_VALVE_MASK
+        else:
+            req = self.reg[A.D_MANUAL_VALVE] & DEV.MANUAL_VALVE_MASK
         pre = any((req >> b) & 1 for b in DEV.PRECURSOR_VALVE_BITS)
         rea = any((req >> b) & 1 for b in DEV.REACTANT_VALVE_BITS)
         self.both_req = pre and rea
@@ -325,7 +629,9 @@ class PlcSim:
 
         # 장비 전용
         if DEV.HAS_RF:
-            self.rf_on = bool(aux_req & (1 << A.AUX_RF)) and self._rf_ok()
+            # 공정 중에는 플래그 b1 스텝을 실행하는 동안만 RF 를 켠다
+            want_rf = self.rf_step if self.running else bool(aux_req & (1 << A.AUX_RF))
+            self.rf_on = want_rf and self._rf_ok()
         if DEV.HAS_O3:
             self._o3_logic(aux_req, now)
 
@@ -335,6 +641,8 @@ class PlcSim:
             sv = self.conv.mfc.get(i + 1)
             target = sv.to_eng(sv_raw) if sv and sv.full else 0.0
             target = target or 0.0
+            if i == 0 and self.faults.get("mfc1_stuck"):
+                target = 0.0        # 시험: MFC1 이 막혀 현재값이 0 에 머문다
             self.mfc_pv[i] += (target - self.mfc_pv[i]) * (1 - pow(2.718281828, -sdt / MFC_TAU_S))
 
         # 히터: 켜져 있으면 설정 온도로 천천히 올라가고, 꺼지면 식는다
@@ -576,10 +884,33 @@ class PlcSim:
         self.reg[A.D_INTERLOCK] = w
 
     def _state(self):
+        """장비 상태 — 뒤쪽이 우선한다(안전 정지 > 일시정지 > …)."""
         if self.safe_stop:
             self.reg[A.D_STATE] = A.STATE_SAFE_STOP
-        elif self.reg[A.D_STATE] in (A.STATE_SAFE_STOP, A.STATE_INIT):
+        elif not self.running:
             self.reg[A.D_STATE] = A.STATE_IDLE
+        elif self.seq_state == 7:
+            self.reg[A.D_STATE] = A.STATE_PAUSE
+        elif self.stop_req:
+            self.reg[A.D_STATE] = A.STATE_STOPPING
+        elif self.seq_state == 3:
+            self.reg[A.D_STATE] = A.STATE_READY
+        else:
+            self.reg[A.D_STATE] = A.STATE_RUN
+
+    def _publish_seq(self):
+        self.reg[A.D_SEQ_STATE] = self.seq_state
+        self.reg[A.D_SEQ_BLOCK] = self.blk
+        self.reg[A.D_SEQ_STEP] = self.step_no
+        self.reg[A.D_SEQ_GROUP_PASS] = self.group_pass
+        lo, hi = A.split_dword(self.cycle)
+        self.reg[A.D_SEQ_BLOCK_PASS] = lo
+        self.reg[A.D_SEQ_BLOCK_PASS + 1] = hi
+        # 스텝 경과는 스텝 실행 중에만 의미가 있다
+        ms = int(self.step_ms) if self.seq_state == 4 else 0
+        lo, hi = A.split_dword(ms)
+        self.reg[A.D_SEQ_STEP_MS] = lo
+        self.reg[A.D_SEQ_STEP_MS + 1] = hi
 
     # ---------- 상태 영역에 반영 ----------
     def _publish(self):
@@ -603,7 +934,8 @@ class PlcSim:
 
         if DEV.HAS_RF:
             self.reg[A.D_PCV_RAW] = self.reg[A.D_PCV_SV]
-            fwd = self.reg[A.D_RF_SV] if self.rf_on else 0
+            sv = self.block_rf_raw if self.running else self.reg[A.D_RF_SV]
+            fwd = sv if self.rf_on else 0
             self.reg[A.D_RF_FWD_RAW] = fwd
             ref = int(fwd * (0.30 if self.faults["rf_ref"] else 0.03))
             self.reg[A.D_RF_REF_RAW] = ref

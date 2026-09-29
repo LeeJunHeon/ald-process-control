@@ -160,17 +160,31 @@ class PlcLink:
         if self.prm_mismatch:
             self.on_event("warn", "PLC 파라미터 되읽기 불일치 — " + " · ".join(self.prm_mismatch[:3]))
 
+    @staticmethod
+    def _num(params: dict, key: str, default):
+        """설정값을 정수로. ★ 0 을 '없음'으로 보지 않는다 —
+        mfc_stable_s: 0(대기 없음)·valve_min_ms: 0(최소 열림 없음)은 뜻이 있는 값이라,
+        `or` 로 처리하면 운전자가 끈 기능이 조용히 되살아난다."""
+        v = params.get(key)
+        if v is None or v == "":
+            v = default
+        try:
+            return int(v)
+        except (TypeError, ValueError):
+            return int(default)
+
     def _param_words(self) -> dict:
         """{주소: (이름, 원시값)}. 공학 단위 → 원시값 변환은 여기 한 곳에서만 한다."""
         p = self.cfg.get("params") or {}
         conv = self.conv
+        n = self._num
         out = {
-            A.D_PRM_PC_WDT_MS: ("PC 하트비트 판정", int(p.get("pc_wdt_ms") or 3000)),
-            A.D_PRM_PUMP_TIMEOUT: ("베이스 도달 제한", int(p.get("pump_timeout_s") or 600)),
-            A.D_PRM_VENT_TIMEOUT: ("대기압 도달 제한", int(p.get("vent_timeout_s") or 300)),
-            A.D_PRM_MFC_STABLE: ("MFC 안정 판정", int(p.get("mfc_stable_s") or 3)),
-            A.D_PRM_MFC_TIMEOUT: ("MFC 안정 제한", int(p.get("mfc_timeout_s") or 60)),
-            A.D_PRM_VALVE_MIN_MS: ("밸브 최소 열림", int(p.get("valve_min_ms") or 200)),
+            A.D_PRM_PC_WDT_MS: ("PC 하트비트 판정", n(p, "pc_wdt_ms", 3000)),
+            A.D_PRM_PUMP_TIMEOUT: ("베이스 도달 제한", n(p, "pump_timeout_s", 600)),
+            A.D_PRM_VENT_TIMEOUT: ("대기압 도달 제한", n(p, "vent_timeout_s", 300)),
+            A.D_PRM_MFC_STABLE: ("MFC 안정 판정", n(p, "mfc_stable_s", 3)),
+            A.D_PRM_MFC_TIMEOUT: ("MFC 안정 제한", n(p, "mfc_timeout_s", 60)),
+            A.D_PRM_VALVE_MIN_MS: ("밸브 최소 열림", n(p, "valve_min_ms", 200)),
             # ★ 베이스 압력은 역함수로 원시값을 만든다(환산이 단조 증가여야 하는 이유).
             A.D_PRM_BASE_PRESS: ("베이스 압력", conv.cvg.to_raw(p.get("base_press_torr"))),
         }
@@ -191,7 +205,7 @@ class PlcLink:
                                    if rf.get("max_w") else 0)
             out[A.D_PRM_RF_REF_MAX] = ("반사 전력 한계", conv.rf.to_raw(p.get("rf_ref_max_w"))
                                        if rf.get("max_w") else 0)
-            out[A.D_PRM_RF_REF_MS] = ("반사 초과 허용", int(p.get("rf_ref_ms") or 0))
+            out[A.D_PRM_RF_REF_MS] = ("반사 초과 허용", n(p, "rf_ref_ms", 0))
             out[A.D_PRM_RF_MAX_PRESS] = ("RF 허가 최대 압력",
                                          conv.cvg.to_raw(p.get("rf_p_max_torr")))
         if DEV.HAS_O3:

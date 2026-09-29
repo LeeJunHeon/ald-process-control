@@ -161,6 +161,30 @@ DISPLAY_SETPOINTS = [
 ]
 
 
+# ===================== 레시피에서 쓰는 것 =====================
+# 레시피 파일의 형식 태그. ★ 다른 장비 형식은 열지 않는다 —
+# 밸브 이름이 같아 보여도 배관이 달라, 그대로 실행하면 엉뚱한 곳을 연다.
+RECIPE_FORMAT = "PEALD-recipe/1"
+
+# 레시피 스텝에서 고를 수 있는 밸브 (PLC 가 자동으로 다루는 것은 뺀다)
+RECIPE_VALVES = [v["tag"] for v in VALVES if not v.get("auto")]
+
+# 전구체 쪽과 반응물 쪽 태그 — 한 스텝에 함께 있으면 안 된다(PLC 가 둘 다 막는다)
+PRECURSOR_TAGS = [v["tag"] for v in VALVES if v["bit"] in PRECURSOR_VALVE_BITS]
+REACTANT_TAGS = [v["tag"] for v in VALVES if v["bit"] in REACTANT_VALVE_BITS]
+
+# 어시스트 밸브는 짝이 되는 캐니스터 밸브가 열리는 스텝에서만 쓴다.
+# (캐니스터로 캐리어를 흘려 놓고 출구를 안 열면 캐니스터만 가압된다)
+ASSIST_PAIR = {"PV-A1": "PV-2", "PV-A2": "PV-3"}
+
+
+def valve_bit(tag: str):
+    for v in VALVES:
+        if v["tag"] == tag:
+            return v["bit"]
+    return None
+
+
 def valve_by_bit(bit):
     for v in VALVES:
         if v["bit"] == bit:
