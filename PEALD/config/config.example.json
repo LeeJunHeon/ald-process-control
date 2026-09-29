@@ -1,0 +1,96 @@
+{
+  "_주의": "예시 설정입니다. 현장 값을 넣은 config.json 을 exe 옆에 두세요. confirmed:false 인 항목은 실제 스케일을 확인한 뒤 true 로 바꿉니다.",
+
+  "server": { "host": "127.0.0.1", "port": 8201 },
+  "window": { "side": "right" },
+
+  "plc": {
+    "host": "192.168.10.12",
+    "port": 502,
+    "unit_id": 1,
+    "timeout_ms": 1000,
+    "poll_ms": 100,
+    "heartbeat_ms": 500,
+    "simulate": true,
+    "sim_port": 15201,
+    "sim_speed": 5
+  },
+
+  "analog": {
+    "raw_max": 16000,
+    "confirmed": false,
+    "_비고": "아날로그 모듈 확정 전 예시값입니다."
+  },
+
+  "pressure": {
+    "cvg": {
+      "mode": "loglinear",
+      "volt_max": 10.0,
+      "torr_at_0v": 1.0e-4,
+      "decades_per_volt": 1.0,
+      "unit": "Torr",
+      "confirmed": false,
+      "_비고": "p = torr_at_0v × 10^(V × decades_per_volt), V = raw / raw_max × volt_max"
+    },
+    "cm": {
+      "installed": false,
+      "mode": "linear",
+      "volt_max": 10.0,
+      "torr_at_0v": 0.0,
+      "torr_per_volt": 100.0,
+      "unit": "Torr",
+      "confirmed": false
+    }
+  },
+
+  "mfc": [
+    { "no": 1, "name": "전구체 캐리어", "gas": "N2", "full_scale_sccm": 1000, "confirmed": false },
+    { "no": 2, "name": "어시스트",     "gas": "N2", "full_scale_sccm": 1000, "confirmed": false },
+    { "no": 3, "name": "반응물 퍼지",   "gas": "N2", "full_scale_sccm": 1000, "confirmed": false },
+    { "no": 4, "name": "O2",          "gas": "O2", "full_scale_sccm": null, "confirmed": false }
+  ],
+
+  "heaters": [
+    { "ch": 1,  "name": "Stage·챔버",  "enabled": true,  "max_c": 300, "default_sv": 200 },
+    { "ch": 2,  "name": "전구체 라인",  "enabled": true,  "max_c": 120, "default_sv": 80 },
+    { "ch": 3,  "name": "반응물 라인",  "enabled": true,  "max_c": 120, "default_sv": 80 },
+    { "ch": 4,  "name": "캐니스터2",   "enabled": true,  "max_c": 120, "default_sv": 60 },
+    { "ch": 5,  "name": "캐니스터3",   "enabled": true,  "max_c": 120, "default_sv": 60 },
+    { "ch": 6,  "name": "트랩",       "enabled": true,  "max_c": 450, "default_sv": 150 },
+    { "ch": 7,  "name": "예비 7",     "enabled": false, "max_c": null, "default_sv": null },
+    { "ch": 8,  "name": "예비 8",     "enabled": false, "max_c": null, "default_sv": null },
+    { "ch": 9,  "name": "예비 9",     "enabled": false, "max_c": null, "default_sv": null },
+    { "ch": 10, "name": "예비 10",    "enabled": false, "max_c": null, "default_sv": null },
+    { "ch": 11, "name": "예비 11",    "enabled": false, "max_c": null, "default_sv": null },
+    { "ch": 12, "name": "예비 12",    "enabled": false, "max_c": null, "default_sv": null }
+  ],
+
+  "rf": {
+    "max_w": 300,
+    "confirmed": false,
+    "_비고": "원시값 최대(raw_max)에 해당하는 W"
+  },
+  "pcv": {
+    "full_pct": 100,
+    "confirmed": false
+  },
+
+  "params": {
+    "pc_wdt_ms": 3000,
+    "base_press_torr": 5.0e-2,
+    "pump_timeout_s": 600,
+    "vent_timeout_s": 300,
+    "mfc_stable_s": 3,
+    "mfc_tol_sccm": 20,
+    "mfc_timeout_s": 60,
+    "valve_min_ms": 200,
+
+    "rf_max_w": 300,
+    "rf_ref_max_w": 30,
+    "rf_ref_ms": 2000,
+    "rf_p_max_torr": 5.0
+  },
+
+  "log": { "level": "info", "keep_days": 90 },
+  "access": { "local_only": true }
+}

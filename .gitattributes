@@ -1,0 +1,7 @@
+# 줄바꿈 정규화 — 저장소에는 LF로 보관한다.
+# Windows 개발 PC와 빌드 서버에서 같은 파일이 다르게 보이는 것을 막는다.
+* text=auto eol=lf
+
+# 이진 파일은 건드리지 않는다.
+*.ico binary
+*.png binary

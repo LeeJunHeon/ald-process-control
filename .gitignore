@@ -3,31 +3,36 @@ __pycache__/
 *.pyc
 .venv/
 venv/
+.pytest_cache/
 
-# Atomic-write temp files
+# 원자적 저장의 임시 파일
 *.tmp
 
-# PyInstaller 빌드 산출물 (build.spec은 추적 대상)
+# PyInstaller 산출물 (build.spec은 추적 대상)
 build/
 dist/
+*/build/
+*/dist/
 
-# 런타임 생성 폴더 — 챔버별 데이터(로그·레시피·데이터로그)
+# 런타임 설정 — 현장마다 다르다(IP·환산·풀스케일).
+#   참고용 기본값은 각 프로그램의 config/config.example.json 에 있다.
+config.json
+*/config.json
+
+# 런타임 데이터 — 로그·레시피·데이터 로그·알람 이력·관리자 PIN 해시
 data/
+*/data/
 logs/
 datalog/
 
-# 런타임 설정 — 현장마다 다르다(IP·라인 구성·스케일).
-#   참고용 기본값은 config/chamber*.example.json 에 있다.
-/config.json
-
-# 비밀 정보 — 저장소에 절대 담지 않는다
+# 비밀 정보
 *.env
 .env*
 *.key
 *.pem
 admin*.json
 
-# 검증용 산출물(스크린샷·임시)
+# 검증용 산출물
 screenshot/
 screenshots/
 *.png

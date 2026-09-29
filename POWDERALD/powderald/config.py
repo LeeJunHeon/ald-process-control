@@ -1,0 +1,205 @@
+"""
+config.py — 설정 파일 로드·기본값 병합·검증.
+
+설정에는 "현장마다 다른 값"만 둔다: 서버·PLC 주소, 아날로그 환산, MFC 풀스케일,
+히터 한계, PLC 파라미터. 장비 구조(밸브·보조 출력·입력·알람 문구·배관도)는
+device.py 에 있다 — 설정 파일을 잘못 복사해도 장비가 바뀌어 보이면 안 되기 때문이다.
+
+★ 모르는 값은 지어내지 않는다. 예시값 + confirmed=false 로 두고, 화면에서 그 값 옆에
+  "환산 미확정"을 붙인다. 현장에서 확인하면 설정만 고치면 된다.
+
+★ 검증은 오류를 모아서 돌려줄 뿐 기동을 막지 않는다. 설정 한 줄이 틀렸다고 화면이
+  아예 안 뜨면 현장에서 원인조차 볼 수 없다.
+"""
+
+import os
+import copy
+import json
+
+from . import paths
+from . import device as DEV
+from .convert import Converters
+
+DEFAULTS = {
+    "server": {"host": "127.0.0.1", "port": DEV.DEFAULT_PORT},
+    "window": {"side": DEV.DEFAULT_SIDE},
+    "plc": {
+        "host": "192.168.10.11", "port": 502, "unit_id": 1,
+        "timeout_ms": 1000, "poll_ms": 100, "heartbeat_ms": 500,
+        "simulate": True, "sim_port": DEV.DEFAULT_SIM_PORT, "sim_speed": 5,
+    },
+    "analog": {"raw_max": 16000, "confirmed": False},
+    "pressure": {},
+    "mfc": [],
+    "heaters": [],
+    "params": {},
+    "log": {"level": "info", "keep_days": 90},
+    "access": {"local_only": True},
+}
+
+
+def _deep_merge(base: dict, over: dict) -> dict:
+    """dict 만 재귀하고 list 는 통째로 교체한다
+    (MFC·히터 목록을 부분 병합하면 지운 항목이 되살아난다)."""
+    out = copy.deepcopy(base)
+    for k, v in (over or {}).items():
+        if isinstance(v, dict) and isinstance(out.get(k), dict):
+            out[k] = _deep_merge(out[k], v)
+        else:
+            out[k] = copy.deepcopy(v)
+    return out
+
+
+def load(path: str = ""):
+    """(config, problems, source) 를 돌려준다.
+    source: "file" 실제 설정 / "example" 예시 설정 / "default" 기본값."""
+    problems = []
+    target = os.path.abspath(path) if path else paths.DEFAULT_CONFIG_PATH
+    raw, source = None, "default"
+
+    raw, problems_read = _read(target)
+    problems.extend(problems_read)
+    if raw is not None:
+        source = "file"
+    else:
+        # config.json 이 없으면 예시 설정으로 기동한다 — 처음 켠 사람이
+        # 아무것도 못 보는 것보다 낫다. 대신 화면에 경고를 크게 띄운다.
+        ex, _ = _read(paths.EXAMPLE_CONFIG)
+        if ex is not None:
+            raw, source = ex, "example"
+            problems.append(("warn", "config.json 이 없어 예시 설정으로 실행 중입니다 — "
+                                     "현장 값을 넣은 config.json 을 exe 옆에 두세요"))
+        else:
+            problems.append(("err", "설정 파일과 예시 설정을 모두 읽지 못했습니다 — 기본값으로 기동합니다"))
+            raw = {}
+
+    cfg = _deep_merge(DEFAULTS, raw)
+    cfg["_source"] = source
+    cfg["_path"] = target if source == "file" else paths.EXAMPLE_CONFIG
+    _fill_devices(cfg)
+    problems.extend(validate(cfg))
+    return cfg, problems, source
+
+
+def _read(p: str):
+    if not p or not os.path.isfile(p):
+        return None, []
+    try:
+        with open(p, "r", encoding="utf-8") as f:
+            data = json.load(f)
+        if not isinstance(data, dict):
+            return None, [("err", f"{os.path.basename(p)}: 최상위가 객체가 아닙니다")]
+        return data, []
+    except Exception as e:  # noqa: BLE001
+        return None, [("err", f"{os.path.basename(p)} 을(를) 읽지 못했습니다 ({type(e).__name__})")]
+
+
+def _fill_devices(cfg: dict):
+    """MFC·히터 목록에 빠진 항목을 장비 정의의 기본 이름으로 채운다.
+    설정이 짧아도 화면의 표가 12채널·N개 MFC 를 그릴 수 있어야 한다."""
+    mfc = {int(m.get("no") or 0): m for m in (cfg.get("mfc") or []) if m.get("no")}
+    out = []
+    for i in range(1, DEV.MFC_COUNT + 1):
+        m = mfc.get(i) or {}
+        out.append({
+            "no": i,
+            "name": m.get("name") or DEV.MFC_DEFAULT_NAMES[i - 1],
+            "gas": m.get("gas", ""),
+            "full_scale_sccm": m.get("full_scale_sccm"),
+            "confirmed": bool(m.get("confirmed", False)),
+        })
+    cfg["mfc"] = out
+
+    heat = {int(h.get("ch") or 0): h for h in (cfg.get("heaters") or []) if h.get("ch")}
+    out = []
+    for ch in range(1, DEV.HEATER_COUNT + 1):
+        h = heat.get(ch) or {}
+        out.append({
+            "ch": ch,
+            "name": h.get("name") or DEV.HEATER_DEFAULT_NAMES[ch - 1],
+            "enabled": bool(h.get("enabled", False)),
+            "max_c": h.get("max_c"),
+            "default_sv": h.get("default_sv"),
+        })
+    cfg["heaters"] = out
+
+
+def validate(cfg: dict) -> list:
+    """[(level, message)] — 비어 있으면 정상."""
+    p = []
+
+    srv = cfg.get("server") or {}
+    try:
+        port = int(srv.get("port", 0))
+        if not (1 <= port <= 65535):
+            raise ValueError
+    except (TypeError, ValueError):
+        p.append(("err", f"server.port 값이 올바르지 않습니다: {srv.get('port')!r}"))
+    if (cfg.get("window") or {}).get("side") not in ("left", "right"):
+        p.append(("warn", "window.side 는 left 또는 right 여야 합니다"))
+
+    plc = cfg.get("plc") or {}
+    if not plc.get("simulate") and not plc.get("host"):
+        p.append(("err", "plc.host 가 비어 있습니다 (시뮬레이터가 아니면 주소가 필요합니다)"))
+    for key, lo, hi in (("poll_ms", 20, 5000), ("heartbeat_ms", 100, 5000),
+                        ("timeout_ms", 100, 10000)):
+        try:
+            v = int(plc.get(key))
+            if not (lo <= v <= hi):
+                p.append(("warn", f"plc.{key} 가 권장 범위({lo}~{hi})를 벗어납니다: {v}"))
+        except (TypeError, ValueError):
+            p.append(("warn", f"plc.{key} 값이 올바르지 않습니다"))
+    if int(plc.get("sim_port") or 0) == int(srv.get("port") or 0):
+        p.append(("err", "plc.sim_port 와 server.port 가 같습니다 — 포트를 나눠야 합니다"))
+
+    analog = cfg.get("analog") or {}
+    try:
+        if int(analog.get("raw_max")) <= 0:
+            raise ValueError
+    except (TypeError, ValueError):
+        p.append(("err", "analog.raw_max 값이 올바르지 않습니다"))
+
+    # 환산이 단조 증가인지 — 역함수를 쓰기 때문에 반드시 확인한다.
+    conv = Converters(cfg)
+    if not conv.cvg.is_monotonic():
+        p.append(("err", "pressure.cvg 환산이 단조 증가가 아닙니다 — "
+                         "베이스 압력을 원시값으로 바꿀 수 없습니다"))
+    if conv.cm.installed and not conv.cm.is_monotonic():
+        p.append(("err", "pressure.cm 환산이 단조 증가가 아닙니다"))
+
+    for m in cfg.get("mfc") or []:
+        fs = m.get("full_scale_sccm")
+        if fs is None:
+            p.append(("warn", f"MFC{m['no']} ({m['name']}) 풀스케일이 정해지지 않았습니다 — "
+                              f"유량 표시가 '—' 로 나옵니다"))
+        else:
+            try:
+                if float(fs) <= 0:
+                    raise ValueError
+            except (TypeError, ValueError):
+                p.append(("err", f"MFC{m['no']} 풀스케일 값이 올바르지 않습니다: {fs!r}"))
+
+    for h in cfg.get("heaters") or []:
+        if not h.get("enabled"):
+            continue
+        if h.get("max_c") is None:
+            # ★ 0 을 쓰면 PLC 가 그 채널을 막는다. 히터가 안 올라가는 원인이 되므로 경고한다.
+            p.append(("warn", f"히터 CH{h['ch']} ({h['name']}) 과온 한계가 정해지지 않았습니다 — "
+                              f"PLC 한계에 0 을 써서 해당 채널을 막습니다"))
+        sv = h.get("default_sv")
+        mx = h.get("max_c")
+        if sv is not None and mx is not None and float(sv) > float(mx):
+            p.append(("err", f"히터 CH{h['ch']}: 기본 설정 온도({sv})가 과온 한계({mx})보다 높습니다"))
+
+    prm = cfg.get("params") or {}
+    if prm.get("base_press_torr") is None:
+        p.append(("warn", "params.base_press_torr 가 없습니다 — PLC 가 공정 시작을 막습니다"))
+    elif conv.cvg.to_raw(prm.get("base_press_torr")) <= 0:
+        p.append(("warn", "params.base_press_torr 가 환산에서 원시값 0 이 됩니다 — "
+                          "PLC 가 공정 시작을 막습니다"))
+    if DEV.HAS_RF and not (cfg.get("rf") or {}).get("max_w"):
+        p.append(("warn", "rf.max_w 가 없습니다 — PLC 가 RF 를 막습니다"))
+    if DEV.HAS_O3 and not (cfg.get("o3") or {}).get("full"):
+        p.append(("warn", "o3.full 이 없습니다 — PLC 가 O3 를 막습니다"))
+
+    return p

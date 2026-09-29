@@ -1,141 +1,113 @@
-# ALD Process Control
+# ALD 제어 프로그램
 
-2챔버 ALD 장비의 공정 제어·감시 프로그램입니다.
-챔버마다 **별도 프로세스**로 실행되며, 한쪽이 멈춰도 다른 쪽은 영향을 받지 않습니다.
+PEALD 와 Powder ALD 두 장비의 제어 프로그램입니다.
+각 장비는 LS XGB PLC 한 대를 가지고, PC 한 대에서 두 프로그램이 좌우 반쪽 창으로 동시에 돕니다.
 
-- 백엔드: Python + FastAPI (상태·명령·값 공급)
-- 화면: pywebview 창 안의 HTML/CSS/JS (외부 라이브러리 없음, 오프라인 전제)
-- 통신: WebSocket 1개 (`/ws`) — 상태는 서버가 주인입니다
+| | Powder ALD | PEALD |
+|---|---|---|
+| 폴더 · 패키지 | `POWDERALD/` · `powderald` | `PEALD/` · `peald` |
+| 창 제목 | Powder ALD 공정 제어 | PEALD 공정 제어 |
+| 테마 · 고유색 | 라이트 · 청록 | 다크 · 보라 |
+| 기본 창 위치 | 왼쪽 절반 | 오른쪽 절반 |
+| 웹 포트 / 시뮬레이터 포트 | 8101 / 15101 | 8201 / 15201 |
+| exe | `POWDERALD_Control.exe` | `PEALD_Control.exe` |
 
-> **현재 단계 (v0.1.0)**
-> PLC 통신은 아직 없습니다. 장비 값은 **값 공급자(provider)** 인터페이스로만 들어오고,
-> 이번 단계에서는 `demo` provider 가 공정을 흉내 냅니다. 화면 헤더에 **데모** 칩이 항상
-> 표시되므로 실장비와 혼동할 일은 없습니다. 다음 단계에서 `plc` provider 로 갈아끼웁니다.
+> **현재 단계 (v0.2.0 — 1단계)**
+> 저장소 분리 · 장비 정체성 · 설정 · PLC 통신(Modbus TCP) · 내장 PLC 시뮬레이터 ·
+> 운전 화면(감시 + 펌핑/펌핑 정지/벤트/전체 닫기/알람 확인·리셋)까지입니다.
+>
+> - **2단계**: 수동 조작 전체(밸브·MFC·히터·PCV/RF·O3 라인), 레시피(편집·검증·PLC 표 변환·
+>   올리기·베이스 압력 대기 후 시작·진행 표시), 공정 데이터 로그
+> - **3단계**: 설정·관리자 PIN·PLC 파라미터·환산 편집, 트렌드·이력·데이터 로그 보기,
+>   exe 두 개 빌드, 최종 점검
+
+---
+
+## 두 프로그램은 완전히 독립입니다
+
+- 두 폴더 사이에 **import·경로 참조·공용 모듈·공용 설정·공용 데이터 폴더가 없습니다.**
+- 공통 기반 코드는 양쪽에 복사해 각자 가집니다(**의도된 중복**) —
+  한쪽을 고쳐도 다른 쪽은 영향이 없어야 하고, 한쪽이 멈춰도 다른 쪽은 돌아야 합니다.
+- 런타임 자원도 전부 따로입니다: 웹 포트, 시뮬레이터 포트, 단일 실행 뮤텍스,
+  Windows AppUserModelID, 데이터 폴더, 로그 파일 이름, exe 이름, 창 제목.
+- 실행·검증·빌드는 **폴더마다 따로** 합니다. 루트에서 두 테스트를 한꺼번에 돌리지 않습니다.
+
+장비 이름·테마·고유색·아이콘은 설정이 아니라 각 프로그램의 **장비 정의 모듈**에 고정되어
+있습니다(`<패키지>/device.py`). 설정 파일을 잘못 복사해도 장비가 바뀌어 보이지 않습니다.
+설정으로 바꿀 수 있는 것은 창 위치(left/right)와 포트뿐입니다.
 
 ---
 
 ## 실행
 
 ```bash
+# Powder ALD
+cd POWDERALD
 pip install -r requirements.txt
+python run.py                       # exe 옆 / 이 폴더의 config.json
+python run.py --config 경로
+python run.py --headless            # 창 없이 서버만 (개발·검증용)
 
-# 챔버 1 — 화면 왼쪽 절반, 라이트 테마, 데모 시나리오 running
-python backend/server.py --config config/chamber1.example.json
-
-# 챔버 2 — 화면 오른쪽 절반, 다크 테마, 데모 시나리오 idle
-python backend/server.py --config config/chamber2.example.json
+# PEALD
+cd PEALD
+python run.py
 ```
 
-두 개를 동시에 실행해도 충돌하지 않습니다(포트·단일 실행 뮤텍스·데이터 폴더가 전부 챔버별).
+두 개를 동시에 실행해도 충돌하지 않습니다. 개발 중에는 브라우저로도 같은 화면을 볼 수 있습니다
+(`http://127.0.0.1:8101` / `:8201`).
 
-`--config` 를 생략하면 **exe 옆**(개발 중에는 프로젝트 루트)의 `config.json` 을 읽습니다.
-납품할 때는 같은 exe 를 챔버별 폴더 두 곳에 두고, 폴더마다 `config.json` 을 둡니다.
+`config.json` 이 없으면 `config/config.example.json` 으로 기동하고 화면에
+**"예시 설정으로 실행 중"** 경고를 띄웁니다. 예시 설정은 내장 PLC 시뮬레이터를 켜 두었으므로
+실장비 없이 바로 화면을 확인할 수 있습니다.
 
-개발 중에는 브라우저로도 같은 화면을 볼 수 있습니다: `http://127.0.0.1:<port>`
-창 없이 서버만 띄우려면 `--headless` 를 붙입니다(검증용).
-
-### 검증
+## 검증
 
 ```bash
-pip install -r requirements-dev.txt
-python -m pytest test -q
+cd POWDERALD && pip install -r requirements-dev.txt && python -m pytest -q
+cd PEALD     && python -m pytest -q
 ```
 
-> 실제 프로그램이 떠 있는 상태에서 테스트를 돌려도 됩니다. 단일 실행 뮤텍스는
-> `create_app(single_instance=False)` 로 검증 하네스에서만 꺼집니다.
-
----
-
-## 폴더 구조
-
-```
-backend/
-  server.py        진입점: FastAPI, 라우트, WebSocket, lifespan, --config 인자
-  window.py        pywebview 창: 좌/우 반쪽 배치, 챔버별 단일 실행, 포트 대체, 종료 확인
-  paths.py         BUNDLE_ROOT / DATA_ROOT / 챔버별 데이터 폴더
-  logger.py        챔버별 파일 로그
-  version.py       APP_NAME / APP_VERSION
-  config.py        설정 로드·검증·기본값 (장비 구성의 유일한 출처)
-  state.py         서버가 주인인 상태 스냅샷
-  connection.py    WebSocket 연결 관리, 로컬/원격 구분, push_*
-  commands.py      화면 명령 → 권한·상태 검사 → provider 호출
-  loops.py         provider 샘플링(10 Hz), 트렌드 기록, telemetry 전송(5 Hz)
-  trend_buffer.py  링버퍼 (1 Hz 1시간 + 압력 10 Hz 최근 10분)
-  recipe_model.py  레시피 계산·검증 (순수 함수)
-  storage.py       레시피 파일 I/O (원자적 쓰기, 파일명 검증)
-  providers/
-    base.py        provider 인터페이스  ← 장비와 나머지 코드의 유일한 경계
-    demo.py        데모 공정 흉내
-frontend/
-  index.html
-  css/tokens.css   색·간격·글꼴 변수 (light / dark) — 색은 여기에만
-  css/style.css    레이아웃·공통 컴포넌트
-  js/app.js        서버 통신 한 곳 (연결·재연결, send)
-  js/core.js       상태 수신 → 뷰 디스패치, 탭, fit(), 토스트, 종료 모달
-  js/fmt.js        숫자·단위·시간 포맷 한 곳
-  js/views/        main · schematic · recipe · trend · alarm · setup
-config/            chamber1.example.json · chamber2.example.json
-test/              pytest
-```
-
-실행 중 만들어지는 데이터는 전부 챔버별로 갈립니다(저장소에는 담지 않습니다).
-
-```
-data/<chamber.id>/
-  logs/      프로그램 로그(날짜별)
-  recipes/   레시피 JSON
-  datalog/   공정 데이터 로그 (이번 단계에서는 폴더만 만듭니다)
-```
-
----
-
-## 설계에서 지키는 것
-
-- **상태의 주인은 서버입니다.** 화면은 값을 지어내지 않습니다. 연결이 끊기면 `—` 를
-  보여주고 2초마다 다시 붙습니다.
-- **장비 구성은 설정 파일에만 있습니다.** 라인 개수, 밸브 태그, 공급 방식, 히터 채널,
-  인터락은 전부 `config` 에서 옵니다. 코드에는 장비 이름도 밸브 태그도 없습니다.
-  자세한 항목은 [CONFIG.md](CONFIG.md) 를 보세요.
-- **밸브 조합을 코드에 두지 않습니다.** "이 공급 방식은 어떤 밸브를 여는가"는
-  `modes` 정의에서 계산합니다(`recipe_model.step_open_tags`).
-- **안전 판정은 서버가 합니다.** 화면의 버튼 잠금은 편의일 뿐이고, 실제 차단은
-  `commands.py` 가 합니다. 공정 중 수동 조작, 검증에 실패한 레시피로 시작하기,
-  전구체·반응물 ALD 밸브 동시 개방은 서버가 거절합니다.
-- **색은 `tokens.css` 에만 있습니다.** 다크 테마는 같은 변수 이름의 다른 값입니다.
-- **오프라인 전제.** 웹폰트·CDN·외부 네트워크 요청이 하나도 없습니다.
-  글꼴은 Windows 기본 탑재(Malgun Gothic / Consolas)만 씁니다.
-- 단위는 Torr, °C, sccm, s 로 고정합니다. 숫자 포맷은 `fmt.js` 한 곳에서만 합니다.
-
-통신 약속(메시지 종류와 스키마)은 [INTERFACE.md](INTERFACE.md) 에 있습니다.
-
----
-
-## 원격 보기와 조작 권한
-
-서버는 기본으로 `127.0.0.1` 에만 바인드합니다.
-`server.host` 를 `0.0.0.0` 으로 바꾸면 다른 PC에서도 화면을 볼 수 있지만,
-**조작 명령은 이 PC(루프백) 접속에서만 받습니다.**
-
-- 원격 접속: `state` · `telemetry` · `log` 수신과 레시피 조회만 허용
-- 원격의 조작 명령: 거절 + 파일 로그 기록 + 화면 알림
-- 판정은 서버가 합니다(화면 잠금은 개발자 도구로 풀 수 있으므로 믿지 않습니다)
-
-관리자 PIN 기능은 이번 단계에서 화면 표시만 합니다. 코드에는 기본 PIN 이나 그 해시를
-두지 않으며, 나중에 저장할 때도 데이터 폴더(추적 제외)에 해시로만 둡니다.
-
----
+주소표·비트 해석·환산 왕복·Modbus 통신·명령 핸드셰이크·하트비트·시뮬레이터 동작·
+원격 보기 전용·단일 실행·설정 검증을 덮습니다.
 
 ## 빌드
 
 ```bash
-pyinstaller build.spec --clean --noconfirm
-# 결과: dist/ALDControl/ALDControl.exe
+cd POWDERALD && pyinstaller build.spec --clean --noconfirm
+cd PEALD     && pyinstaller build.spec --clean --noconfirm
 ```
 
 `config.json` 과 `data/` 는 번들에 넣지 않습니다(읽기 전용 임시 폴더로 가서 저장이
-유실됩니다). 배포할 때 exe 폴더에 `config.json` 을 함께 둡니다.
+유실됩니다). 배포할 때 exe 폴더에 함께 둡니다. **빌드 검증은 3단계에서 합니다.**
 
-버전은 `backend/version.py` 에서 관리합니다.
+---
+
+## 저장소 구조
+
+```
+README.md  .gitignore  .gitattributes
+POWDERALD/                  Powder ALD 제어 프로그램
+  README.md                 설정 항목 · PLC 통신 약속 · 화면 통신 약속
+  run.py                    진입점
+  powderald/                파이썬 패키지 (서버 · PLC 통신 · 시뮬레이터 · 장비 정의)
+  frontend/                 index.html · css · js
+  assets/                   아이콘
+  config/config.example.json
+  tests/                    pytest (이 폴더에서만 실행)
+  pytest.ini  requirements.txt  requirements-dev.txt  build.spec
+PEALD/                      PEALD 제어 프로그램 — 같은 구조, 패키지 이름 peald
+```
+
+## 추적하지 않는 파일
+
+현장 값과 운전 기록은 저장소에 올리지 않습니다(`.gitignore`).
+
+- `*/config.json` — 현장 IP·환산·풀스케일이 들어갑니다. 예시는 `config/config.example.json`
+- `*/data/` — 프로그램 로그 · 알람 이력 · 데이터 로그 · 레시피 · (나중의) 관리자 PIN 해시
+- `*/build/`, `*/dist/` — 빌드 산출물
+- 스크린샷·임시 파일
+
+예시 설정에는 `192.168.10.x` 형태의 **예시 IP** 만 들어 있습니다.
 
 ---
 
