@@ -320,14 +320,14 @@
       set('[data-hout="' + def.ch + '"]', conn && h.comm_ok && h.out_pct != null
         ? h.out_pct + ' %' : fmt.DASH);
       var pw = d.querySelector('[data-hpow="' + def.ch + '"]');
-      if (pw) pw.innerHTML = !conn ? fmt.DASH
+      if (pw) pw.innerHTML = (!conn || h.power == null) ? fmt.DASH
         : core.chip(h.power ? 'ON' : 'OFF', h.power ? 'ok' : 'off');
       var st = d.querySelector('[data-hst="' + def.ch + '"]');
       if (!st) return;
       if (!conn) { st.innerHTML = fmt.DASH; return; }
       if (!h.comm_ok) st.innerHTML = core.chip('통신 끊김', 'stop');
       else if (h.alarm) st.innerHTML = core.chip('조절기 알람', 'stop');
-      else if (def.max_c == null) st.innerHTML = core.chip('한계 미정', 'warn', '과온 한계가 없어 PLC 가 이 채널을 막습니다');
+      else if (def.max_c == null) st.innerHTML = core.chip('한계 미정', 'warn', '과온 한계가 없어 PLC 소프트 과온 감시가 꺼집니다 — PC 가 설정·전원 켜기를 막습니다');
       else st.innerHTML = core.chip('정상', 'ok');
     });
   }
@@ -395,13 +395,29 @@
     var c = b.dataset.cmd;
     if (c === 'exit') { core.askExit(); return; }
     if (c === 'process_start') { askStart(); return; }
-    var cf = CONFIRM[c];
+    var cf = confirmFor(c);
     if (cf) {
       core.confirmAsk(cf.t, cf.b, cf.ok, function () { w.app.send(c); });
     } else {
       w.app.send(c);
     }
   });
+
+  /** 확인 창 문구. Powder 는 O3 라인이 켜져 있으면 전체 닫기가 라인도 한꺼번에 끈다고 알린다. */
+  function confirmFor(c) {
+    var cf = CONFIRM[c];
+    if (!cf || c !== 'all_close') return cf;
+    var st = core.state || {};
+    if (!(st.device || {}).has_o3) return cf;
+    var t = st.live || {};
+    var aux = auxMap(st, t, !!(t.plc && t.plc.connected));
+    var mn = t.manual || {};
+    var o3on = aux['O3GEN'] || aux['IV-B'] || aux['BPMP'] || (mn.aux_request || 0) !== 0;
+    if (!o3on) return cf;
+    return { t: cf.t, ok: cf.ok,
+      b: cf.b + '<br><br><b>O3 라인(발생기·IV-B·바이패스 펌프)도 한꺼번에 꺼집니다</b> — ' +
+         '순서대로 끄려면 수동 조작의 O3 라인 끄기를 먼저 하세요.' };
+  }
 
   /** 시작은 흐름이다 — 무엇을 올리고 무엇을 기다리는지 먼저 알려 준다. */
   function askStart() {

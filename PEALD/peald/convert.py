@@ -12,6 +12,8 @@ convert.py — 원시값(PLC 아날로그) ↔ 공학 단위 환산.
 
 import math
 
+from . import device as DEV
+
 # 계산이 불가능할 때 돌려주는 값. None 은 화면에서 '—' 로 그려진다.
 UNKNOWN = None
 
@@ -212,10 +214,11 @@ class Converters:
         for no, s in sorted(self.mfc.items()):
             if not s.confirmed or s.full is None:
                 out.append(f"MFC{no} 풀스케일")
-        if self.rf.full is not None and not self.rf.confirmed:
+        # 이 장비에 있는 것만 — 없는 장치의 '환산 미확정'은 운전자를 헷갈리게 한다.
+        if DEV.HAS_RF and self.rf.full is not None and not self.rf.confirmed:
             out.append("RF 전력")
-        if not self.pcv.confirmed:
+        if DEV.HAS_PCV and not self.pcv.confirmed:
             out.append("PCV 개도")
-        if self.o3.full is not None and not self.o3.confirmed:
+        if DEV.HAS_O3 and self.o3.full is not None and not self.o3.confirmed:
             out.append("O3 출력")
         return out

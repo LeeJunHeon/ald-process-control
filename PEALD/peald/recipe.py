@@ -204,7 +204,8 @@ def remaining_ms(cfg: dict, recipe: dict, pos: dict) -> int:
     """PLC 가 알려 준 현재 위치에서 남은 시간.
 
     pos: block(1부터) · step(표 전체 기준 번호) · cycle · group_pass · step_elapsed_ms · paused
-    ★ 일시정지 중에는 줄지 않는다(현재 스텝의 남은 시간을 그대로 둔다)."""
+    ★ PLC 는 스텝 '끝'에서 멈춘다 — 일시정지 중이면 멈춘 스텝은 이미 끝났으므로 빼고,
+      재개 뒤 첫 스텝은 직전 출력이 전부 닫힌 것으로 센다(최소 열림 적용)."""
     vmin, prep = _prm(cfg)
     blocks = recipe.get("blocks") or []
     if not blocks:
@@ -223,10 +224,23 @@ def remaining_ms(cfg: dict, recipe: dict, pos: dict) -> int:
     cycle = max(1, int(pos.get("cycle") or 1))
     cur = first if cycle == 1 else rep
 
-    elapsed = 0 if pos.get("paused") else int(pos.get("step_elapsed_ms") or 0)
-    left = max(0, cur[idx] - elapsed) + sum(cur[idx + 1:])
     repeat = max(1, int(block.get("repeat") or 1))
-    left += max(0, repeat - cycle) * sum(rep)
+    if pos.get("paused"):
+        sets = [_valve_set(s) for s in steps]
+        if idx + 1 < len(steps):
+            nxt = effective_step_ms(steps[idx + 1].get("time_ms"), bool(sets[idx + 1]), vmin)
+            left = nxt + sum(cur[idx + 2:])
+            left += max(0, repeat - cycle) * sum(rep)
+        elif cycle < repeat:
+            # 다음 사이클 첫 스텝 — 직전 출력이 닫힘이라 첫 사이클 시간과 같다
+            left = first[0] + sum(rep[1:])
+            left += max(0, repeat - cycle - 1) * sum(rep)
+        else:
+            left = 0
+    else:
+        elapsed = int(pos.get("step_elapsed_ms") or 0)
+        left = max(0, cur[idx] - elapsed) + sum(cur[idx + 1:])
+        left += max(0, repeat - cycle) * sum(rep)
 
     # 남은 블록들
     left += _blocks_after(cfg, recipe, bno, int(pos.get("group_pass") or 1))

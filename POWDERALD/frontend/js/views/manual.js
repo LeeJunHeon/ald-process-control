@@ -3,8 +3,11 @@
  *
  * 밸브 / MFC / 히터 / 장비 전용(PCV·RF 또는 O3 라인).
  *
- * ★ 요청과 실제 반영을 나란히 보여 준다. 요청했는데 안 열린 밸브는 '대기'로 둔다 —
- *   PLC 가 허가를 안 준 것을 '열렸다'로 보여 주면 운전자가 다음 판단을 틀린다.
+ * ★ 요청(PLC 반영 영역 D04012·D04050)과 출력(D00010·D00014)을 나란히 보여 준다.
+ *   요청했는데 안 나간 것은 '대기'로 둔다 — PLC 가 허가를 안 준 것을 '열렸다'로
+ *   보여 주면 운전자가 다음 판단을 틀린다.
+ * ★ 히터 전원 스위치는 서버가 가진 현재 값 기준으로 목표 상태를 보내고,
+ *   응답이 올 때까지 그 스위치를 잠근다(두 번 눌러 되돌아가는 일을 막는다).
  * ★ 잠금 해제가 없으면 밸브를 못 누른다. 공정이 시작되면 서버가 다시 잠근다.
  * ★ 판정은 서버가 한다 — 여기서 막는 것은 손이 미끄러지는 것을 줄이려는 것뿐이고,
  *   실제로 거절하는 쪽은 PLC 다.
@@ -13,6 +16,7 @@
   'use strict';
 
   var built = false;
+  var heaterBusy = {};     // ch → { target, until } — 응답 전까지 스위치 잠금
 
   function open() {
     core.setText('mnDev', ((core.state || {}).device || {}).name || '');
@@ -98,6 +102,7 @@
         '</div>';
     }
 
+    h += '<div class="hint warn" data-bind="mnAuxPending"></div>';
     box.innerHTML = h;
     built = true;
   }
@@ -123,7 +128,7 @@
       var vd = ((s.structure || {}).valves || []).filter(function (v) { return v.tag === tag; })[0];
       if (!vd) return;
       var req = conn && core.bit(mn.valve_request, vd.bit);
-      var app = conn && core.bit(mn.valve_applied, vd.bit);
+      var app = conn && core.bit(mn.valve_out, vd.bit);
       e.classList.toggle('on', app);
       e.classList.toggle('req', req && !app);
       e.classList.toggle('dis', !can || !mn.unlocked);
@@ -147,8 +152,27 @@
       setText('[data-mnhcur="' + x.ch + '"]',
         conn ? '현재 ' + fmt.temp(v.pv) + ' / 설정 ' + fmt.temp(v.sv) : fmt.DASH);
       var p = d.querySelector('[data-mnhpow="' + x.ch + '"]');
-      if (p) p.classList.toggle('on', !!(conn && v.power));
+      var busy = heaterBusy[x.ch];
+      if (busy && (!conn || v.power === busy.target || Date.now() > busy.until)) {
+        delete heaterBusy[x.ch];
+        busy = null;
+      }
+      if (p) {
+        p.classList.toggle('on', !!(conn && v.power));
+        p.classList.toggle('busy', !!busy);
+        p.title = busy ? '응답을 기다리는 중' : '';
+      }
     });
+
+    var ap = mn.aux_pending || [];
+    core.setText('mnAuxPending', conn && ap.length
+      ? '허가 대기(요청했지만 출력 안 나감): ' + ap.join(' · ') : '');
+    if ((s.device || {}).has_o3) {
+      var left = mn.o3_off_left_s || 0;
+      core.setText('mnO3Note', left > 0
+        ? '발생기를 껐습니다 — ' + left + ' s 뒤 바이패스 라인을 닫습니다 (화면을 닫아도 진행)'
+        : '끄기는 발생기를 먼저 끄고, 배관에 남은 O3 를 뺀 뒤 바이패스 라인을 닫습니다.');
+    }
 
     Array.prototype.forEach.call(d.querySelectorAll('#manualModal [data-mn]'), function (b) {
       if (b.dataset.mn === 'close' || b.dataset.mn === 'unlock') return;
@@ -173,8 +197,15 @@
     }
     var pw = ev.target.closest('[data-mnhpow]');
     if (pw) {
-      w.app.send('manual_heater',
-        { power: kv(pw.dataset.mnhpow, !pw.classList.contains('on')) });
+      var ch = Number(pw.dataset.mnhpow);
+      if (heaterBusy[ch]) return;
+      // ★ 화면 칠이 아니라 서버가 가진 현재 값(D01010 되읽기) 기준으로 목표를 정한다.
+      var cur = (((core.state || {}).live || {}).heaters || [])[ch - 1] || {};
+      if (cur.power == null) { core.toast('히터 전원 상태를 아직 읽지 못했습니다', 'warn'); return; }
+      var target = !cur.power;
+      heaterBusy[ch] = { target: target, until: Date.now() + 4000 };
+      pw.classList.add('busy');
+      w.app.send('manual_heater', { power: kv(ch, target) });
       return;
     }
     var b = ev.target.closest('#manualModal [data-mn]');
@@ -242,14 +273,8 @@
       return;
     }
     if (what === 'o3_off') {
+      // 발생기를 먼저 끄고, 배관에 남은 O3 를 뺀 뒤 바이패스 라인을 닫는다 — 지연은 서버가 센다.
       w.app.send('manual_o3', { action: 'off' });
-      // 발생기를 먼저 끄고, 배관에 남은 O3 를 뺀 뒤 바이패스 라인을 닫는다.
-      var wait = (((core.state || {}).config || {}).process || {}).o3_off_delay_s || 10;
-      core.setText('mnO3Note', '발생기를 껐습니다 — ' + wait + ' s 뒤 바이패스 라인을 닫습니다');
-      setTimeout(function () {
-        w.app.send('manual_o3_finish');
-        core.setText('mnO3Note', '바이패스 라인을 닫았습니다');
-      }, wait * 1000);
     }
   }
 
@@ -262,5 +287,8 @@
     },
     update: paint
   });
-  w.viewManual = { open: open, paint: paint };
+  /** 명령 응답(알림)이 오면 잠근 스위치를 푼다. */
+  function onNotice() { heaterBusy = {}; paint(); }
+
+  w.viewManual = { open: open, paint: paint, onNotice: onNotice };
 })(window, document);

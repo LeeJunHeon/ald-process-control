@@ -87,7 +87,8 @@ class State:
         self.recipe_check = {}          # 고른 레시피의 검증 결과
         self.plc_recipe = {}            # 지금 PLC 에 올라가 있는 레시피 요약
         self.manual_unlock_until = 0.0  # 수동 밸브 잠금 해제 만료 시각
-        self.o3_off_at = 0.0            # O3 발생기를 끈 시각 + 지연 (화면이 마무리를 부른다)
+        self.o3_off_at = 0.0            # O3 바이패스 라인을 닫을 시각 (서버 타이머)
+        self.o3_off_task = None
 
     # ===================== 로그 =====================
     def add_log(self, level: str, msg: str):
@@ -150,6 +151,7 @@ class State:
                 "rtt_ms": link.rtt_ms if conn else None,
                 "addr": link.addr_text if link else "",
                 "prm_mismatch": list(link.prm_mismatch) if link else [],
+                "prm": self.prm_table() if conn else [],
             },
             "alarms": self.alarms.list(),
             "alarm_new": bool(conn and link.status[A.D_ALARM_NEW]),
@@ -203,20 +205,24 @@ class State:
 
         tc = s[A.D_TC_COMM]
         heaters = []
+        # ★ 히터 목표·전원은 명령 영역을 1 s 마다 되읽은 값이다(명령 13 성공 직후에는 쓴 값).
+        power_req = link.cmd_reg(A.D_HEATER_POWER)
         for h in self.cfg.get("heaters") or []:
             ch = h["ch"]
             i = ch - 1
             # ★ 온도조절기 통신이 끊긴 국번의 채널은 현재값을 '—' 로 둔다.
             #   마지막으로 읽은 값을 계속 보여 주면 식고 있는 히터를 정상으로 오해한다.
-            station_ok = bool((tc >> min(2, i // 4)) & 1)
+            station = int(h.get("station") or (i // 4 + 1))
+            station_ok = bool((tc >> (station - 1)) & 1)
+            sv_raw = link.cmd_reg(A.D_HEATER_SV + i)
             heaters.append({
                 "ch": ch, "name": h["name"], "enabled": h["enabled"],
                 "max_c": h.get("max_c"), "default_sv": h.get("default_sv"),
+                "station": station,
                 "pv": heater_temp(s[A.D_HEATER_PV + i]) if station_ok else None,
                 "out_pct": s[A.D_HEATER_OUT + i] if station_ok else None,
-                "sv": heater_temp(link.sync_regs[A.D_HEATER_SV + i - A.SYNC_BASE])
-                if getattr(link, "sync_regs", None) else None,
-                "power": bool((self._heater_power() >> i) & 1),
+                "sv": heater_temp(sv_raw) if sv_raw is not None else None,
+                "power": None if power_req is None else bool((power_req >> i) & 1),
                 "alarm": bool((s[A.D_HEATER_ALARM] >> i) & 1),
                 "comm_ok": station_ok,
             })
@@ -262,34 +268,73 @@ class State:
                 return d[off] if off < len(d) else None
         return None
 
-    def _heater_power(self) -> int:
-        link = self.link
-        if link and getattr(link, "sync_regs", None):
-            return link.sync_regs[A.D_HEATER_POWER - A.SYNC_BASE]
-        return 0
-
     def manual_state(self) -> dict:
-        """수동 조작 화면이 쓰는 값. 요청과 실제 반영을 나란히 보여 준다 —
-        요청했는데 안 열린 밸브(허가 대기)를 운전자가 알아야 한다."""
+        """수동 조작 화면이 쓰는 값. 요청(PLC 반영 영역 D04012·D04050)과
+        출력(D00010·D00014)을 나란히 보여 준다 — 요청했는데 안 나간 것(허가 대기)을
+        운전자가 알아야 한다."""
         import time as _t
         link = self.link
         conn = bool(link and link.connected)
-        req = link.manual_valve if conn else 0
-        applied = link.applied_valve if conn else 0
-        pending = []
-        for v in DEV.VALVES:
-            bit = 1 << v["bit"]
-            if (req & bit) and not (applied & bit):
-                pending.append(v["tag"])
+        req = link.applied_valve if conn else 0
+        out = link.status[A.D_VALVE_OUT] if conn else 0
+        aux_req = link.applied_aux if conn else 0
+        aux_out = (link.status[A.D_AUX_OUT] & DEV.AUX_CMD_MASK) if conn else 0
+        pending = [v["tag"] for v in DEV.VALVES
+                   if (req >> v["bit"]) & 1 and not (out >> v["bit"]) & 1]
+        aux_pending = [a["tag"] for a in DEV.AUX
+                       if (aux_req >> a["bit"]) & 1 and not (aux_out >> a["bit"]) & 1]
+        o3_left = max(0, int(round(self.o3_off_at - _t.monotonic()))) if self.o3_off_at else 0
         return {
             "unlocked": _t.monotonic() < self.manual_unlock_until,
             "unlock_left_s": max(0, int(self.manual_unlock_until - _t.monotonic())),
             "valve_request": req,
-            "valve_applied": applied,
-            "aux_request": link.manual_aux if conn else 0,
-            "aux_applied": link.applied_aux if conn else 0,
+            "valve_out": out,
+            "aux_request": aux_req,
+            "aux_out": aux_out,
             "pending": pending,
+            "aux_pending": aux_pending,
+            "o3_off_left_s": o3_left,
         }
+
+    def prm_table(self) -> list:
+        """설정 탭 PRM 표 — PC 가 실제로 쓴 원시값과 되읽은 값(공학 단위 병기)."""
+        link = self.link
+        if not link:
+            return []
+        from .convert import heater_temp as _ht
+        c = self.conv
+        m1 = c.mfc.get(1)
+        o3_unit = c.o3.unit if c else ""
+
+        def eng(addr, raw):
+            if raw is None:
+                return None, ""
+            if addr in (A.D_PRM_BASE_PRESS, A.D_PRM_RF_MAX_PRESS):
+                return c.cvg.to_torr(raw), "Torr"
+            if addr == A.D_PRM_MFC_TOL:
+                if raw == 0:
+                    return 0, "감시 안 함"
+                return (m1.to_eng(raw) if m1 else None), "sccm"
+            if addr in (A.D_PRM_RF_MAX, A.D_PRM_RF_REF_MAX):
+                return c.rf.to_eng(raw), "W"
+            if addr == A.D_PRM_O3_MAX:
+                return c.o3.to_eng(raw), o3_unit
+            if A.D_PRM_HEATER_MAX <= addr < A.D_PRM_HEATER_MAX + 12:
+                return (_ht(raw), "℃") if raw else (0, "감시 안 함")
+            if addr in (A.D_PRM_PC_WDT_MS, A.D_PRM_VALVE_MIN_MS, A.D_PRM_RF_REF_MS):
+                return raw, "ms"
+            return raw, "s"
+
+        names = {addr: name for addr, (name, _v) in link._param_words().items()}
+        rows = []
+        for addr in sorted(link.prm_written):
+            w = link.prm_written[addr]
+            r = link.prm_readback.get(addr)
+            ev, unit = eng(addr, r if r is not None else w)
+            rows.append({"addr": f"D{addr:05d}", "name": names.get(addr, ""),
+                         "written": w, "readback": r, "eng": ev, "unit": unit,
+                         "match": r == w})
+        return rows
 
     def snapshot(self, access_local: bool = True) -> dict:
         """접속할 때와 구조가 바뀔 때 보내는 전체 스냅샷."""

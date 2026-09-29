@@ -484,6 +484,7 @@ header {
 .sw.sm { width: 32px; height: 16px; }
 .sw.sm::after { width: 10px; height: 10px; }
 .sw.sm.on::after { left: 19px; }
+.sw.busy { opacity: .5; cursor: wait; }
 
 /* ===================== 상태바 데이터 로그 ===================== */
 .statusbar .rec { color: var(--ok); font-weight: 600; }

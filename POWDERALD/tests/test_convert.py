@@ -105,7 +105,7 @@ def test_heater_negative_is_signed():
 
 
 def test_heater_none_is_zero_raw():
-    """max_c 가 null 인 채널은 PLC 한계에 0 을 써서 막는다."""
+    """max_c 가 null 인 채널은 PLC 한계에 0 (소프트 과온 감시 없음)."""
     assert heater_raw(None) == 0
 
 
@@ -115,6 +115,17 @@ def test_converters_lists_unconfirmed(cfg):
     names = c.unconfirmed()
     assert "CVG 압력" in names
     assert any("MFC" in n for n in names)
+
+
+def test_unconfirmed_lists_only_devices_present(cfg):
+    """이 장비에 없는 장치(PCV·RF·O3)의 '환산 미확정'은 내지 않는다."""
+    from powderald import device as DEV
+    names = Converters(cfg).unconfirmed()
+    assert ("PCV 개도" in names) == (DEV.HAS_PCV and not (cfg.get("pcv") or {}).get("confirmed"))
+    if not DEV.HAS_RF:
+        assert "RF 전력" not in names
+    if not DEV.HAS_O3:
+        assert "O3 출력" not in names
 
 
 def test_converters_use_config_raw_max(cfg):

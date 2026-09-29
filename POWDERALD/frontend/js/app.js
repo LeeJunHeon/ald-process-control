@@ -47,7 +47,10 @@
     switch (msg && msg.type) {
       case 'state':  core.applyState(msg); break;
       case 'live':   core.applyLive(msg); break;
-      case 'notice': core.toast(msg.msg, msg.level); break;
+      case 'notice':
+        core.toast(msg.msg, msg.level);
+        if (w.viewManual && w.viewManual.onNotice) w.viewManual.onNotice();
+        break;
       case 'log':
         if (core.state) {
           (core.state.logs = core.state.logs || []).push({ ts: msg.ts, level: msg.level, msg: msg.msg });

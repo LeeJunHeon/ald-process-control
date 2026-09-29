@@ -12,9 +12,7 @@
     var L = core.bind('setupLeft'), R = core.bind('setupRight');
     if (!L || !R) return;
     var c = s.config || {};
-    var dev = s.device || {};
     var plc = c.plc || {};
-    var prm = c.params || {};
     var unconf = s.unconfirmed || [];
 
     L.innerHTML =
@@ -51,32 +49,19 @@
         '<div class="hint" style="margin-top:6px">폴더: data/logs · data/alarms</div>');
 
     R.innerHTML =
-      panel('PLC 파라미터 (PC 가 써 넣는 값)', '<span data-bind="prmChip"></span>',
-        '<table class="tbl"><thead><tr><th class="l">항목</th><th>값</th><th>주소</th></tr></thead><tbody>' +
-        prow('PC 하트비트 끊김 판정', prm.pc_wdt_ms, 'ms', 'D01100') +
-        prow('공정 시작 베이스 압력', prm.base_press_torr, 'Torr', 'D01101') +
-        prow('베이스 도달 제한', prm.pump_timeout_s, 's', 'D01102') +
-        prow('대기압 도달 제한', prm.vent_timeout_s, 's', 'D01103') +
-        prow('MFC 안정 판정', prm.mfc_stable_s, 's', 'D01104') +
-        prow('MFC1 허용 편차', prm.mfc_tol_sccm, 'sccm', 'D01105') +
-        prow('MFC 안정 제한', prm.mfc_timeout_s, 's', 'D01106') +
-        prow('펄스 밸브 최소 열림', prm.valve_min_ms, 'ms', 'D01107') +
-        (dev.has_rf
-          ? prow('RF 설정 상한', prm.rf_max_w, 'W', 'D01108') +
-            prow('반사 전력 한계', prm.rf_ref_max_w, 'W', 'D01109') +
-            prow('반사 초과 허용', prm.rf_ref_ms, 'ms', 'D01122') +
-            prow('RF 허가 최대 압력', prm.rf_p_max_torr, 'Torr', 'D01123')
-          : '') +
-        (dev.has_o3 ? prow('O3 설정 상한', prm.o3_max, '', 'D01124') : '') +
-        '</tbody></table>' +
-        '<div class="hint" style="margin-top:6px">연결할 때마다 원시값으로 바꿔 PLC 에 쓰고 되읽어 확인합니다. ' +
-        '0 이면 PLC 가 해당 기능을 막습니다.</div>') +
+      panel('PLC 파라미터 (PC 가 쓴 원시값 · 되읽은 값)', '<span data-bind="prmChip"></span>',
+        '<table class="tbl"><thead><tr><th class="l">항목</th><th>쓴 원시값</th><th>되읽은 값</th>' +
+        '<th>공학 단위</th><th>주소</th></tr></thead><tbody data-bind="prmBody">' +
+        '<tr><td class="l dim" colspan="5">PLC 에 연결되면 표시합니다</td></tr></tbody></table>' +
+        '<div class="hint" style="margin-top:6px">연결할 때마다 설정을 원시값으로 바꿔 PLC 에 쓰고, 1 s 마다 되읽습니다. ' +
+        '공학 단위는 되읽은 값을 거꾸로 환산한 것입니다. 0 이면 PLC 가 해당 기능을 막거나 감시하지 않습니다.</div>') +
 
       panel('히터 과온 한계', '',
-        '<table class="tbl"><thead><tr><th class="l">채널</th><th>사용</th><th>한계</th><th>기본 설정</th></tr></thead><tbody>' +
+        '<table class="tbl"><thead><tr><th class="l">채널</th><th>사용</th><th>국번</th><th>한계</th><th>기본 설정</th></tr></thead><tbody>' +
         ((s.structure || {}).heaters || []).map(function (h) {
           return '<tr class="' + (h.enabled ? '' : 'dim') + '"><td>CH' + h.ch + ' ' + core.esc(h.name) + '</td>' +
             '<td>' + (h.enabled ? '예' : '아니오') + '</td>' +
+            '<td>' + core.esc(h.station == null ? fmt.DASH : h.station) + '</td>' +
             '<td>' + (h.max_c == null
               ? '<span class="unconf">미정</span>'
               : fmt.temp(h.max_c) + '<span class="unit">°C</span>') + '</td>' +
@@ -100,6 +85,23 @@
     core.setText('dgRtt', conn && t.plc.rtt_ms != null ? t.plc.rtt_ms + ' ms' : fmt.DASH);
     core.setText('dgScan', conn && t.scan_max_ms != null ? t.scan_max_ms + ' ms' : fmt.DASH);
     core.setText('dgHb', !conn ? fmt.DASH : (t.plc.hb_ok ? '정상' : '멈춤'));
+    var body = core.bind('prmBody');
+    var rows = (t.plc || {}).prm || [];
+    if (body && rows.length) {
+      body.innerHTML = rows.map(function (r) {
+        var ev = r.eng == null ? fmt.DASH
+          : r.unit === 'Torr' ? fmt.torr(r.eng)
+            : (Number.isInteger(r.eng) ? String(r.eng) : fmt.num(r.eng, 1));
+        return '<tr' + (r.match ? '' : ' class="bad"') + '><td class="l">' + core.esc(r.name) + '</td>' +
+          '<td class="mono">' + r.written + '</td>' +
+          '<td class="mono">' + (r.readback == null ? fmt.DASH : r.readback) +
+          (r.match ? '' : ' ' + core.chip('불일치', 'stop')) + '</td>' +
+          '<td class="mono">' + ev + '<span class="unit">' + core.esc(r.unit || '') + '</span></td>' +
+          '<td class="mono dim">' + core.esc(r.addr) + '</td></tr>';
+      }).join('');
+    } else if (body && !conn) {
+      body.innerHTML = '<tr><td class="l dim" colspan="5">PLC 끊김 — 값 없음</td></tr>';
+    }
     var pc = core.bind('prmChip');
     if (pc) {
       var mm = (t.plc || {}).prm_mismatch || [];
@@ -120,13 +122,6 @@
       (unconf ? '<span class="unconf">환산 미확정</span>' : '') + '</label><div class="inwrap">' +
       '<input class="inp" value="' + core.esc(val == null ? fmt.DASH : val) + '" disabled>' +
       (suffix ? '<span class="suffix">' + core.esc(suffix) + '</span>' : '') + '</div></div>';
-  }
-
-  function prow(label, val, unit, addr) {
-    return '<tr><td class="l">' + core.esc(label) + '</td>' +
-      '<td class="mono">' + (val == null ? '<span class="unconf">미정</span>' : core.esc(val)) +
-      (unit ? '<span class="unit">' + core.esc(unit) + '</span>' : '') + '</td>' +
-      '<td class="mono dim">' + addr + '</td></tr>';
   }
 
   function srcChip(src) {

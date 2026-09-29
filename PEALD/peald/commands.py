@@ -14,6 +14,7 @@ commands.py — 화면 명령 처리.
 """
 
 import time
+import asyncio
 
 from . import addresses as A
 from . import device as DEV
@@ -77,7 +78,10 @@ async def handle_command(data: dict, ws=None):
 
 
 # ===================== PLC 명령 =====================
-async def _send_plc(code: int, ws, args: dict = None, what: str = ""):
+async def _send_plc(code: int, ws, args: dict = None, what: str = "", sender=None):
+    """사전 판정 → 보내기 → 결과 알림. sender 가 있으면 그것으로 보낸다
+    (명령 12·13·14 처럼 잠금 안에서 PLC 값을 새로 읽고 써야 하는 것).
+    sender() → {result, text, refused?}. refused 면 PLC 에 보내지 않은 것이다."""
     name = what or A.CMD_NAMES.get(code, str(code))
     link = state.link
     if not (link and link.connected):
@@ -91,7 +95,15 @@ async def _send_plc(code: int, ws, args: dict = None, what: str = ""):
         return None
 
     no = link._cmd_no
-    result, text = await link.send_command(code, args)
+    if sender is None:
+        result, text = await link.send_command(code, args)
+    else:
+        res = await sender()
+        if res.get("refused"):
+            await push_notice(f"{name}: {res['text']}", "warn", ws)
+            logger.write("warn", f"명령 {name} 사전 거절 — {res['text']}")
+            return None
+        result, text = res.get("result"), res.get("text", "")
     origin = getattr(getattr(ws, "client", None), "host", "local") if ws else "local"
     logger.command(name, no, text, origin)
 
@@ -112,6 +124,22 @@ async def _send_plc(code: int, ws, args: dict = None, what: str = ""):
     return result
 
 
+# 펌핑 시작 결과 1 · 벤트 요청을 PLC 가 바로 지우는 래치 알람
+PUMP_BLOCK_ALARMS = ((A.ALM0_PUMP, "펌프 알람"), (A.ALM0_AIR, "공압 저하"),
+                     (A.ALM0_CW, "냉각수 이상"))
+
+
+def _pump_block_reasons(s) -> list:
+    """PLC 와 같은 기준 — 비상정지는 입력(D00008 b0), 나머지는 래치된 알람."""
+    out = []
+    if not A.bit(s[A.D_INPUT0], A.IN0_EMO):
+        out.append("비상정지 입력")
+    for bit, label in PUMP_BLOCK_ALARMS:
+        if A.bit(s[A.D_ALARM0], bit):
+            out.append(label + " 래치")
+    return out
+
+
 def precheck(code: int):
     """PLC 규칙과 같은 기준으로 미리 거른다. (통과여부, 이유)"""
     link = state.link
@@ -120,25 +148,25 @@ def precheck(code: int):
     s = link.status
     st = s[A.D_STATE]
     ilk = s[A.D_INTERLOCK]
-    a0 = s[A.D_ALARM0]
 
     if st in RUNNING_STATES and code in (9, 10, 11, 12, 13, 14):
         return False, f"공정 중({A.STATE_NAMES.get(st, st)})에는 할 수 없습니다"
     if code in (A.CMD_PAUSE, A.CMD_STOP_AFTER_CYCLE, A.CMD_ABORT) and st not in RUNNING_STATES:
         return False, "진행 중인 공정이 없습니다"
+    if code == A.CMD_PAUSE and st == A.STATE_PAUSE:
+        return False, "이미 일시정지 중입니다"
     if code == A.CMD_RESUME and st != A.STATE_PAUSE:
         return False, "일시정지 중이 아닙니다"
 
     if code == A.CMD_PUMP_START:
-        blocking = []
-        for bit, label in ((A.ALM0_EMO, "비상정지"), (A.ALM0_PUMP, "펌프 알람"),
-                           (A.ALM0_AIR, "공압 저하"), (A.ALM0_CW, "냉각수 이상")):
-            if (a0 >> bit) & 1:
-                blocking.append(label)
+        blocking = _pump_block_reasons(s)
         if blocking:
-            return False, "알람 때문에 막혀 있습니다 — " + " · ".join(blocking)
-    if code == A.CMD_VENT and not (ilk >> A.ILK_VENT_OK) & 1:
-        return False, "벤트 허가가 없습니다 — " + explain_interlock(code)
+            return False, "막혀 있습니다 — " + " · ".join(blocking)
+    if code == A.CMD_VENT:
+        blocking = _pump_block_reasons(s)
+        if blocking:
+            return False, ("PLC 가 벤트 요청을 바로 지웁니다 — " + " · ".join(blocking)
+                           + " (원인을 없애고 알람 리셋 뒤에 하세요)")
     if code == A.CMD_MANUAL_APPLY and (ilk >> A.ILK_SAFE_STOP_REQ) & 1:
         return False, "안전 정지 요구 중에는 수동 조작을 할 수 없습니다"
     return True, ""
@@ -158,15 +186,12 @@ def explain_interlock(code: int) -> str:
         if not cond:
             miss.append(label)
 
-    if code == A.CMD_VENT:
-        need(s[A.D_STATE] not in RUNNING_STATES, "공정 중이 아닐 것")
-        need(A.bit(i0, A.IN0_IVE_CLOSE), "IV-E 닫힘")
-        need(A.bit(i0, A.IN0_EMO), "비상정지 해제")
-    elif code == A.CMD_PUMP_START:
-        need(A.bit(i0, A.IN0_EMO), "비상정지 해제")
-        need(not A.bit(i0, A.IN0_PUMP_ALM), "펌프 알람 해제")
-        need(A.bit(i0, A.IN0_AIR), "공압 정상")
-        need(A.bit(i0, A.IN0_CW), "냉각수 정상")
+    if code in (A.CMD_VENT, A.CMD_PUMP_START):
+        if code == A.CMD_VENT:
+            need(s[A.D_STATE] not in RUNNING_STATES, "공정 중이 아닐 것")
+        need(A.bit(i0, A.IN0_EMO), "비상정지 입력 정상")
+        for bit, label in PUMP_BLOCK_ALARMS:
+            need(not A.bit(s[A.D_ALARM0], bit), label + " 래치 해제(알람 리셋)")
     elif code == A.CMD_PROCESS_START:
         need(A.bit(ilk, A.ILK_VALVE_OK), "공정 밸브 허가")
         need(A.bit(ilk, A.ILK_VACUUM), "베이스 압력 도달")
@@ -177,7 +202,8 @@ def explain_interlock(code: int) -> str:
         need(not A.bit(ilk, A.ILK_SAFE_STOP_REQ), "안전 정지 요구 해제")
         need(A.bit(ilk, A.ILK_BASIC), "기본 인터락(비상정지·공압·N2·리드·냉각수)")
 
-    if not A.bit(ilk, A.ILK_BASIC) and "기본 인터락(비상정지·공압·N2·리드·냉각수)" not in miss:
+    if (code not in (A.CMD_VENT, A.CMD_PUMP_START) and not A.bit(ilk, A.ILK_BASIC)
+            and "기본 인터락(비상정지·공압·N2·리드·냉각수)" not in miss):
         for bit, label in ((A.IN0_EMO, "비상정지"), (A.IN0_AIR, "공압"), (A.IN0_N2, "N2"),
                            (A.IN0_LID, "리드 닫힘"), (A.IN0_CW, "냉각수")):
             need(A.bit(i0, bit), label)
@@ -356,6 +382,9 @@ async def _cmd_process_cancel_wait(d, ws):
 
 
 # ===================== 수동 조작 =====================
+# ★ PC 는 수동 요청을 따로 기억하지 않는다. 명령 12·14 는 보낼 때마다 PLC 반영 영역
+#   (D04012~D04131)을 잠금 안에서 새로 읽고, 거기에 이번 변경만 얹어 전부 쓴다.
+#   밸브 하나를 눌러도 PCV·RF·O3·다른 MFC 는 지금 값 그대로여야 한다.
 async def _cmd_manual_unlock(d, ws):
     """배관도 밸브 조작 잠금 해제. 5분 뒤·공정 시작 때 자동으로 잠긴다."""
     on = bool(d.get("on", True))
@@ -372,6 +401,41 @@ def _manual_allowed():
     return True, ""
 
 
+async def _manual_send(ws, what: str, mutate):
+    """명령 12 — 반영 영역 기준 + 이번 변경. 결과 0 이어도 반영 안 된 비트가 있으면 알린다."""
+    link = state.link
+    box = {}
+
+    async def sender():
+        r = await link.manual_apply(mutate)
+        box.update(r)
+        return r
+
+    res = await _send_plc(A.CMD_MANUAL_APPLY, ws, what=what, sender=sender)
+    if res == A.RESULT_OK and (box.get("lost_valve") or box.get("lost_aux")):
+        from .plclink import describe_bits
+        msg = (f"{what}: PLC 에 반영되지 않았습니다 — "
+               f"{describe_bits(box['lost_valve'], box['lost_aux'])} "
+               f"({_lost_reason(box)})")
+        await push_notice(msg, "warn", ws)
+        await push_log(msg, "warn")
+    return res, box
+
+
+def _lost_reason(box) -> str:
+    """명령 12 는 받았는데 반영 영역에 없는 비트의 이유."""
+    link = state.link
+    s = link.status
+    why = []
+    if box.get("lost_valve") and A.bit(s[A.D_INPUT0], A.IN0_ATM):
+        why.append("챔버 대기압 입력이면 PLC 가 밸브 요청을 바로 지웁니다")
+    if box.get("lost_aux") and DEV.HAS_RF and not (box.get("sent") or {}).get("rf"):
+        why.append("RF 전력이 0 이면 PLC 가 RF 요청을 버립니다")
+    if A.bit(s[A.D_INTERLOCK], A.ILK_SAFE_STOP_REQ):
+        why.append("안전 정지 요구 중")
+    return " · ".join(why) if why else link.clear_reason(bool(box.get("lost_valve")))
+
+
 async def _cmd_manual_valve(d, ws):
     tag = d.get("tag") or ""
     want = bool(d.get("on"))
@@ -384,23 +448,20 @@ async def _cmd_manual_valve(d, ws):
         await push_notice(f"수동으로 다룰 수 없는 밸브입니다: {tag}", "warn", ws)
         return
 
-    link = state.link
-    req = link.manual_valve
-    new = (req | (1 << v["bit"])) if want else (req & ~(1 << v["bit"]))
-    # ★ 전구체와 반응물을 함께 여는 요청은 PC 가 막는다(PLC 도 둘 다 막고 알람을 낸다).
-    pre = any(new & (1 << b) for b in DEV.PRECURSOR_VALVE_BITS)
-    rea = any(new & (1 << b) for b in DEV.REACTANT_VALVE_BITS)
-    if pre and rea:
-        await push_notice("전구체 밸브와 반응물 밸브를 함께 열 수 없습니다 — "
-                          "PLC 가 둘 다 막고 중대 알람을 냅니다", "warn", ws)
-        return
+    def mutate(cur):
+        bit = 1 << v["bit"]
+        new = (cur["valve"] | bit) if want else (cur["valve"] & ~bit)
+        # ★ 전구체와 반응물을 함께 여는 요청은 PC 가 막는다(PLC 도 둘 다 막고 알람을 낸다).
+        pre = any(new & (1 << b) for b in DEV.PRECURSOR_VALVE_BITS)
+        rea = any(new & (1 << b) for b in DEV.REACTANT_VALVE_BITS)
+        if pre and rea:
+            return None, ("전구체 밸브와 반응물 밸브를 함께 열 수 없습니다 — "
+                          "PLC 가 둘 다 막고 중대 알람을 냅니다")
+        cur["valve"] = new
+        return cur, ""
 
-    link.manual_valve = new & DEV.MANUAL_VALVE_MASK
     state.manual_unlock_until = time.monotonic() + MANUAL_UNLOCK_S   # 조작하면 시간 연장
-    res = await _send_plc(A.CMD_MANUAL_APPLY, ws, link.manual_args(),
-                          what=f"밸브 {tag} {'열기' if want else '닫기'}")
-    if res != A.RESULT_OK:
-        link.manual_valve = req          # 거절되면 PC 요청도 되돌린다
+    await _manual_send(ws, f"밸브 {tag} {'열기' if want else '닫기'}", mutate)
 
 
 async def _cmd_manual_mfc(d, ws):
@@ -408,7 +469,7 @@ async def _cmd_manual_mfc(d, ws):
         await push_notice("공정 중에는 MFC 를 바꿀 수 없습니다", "warn", ws)
         return
     vals = d.get("sccm") or {}
-    args = {}
+    changes = {}
     named = []
     for m in state.cfg.get("mfc") or []:
         no = m["no"]
@@ -429,12 +490,23 @@ async def _cmd_manual_mfc(d, ws):
         if fv < 0 or (fs is not None and fv > float(fs)):
             await push_notice(f"MFC{no} 설정이 범위를 벗어납니다 (0~{fs})", "warn", ws)
             return
-        args[A.D_MFC_SV + no - 1] = sc.to_raw(fv)
+        changes[no] = sc.to_raw(fv)
         named.append(f"MFC{no}={fv:g}")
-    if not args:
+    if not changes:
         await push_notice("바꿀 MFC 값이 없습니다", "warn", ws)
         return
-    await _send_plc(A.CMD_MFC_APPLY, ws, args, what="MFC 수동 적용 (" + " ".join(named) + ")")
+
+    async def sender():
+        r, t = await state.link.mfc_apply(changes)
+        return {"result": r, "text": t}
+
+    await _send_plc(A.CMD_MFC_APPLY, ws, what="MFC 수동 적용 (" + " ".join(named) + ")",
+                    sender=sender)
+
+
+def _ot_latched() -> bool:
+    link = state.link
+    return bool(link and link.connected and A.bit(link.status[A.D_ALARM0], A.ALM0_OT))
 
 
 async def _cmd_manual_heater(d, ws):
@@ -444,16 +516,15 @@ async def _cmd_manual_heater(d, ws):
     from .convert import heater_raw
     sv = d.get("sv") or {}
     power = d.get("power") or {}
-    link = state.link
-    cur_power = link.heater_power
-    args = {}
+    sv_changes = {}
+    pw_changes = {}
     named = []
     for h in state.cfg.get("heaters") or []:
         ch = h["ch"]
         key = str(ch)
+        mx = h.get("max_c")
         if key in sv or ch in sv:
             v = sv.get(key, sv.get(ch))
-            mx = h.get("max_c")
             if mx is None:
                 await push_notice(f"CH{ch} 는 과온 한계가 정해지지 않아 설정할 수 없습니다",
                                   "warn", ws)
@@ -465,38 +536,49 @@ async def _cmd_manual_heater(d, ws):
             if not (0 <= fv <= float(mx)):
                 await push_notice(f"CH{ch} 설정 온도는 0~{mx:g} ℃ 이어야 합니다", "warn", ws)
                 return
-            args[A.D_HEATER_SV + ch - 1] = heater_raw(fv)
+            sv_changes[ch] = heater_raw(fv)
             named.append(f"CH{ch}={fv:g}℃")
         if key in power or ch in power:
             on = bool(power.get(key, power.get(ch)))
             bit = 1 << (ch - 1)
             if not (DEV.HEATER_POWER_MASK & bit):
                 continue
-            cur_power = (cur_power | bit) if on else (cur_power & ~bit)
+            if on and mx is None:
+                # ★ PLC 는 한계 0 인 채널을 막지 않는다(소프트 과온 감시만 안 한다).
+                #   감시 없는 히터를 켜지 않도록 PC 가 막는다.
+                await push_notice(f"CH{ch} 는 과온 한계가 정해지지 않아 켤 수 없습니다 — "
+                                  f"설정에서 max_c 를 넣으세요", "warn", ws)
+                return
+            if on and _ot_latched():
+                await push_notice("과온 알람이 래치돼 있어 히터를 켤 수 없습니다 — "
+                                  "PLC 가 매 스캔 전원을 끕니다. 원인을 없애고 알람 리셋 뒤에 켜세요",
+                                  "warn", ws)
+                return
+            pw_changes[bit] = on
             named.append(f"CH{ch} {'ON' if on else 'OFF'}")
-    cur_power &= DEV.HEATER_POWER_MASK
-    args[A.D_HEATER_POWER] = cur_power
     if not named:
         await push_notice("바꿀 히터 값이 없습니다", "warn", ws)
         return
-    res = await _send_plc(A.CMD_HEATER_APPLY, ws, args,
-                          what="히터 적용 (" + " ".join(named) + ")")
-    if res == A.RESULT_OK:
-        link.heater_power = cur_power
-    elif res is not None:
-        # PLC 가 거절했으면 PC 가 기억하는 전원 비트도 PLC 값으로 되돌린다
-        await _refresh_heater_power()
 
+    def mutate(cur_power, cur_sv):
+        p = cur_power
+        for bit, on in pw_changes.items():
+            p = (p | bit) if on else (p & ~bit)
+        for ch, raw in sv_changes.items():
+            cur_sv[ch - 1] = raw
+        return p & DEV.HEATER_POWER_MASK, cur_sv, ""
 
-async def _refresh_heater_power():
-    link = state.link
-    if not (link and link.connected):
-        return
-    try:
-        regs = await link.client.read_holding(A.D_HEATER_POWER, 1)
-        link.heater_power = regs[0]
-    except Exception:  # noqa: BLE001
-        pass
+    box = {}
+
+    async def sender():
+        r = await state.link.heater_apply(mutate)
+        box.update(r)
+        return r
+
+    await _send_plc(A.CMD_HEATER_APPLY, ws, what="히터 적용 (" + " ".join(named) + ")",
+                    sender=sender)
+    if box.get("reverted"):
+        await push_log("히터 적용이 거절돼 D01010·D01012~ 를 이전 값으로 되돌렸습니다", "warn")
 
 
 async def _cmd_manual_pcv(d, ws):
@@ -514,12 +596,17 @@ async def _cmd_manual_pcv(d, ws):
     if not (0 <= pct <= 100):
         await push_notice("PCV 목표는 0~100 % 이어야 합니다", "warn", ws)
         return
-    args = state.link.manual_args({A.D_PCV_SV: state.conv.pcv.to_raw(pct)})
-    await _send_plc(A.CMD_MANUAL_APPLY, ws, args, what=f"PCV 목표 {pct:g} %")
+    raw = state.conv.pcv.to_raw(pct)
+
+    def mutate(cur):
+        cur["pcv"] = raw
+        return cur, ""
+
+    await _manual_send(ws, f"PCV 목표 {pct:g} %", mutate)
 
 
 async def _cmd_manual_rf(d, ws):
-    """RF 시험 — 대기 중에만. 전력이 0 이면 PLC 가 요청을 지우므로 PC 도 막는다."""
+    """RF 시험 — 대기 중에만. 전력이 0 이면 PLC 가 요청을 버리므로 PC 도 막는다."""
     if not DEV.HAS_RF:
         await push_notice("이 장비에는 RF 가 없습니다", "warn", ws)
         return
@@ -527,8 +614,7 @@ async def _cmd_manual_rf(d, ws):
         await push_notice("공정 중에는 RF 를 수동으로 켤 수 없습니다", "warn", ws)
         return
     on = bool(d.get("on"))
-    link = state.link
-    extra = {}
+    raw = None
     if on:
         try:
             watt = float(d.get("watt"))
@@ -537,31 +623,38 @@ async def _cmd_manual_rf(d, ws):
             return
         lim = (state.cfg.get("params") or {}).get("rf_max_w")
         if watt <= 0:
-            await push_notice("RF 전력이 0 이면 PLC 가 RF 요청을 지웁니다 — "
+            await push_notice("RF 전력이 0 이면 PLC 가 RF 요청을 버립니다 — "
                               "전력을 먼저 넣으세요", "warn", ws)
             return
         if lim is not None and watt > float(lim):
             await push_notice(f"RF 전력이 상한을 넘습니다 (최대 {lim:g} W)", "warn", ws)
             return
-        extra[A.D_RF_SV] = state.conv.rf.to_raw(watt)
-        link.manual_aux |= 1 << A.AUX_RF
-    else:
-        link.manual_aux &= ~(1 << A.AUX_RF)
-    link.manual_aux &= DEV.AUX_CMD_MASK
-    await _send_plc(A.CMD_MANUAL_APPLY, ws, link.manual_args(extra),
-                    what=f"RF {'켜기' if on else '끄기'}")
+        raw = state.conv.rf.to_raw(watt)
+
+    def mutate(cur):
+        if on:
+            cur["aux"] |= 1 << A.AUX_RF
+            cur["rf"] = raw
+        else:
+            cur["aux"] &= ~(1 << A.AUX_RF)
+        return cur, ""
+
+    await _manual_send(ws, f"RF {'켜기' if on else '끄기'}", mutate)
+
+
+O3_LINE_BITS = ((1 << A.AUX_BYPASS_PUMP) | (1 << A.AUX_IVB)) if DEV.HAS_O3 else 0
 
 
 async def _cmd_manual_o3(d, ws):
     """O3 라인 — 켜기는 바이패스 펌프·IV-B·발생기를 한꺼번에 요청하고,
-    끄기는 발생기만 먼저 끈 뒤 지연을 두고 나머지를 끈다(배관에 남은 O3 를 뺀다)."""
+    끄기는 발생기만 먼저 끈 뒤 지연을 두고 나머지를 끈다(배관에 남은 O3 를 뺀다).
+    ★ 지연은 서버 타이머가 센다 — 화면을 닫거나 새로 고쳐도 마무리된다."""
     if not DEV.HAS_O3:
         await push_notice("이 장비에는 O3 라인이 없습니다", "warn", ws)
         return
     if _running():
         await push_notice("공정 중에는 O3 라인을 바꿀 수 없습니다", "warn", ws)
         return
-    link = state.link
     action = d.get("action") or "on"
 
     if action == "set":
@@ -574,9 +667,13 @@ async def _cmd_manual_o3(d, ws):
         if v < 0 or (lim is not None and v > float(lim)):
             await push_notice(f"O3 설정이 상한을 넘습니다 (0~{lim})", "warn", ws)
             return
-        await _send_plc(A.CMD_MANUAL_APPLY, ws,
-                        link.manual_args({A.D_O3_SV: state.conv.o3.to_raw(v)}),
-                        what=f"O3 설정 {v:g}")
+        raw = state.conv.o3.to_raw(v)
+
+        def set_mutate(cur):
+            cur["o3"] = raw
+            return cur, ""
+
+        await _manual_send(ws, f"O3 설정 {v:g}", set_mutate)
         return
 
     if action == "on":
@@ -588,33 +685,85 @@ async def _cmd_manual_o3(d, ws):
             await push_notice("O3 설정을 먼저 넣으세요 (0 이면 PLC 가 발생기를 막습니다)",
                               "warn", ws)
             return
-        link.manual_aux |= (1 << A.AUX_BYPASS_PUMP) | (1 << A.AUX_IVB) | (1 << A.AUX_O3_GEN)
-        link.manual_aux &= DEV.AUX_CMD_MASK
-        await _send_plc(A.CMD_MANUAL_APPLY, ws,
-                        link.manual_args({A.D_O3_SV: state.conv.o3.to_raw(v)}),
-                        what="O3 라인 켜기")
-        await push_log("O3 라인 켜기 — 바이패스 펌프 → IV-B → 5 s 뒤 발생기", "info")
+        _cancel_o3_timer()
+        raw = state.conv.o3.to_raw(v)
+
+        def on_mutate(cur):
+            cur["aux"] |= O3_LINE_BITS | (1 << A.AUX_O3_GEN)
+            cur["o3"] = raw
+            return cur, ""
+
+        res, _ = await _manual_send(ws, "O3 라인 켜기", on_mutate)
+        if res == A.RESULT_OK:
+            await push_log("O3 라인 켜기 — 바이패스 펌프 → IV-B → 5 s 뒤 발생기", "info")
         return
 
     # 끄기: 발생기 먼저, 지연 뒤 나머지
-    link.manual_aux &= ~(1 << A.AUX_O3_GEN)
-    link.manual_aux &= DEV.AUX_CMD_MASK
-    res = await _send_plc(A.CMD_MANUAL_APPLY, ws, link.manual_args(), what="O3 발생기 끄기")
+    def off_mutate(cur):
+        cur["aux"] &= ~(1 << A.AUX_O3_GEN)
+        return cur, ""
+
+    res, _ = await _manual_send(ws, "O3 발생기 끄기", off_mutate)
     if res != A.RESULT_OK:
         return
     delay = float((state.cfg.get("process") or {}).get("o3_off_delay_s") or 10)
+    _cancel_o3_timer()
     state.o3_off_at = time.monotonic() + delay
+    state.o3_off_task = asyncio.create_task(_o3_finish_later(delay))
     await push_log(f"O3 발생기를 껐습니다 — {delay:g} s 뒤 바이패스 라인을 닫습니다", "info")
 
 
-async def _cmd_manual_o3_finish(d, ws):
-    """화면이 지연을 센 뒤 부른다 — 바이패스 펌프·IV-B 를 끈다."""
-    if not DEV.HAS_O3 or _running():
+def _cancel_o3_timer():
+    t = getattr(state, "o3_off_task", None)
+    if t and not t.done():
+        t.cancel()
+    state.o3_off_task = None
+    state.o3_off_at = 0.0
+
+
+async def _o3_finish_later(delay: float):
+    try:
+        await asyncio.sleep(delay)
+    except asyncio.CancelledError:
         return
+    state.o3_off_at = 0.0
+    state.o3_off_task = None
+    try:
+        await o3_finish()
+    except Exception as e:  # noqa: BLE001
+        logger.write("err", f"O3 바이패스 라인 닫기 오류: {type(e).__name__}: {e}")
+
+
+async def o3_finish():
+    """지연이 끝나면 바이패스 펌프·IV-B 를 끈다. 그 사이 공정이 시작됐거나
+    PLC 가 라인을 지웠으면 취소하고 로그만 남긴다."""
     link = state.link
-    link.manual_aux &= ~((1 << A.AUX_BYPASS_PUMP) | (1 << A.AUX_IVB))
-    link.manual_aux &= DEV.AUX_CMD_MASK
-    await _send_plc(A.CMD_MANUAL_APPLY, ws, link.manual_args(), what="O3 바이패스 라인 닫기")
+    if not (link and link.connected):
+        await push_log("O3 바이패스 라인 닫기 취소 — PLC 연결이 끊겼습니다", "warn")
+        return
+    if _running():
+        await push_log("O3 바이패스 라인 닫기 취소 — 공정이 시작됐습니다", "warn")
+        return
+
+    def mutate(cur):
+        if not (cur["aux"] & O3_LINE_BITS):
+            return None, "PLC 가 이미 O3 라인을 지웠습니다"
+        if cur["aux"] & (1 << A.AUX_O3_GEN):
+            return None, "O3 발생기가 다시 켜져 있습니다"
+        cur["aux"] &= ~O3_LINE_BITS
+        return cur, ""
+
+    box = {}
+
+    async def sender():
+        r = await link.manual_apply(mutate)
+        box.update(r)
+        return r
+
+    res = await _send_plc(A.CMD_MANUAL_APPLY, None, what="O3 바이패스 라인 닫기", sender=sender)
+    if box.get("refused"):
+        await push_log(f"O3 바이패스 라인 닫기 취소 — {box.get('text')}", "warn")
+    return res
 
 
 # ===================== 시뮬레이터 조작판 =====================
@@ -670,5 +819,4 @@ _HANDLERS = {
     "manual_pcv": _cmd_manual_pcv,
     "manual_rf": _cmd_manual_rf,
     "manual_o3": _cmd_manual_o3,
-    "manual_o3_finish": _cmd_manual_o3_finish,
 }

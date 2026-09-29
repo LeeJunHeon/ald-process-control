@@ -109,8 +109,8 @@ class ProcessRunner:
                     continue
                 i = h["ch"] - 1
                 pv = _temp(s[A.D_HEATER_PV + i])
-                sv = _temp(link.sync_regs[A.D_HEATER_SV + i - A.SYNC_BASE]) \
-                    if getattr(link, "sync_regs", None) else None
+                sv_raw = link.cmd_reg(A.D_HEATER_SV + i)
+                sv = _temp(sv_raw) if sv_raw is not None else None
                 if sv is None or abs(pv - sv) > band:
                     bad.append(f"CH{h['ch']} {h['name']}")
             out.append({"key": "heater", "label": f"히터 안정 (±{band:g} °C)", "ok": not bad,

@@ -270,6 +270,17 @@
     p.setAttribute('stroke', open ? 'var(--valve-open)' : 'var(--valve-closed)');
   }
 
+  function markPending(tag, pending) {
+    var p = svg.querySelector('[data-valve="' + tag + '"]');
+    if (!p) return;
+    if (pending) {
+      p.setAttribute('stroke', 'var(--warn)');
+      p.setAttribute('stroke-dasharray', '3 2');
+    } else {
+      p.removeAttribute('stroke-dasharray');
+    }
+  }
+
   function update(t) {
     if (!svg || !built) return;
     var st = core.state || {};
@@ -277,11 +288,14 @@
     var conn = !!(t.plc && t.plc.connected);
 
     // --- 밸브 (D00010 실제 출력) ---
+    // 요청(D04012)했는데 출력이 안 나간 밸브(허가 대기)는 점선으로 구분한다.
+    var pend = conn ? ((t.manual || {}).pending || []).concat((t.manual || {}).aux_pending || []) : [];
     var vmap = {};
     (str.valves || []).forEach(function (v) {
       var on = conn && t.valves != null && core.bit(t.valves, v.bit);
       vmap[v.tag] = on;
       setValve(v.tag, on);
+      markPending(v.tag, pend.indexOf(v.tag) >= 0);
     });
     // --- 보조 출력 (D00014) ---
     var amap = {};
@@ -289,6 +303,7 @@
       var on = conn && t.aux != null && core.bit(t.aux, a.bit);
       amap[a.tag] = on;
       setValve(a.tag, on);
+      markPending(a.tag, pend.indexOf(a.tag) >= 0);
     });
     ['PMP', 'BPMP', 'O3GEN'].forEach(function (tag) {
       var dot = svg.querySelector('[data-aux="' + tag + '"]');

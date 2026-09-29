@@ -237,7 +237,7 @@ def test_config_validation_catches_problems(cfg):
     bad["heaters"][idx]["default_sv"] = 9999
     assert any("과온 한계" in m and "높습니다" in m for _, m in C.validate(bad))
 
-    # 한계가 null 이면 경고를 낸다(PLC 한계에 0 → 그 채널을 막는다)
+    # 한계가 null 이면 경고를 낸다(PLC 소프트 과온 감시가 꺼지므로 PC 가 설정·전원을 막는다)
     assert any("과온 한계가 정해지지 않았" in m
                for _, m in C.validate(cfg)) or all(
         h.get("max_c") is not None for h in cfg["heaters"] if h["enabled"])
@@ -245,6 +245,46 @@ def test_config_validation_catches_problems(cfg):
     bad = copy.deepcopy(cfg)
     bad["window"]["side"] = "middle"
     assert any("left 또는 right" in m for _, m in C.validate(bad))
+
+
+def test_config_heater_station_and_heartbeat(cfg):
+    """온도조절기 국번은 1~3 · 없으면 (ch-1)//4+1 · 하트비트 주기 ≤ PC 끊김 판정/3."""
+    import copy
+    from powderald import config as C
+    assert [h["station"] for h in cfg["heaters"]] == [(h["ch"] - 1) // 4 + 1 for h in cfg["heaters"]]
+
+    bad = copy.deepcopy(cfg)
+    bad["heaters"][0]["station"] = 4
+    assert any("station" in m for _, m in C.validate(bad))
+
+    bad = copy.deepcopy(cfg)
+    bad["params"]["pc_wdt_ms"] = 900
+    bad["plc"]["heartbeat_ms"] = 500
+    assert any("heartbeat_ms" in m and "1/3" in m for _, m in C.validate(bad))
+    assert not any("1/3" in m for _, m in C.validate(cfg))
+
+
+def test_heater_station_drives_comm_dash(cfg, monkeypatch):
+    """통신 끊김 '—' 판정은 설정한 국번을 따른다."""
+    import types
+    from powderald.state import state
+    from powderald.convert import Converters
+    cfg["heaters"][0]["station"] = 3
+    st = [0] * A.STATUS_COUNT
+    st[A.D_TC_COMM] = 0b011                     # 국번 3 만 끊김
+    st[A.D_HEATER_PV] = 250
+    link = types.SimpleNamespace(connected=True, status=st, display=[0] * A.DISPLAY_COUNT,
+                                 plc_hb_ok=True, rtt_ms=1, addr_text="x", prm_mismatch=[],
+                                 prm_written={}, prm_readback={}, cmd_regs=[],
+                                 applied_valve=0, applied_aux=0,
+                                 cmd_reg=lambda a: None, _param_words=lambda: {})
+    monkeypatch.setattr(state, "cfg", cfg)
+    monkeypatch.setattr(state, "conv", Converters(cfg))
+    monkeypatch.setattr(state, "link", link)
+    monkeypatch.setattr(state, "runner", None)
+    h = state.live()["heaters"]
+    assert h[0]["comm_ok"] is False and h[0]["pv"] is None
+    assert h[1]["comm_ok"] is True
 
 
 def test_data_dirs_are_under_this_program(cfg):

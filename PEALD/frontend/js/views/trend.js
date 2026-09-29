@@ -146,7 +146,7 @@
     rng.ticks.forEach(function (v) {
       var y = yPos(v, rng, y0, y1, logY);
       g.beginPath(); g.moveTo(x0, r5(y)); g.lineTo(x1, r5(y)); g.stroke();
-      g.fillText(axisLabel(key, v), x0 - 6, y);
+      g.fillText(axisLabel(key, v, rng.step), x0 - 6, y);
     });
 
     g.textAlign = 'center'; g.textBaseline = 'top';
@@ -270,7 +270,7 @@
     lo = Math.floor(lo / step) * step; hi = Math.ceil(hi / step) * step;
     var tk = [];
     for (var v = lo; v <= hi + step / 2; v += step) tk.push(Number(v.toFixed(10)));
-    return { lo: lo, hi: hi, ticks: tk, log: false };
+    return { lo: lo, hi: hi, ticks: tk, log: false, step: step };
   }
 
   function niceStep(raw) {
@@ -300,12 +300,15 @@
 
   function r5(v) { return Math.round(v) + 0.5; }
 
-  function axisLabel(key, v) {
+  /** 눈금 글자. ★ 눈금 간격에 맞춘 자릿수로 쓴다 — 정수로 반올림하면
+   *  간격 0.5 인 축이 0, 1, 1, 2 처럼 겹쳐 보인다. */
+  function axisLabel(key, v, step) {
     if (key === 'p') {
       var e = Math.round(Math.log(v) / Math.LN10);
       return e === 0 ? '1' : '1E' + (e > 0 ? '+' : '') + e;
     }
-    return String(Math.round(v));
+    var dp = step > 0 ? Math.max(0, -Math.floor(Math.log(step) / Math.LN10 + 1e-9)) : 0;
+    return v.toFixed(Math.min(dp, 4));
   }
 
   function valLabel(key, v) { return key === 'p' ? fmt.torr(v) : fmt.num(v, 1); }

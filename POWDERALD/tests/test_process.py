@@ -60,6 +60,35 @@ def wired(link):
         state.sim = None
 
 
+async def at_vacuum(lk, sim):
+    """대기압 입력만 끈다 — 대기압이면 PLC 가 밸브 반영을 매 스캔 지운다."""
+    sim.base_pressure = 1.0
+    assert await wait_until(lambda: not A.bit(lk.status[A.D_INPUT0], A.IN0_ATM), 3)
+
+
+def heater_channels(cfg, n=2):
+    """과온 한계가 있고 명령 13 으로 전원을 다루는 사용 채널."""
+    return [h["ch"] for h in (cfg.get("heaters") or [])
+            if h.get("enabled") and h.get("max_c") is not None
+            and DEV.HEATER_POWER_MASK & (1 << (h["ch"] - 1))][:n]
+
+
+@pytest.fixture
+def notices(monkeypatch):
+    """화면 알림·로그를 모은다."""
+    got = []
+
+    async def fake_notice(msg, level="info", ws=None):
+        got.append((level, msg))
+
+    async def fake_log(msg, level="info"):
+        got.append((level, msg))
+
+    monkeypatch.setattr(C, "push_notice", fake_notice)
+    monkeypatch.setattr(C, "push_log", fake_log)
+    return got
+
+
 async def pumped(lk, sim):
     """베이스 압력까지 뽑고, O3 가 있는 장비면 O3 허가까지 받는다 —
     시작 흐름 시험의 공통 전제(장비마다 시작 조건이 다르다)."""
@@ -73,7 +102,7 @@ async def pumped(lk, sim):
         # 예시 설정은 O3 상한을 미정으로 두므로(현장에서 확인해야 하는 값) PLC 가 O3 를
         # 금지한다. 여기서는 시작 흐름을 보려는 것이라 상한만 심어 준다.
         if sim.reg[A.D_PRM_O3_MAX] == 0:
-            sim.reg[A.D_PRM_O3_MAX] = 16000
+            sim.write(A.D_PRM_O3_MAX, [16000])
         await C.handle_command({"cmd": "manual_o3", "action": "on", "value": 50})
         assert await wait_until(lambda: A.bit(lk.status[A.D_INTERLOCK], A.ILK_O3_OK), 10), \
             "O3 허가가 나오지 않았다"
@@ -186,7 +215,7 @@ async def test_base_wait_times_out(wired):
     # 리미트·상태만 통과시키고 베이스만 미달로 둔다.
     await pumped(lk, sim)
     sim.base_pressure = 500.0                       # 다시 올려 미달로 만든다
-    sim.reg[A.D_PRM_BASE_PRESS] = 1                 # 사실상 도달 불가
+    sim.write(A.D_PRM_BASE_PRESS, [1])              # 사실상 도달 불가
     cfg["process"]["base_wait_timeout_s"] = 1.0
     rec = short_recipe("대기초과")
     assert storage.save("대기초과", rec)
@@ -203,7 +232,7 @@ async def test_base_wait_can_be_cancelled(wired):
     lk, sim, cfg = wired
     await pumped(lk, sim)
     sim.base_pressure = 500.0
-    sim.reg[A.D_PRM_BASE_PRESS] = 1
+    sim.write(A.D_PRM_BASE_PRESS, [1])
     cfg["process"]["base_wait_timeout_s"] = 60.0
     rec = short_recipe("대기취소")
     assert storage.save("대기취소", rec)
@@ -219,54 +248,56 @@ async def test_base_wait_can_be_cancelled(wired):
 
 
 async def test_start_rejected_by_plc_without_recipe_table(wired):
-    """표를 올리지 않고 명령 1 을 보내면 PLC 가 결과 3(레시피 표 오류)를 준다."""
+    """표를 올리지 않고 명령 1 을 보내면 공정 시작 허가(b3 — 표 통과 포함)가 없어 결과 1."""
     lk, sim, _cfg = wired
     await pumped(lk, sim)
-    sim.reg[A.D_RECIPE_OK] = 0
+    assert sim.reg[A.D_RECIPE_OK] == 0
     result, _text = await lk.send_command(A.CMD_PROCESS_START)
-    assert result == A.RESULT_RECIPE
+    assert result == A.RESULT_INTERLOCK
 
 
 # ===================== 수동 조작 =====================
 async def test_manual_valve_needs_unlock(wired):
     lk, sim, _cfg = wired
+    await at_vacuum(lk, sim)
     tag = DEV.RECIPE_VALVES[0]
     state.manual_unlock_until = 0.0
     await C.handle_command({"cmd": "manual_valve", "tag": tag, "on": True})
-    assert lk.manual_valve == 0, "잠긴 상태에서 요청이 나갔다"
+    await asyncio.sleep(0.1)
+    assert sim.man_valve == 0, "잠긴 상태에서 요청이 나갔다"
 
     await C.handle_command({"cmd": "manual_unlock", "on": True})
     await C.handle_command({"cmd": "manual_valve", "tag": tag, "on": True})
-    assert lk.manual_valve & (1 << DEV.valve_bit(tag))
-    assert await wait_until(
-        lambda: A.bit(sim.reg[A.D_MANUAL_VALVE], DEV.valve_bit(tag)), 3), \
-        "PLC 수동 요청 레지스터에 반영되지 않았다"
+    assert A.bit(sim.reg[A.D_MANUAL_VALVE], DEV.valve_bit(tag)), "PC 요청 영역에 쓰지 않았다"
+    assert A.bit(sim.man_valve, DEV.valve_bit(tag)), "PLC 반영 영역에 들어가지 않았다"
 
 
 async def test_manual_apply_writes_whole_request_set(wired):
     """★ 명령 12 는 한꺼번에 반영한다 — 매번 전체를 써야 빠진 값이 0 으로 지워지지 않는다."""
     lk, sim, _cfg = wired
+    await at_vacuum(lk, sim)
     a, b = DEV.RECIPE_VALVES[0], DEV.RECIPE_VALVES[1]
     state.manual_unlock_until = 9e9
     await C.handle_command({"cmd": "manual_valve", "tag": a, "on": True})
     await C.handle_command({"cmd": "manual_valve", "tag": b, "on": True})
     want = (1 << DEV.valve_bit(a)) | (1 << DEV.valve_bit(b))
-    assert lk.manual_valve == want
-    assert await wait_until(lambda: sim.reg[A.D_MANUAL_VALVE] == (want & 0xFFFF), 3), \
-        f"먼저 연 밸브가 지워졌다 (PLC {sim.reg[A.D_MANUAL_VALVE]:#06x})"
+    assert sim.man_valve == want, f"먼저 연 밸브가 지워졌다 (PLC {sim.man_valve:#06x})"
+    assert sim.reg[A.D_MANUAL_VALVE] == (want & 0xFFFF)
 
 
 async def test_precursor_and_reactant_together_blocked_by_pc(wired):
     """PC 가 먼저 막는다 — PLC 는 둘 다 막고 중대 알람을 내므로 요청 자체를 보내지 않는다."""
-    lk, _sim, _cfg = wired
+    lk, sim, _cfg = wired
     if not (DEV.PRECURSOR_TAGS and DEV.REACTANT_TAGS):
         pytest.skip("이 장비에는 전구체·반응물 구분이 없다")
+    await at_vacuum(lk, sim)
     state.manual_unlock_until = 9e9
     pre, rea = DEV.PRECURSOR_TAGS[0], DEV.REACTANT_TAGS[0]
     await C.handle_command({"cmd": "manual_valve", "tag": pre, "on": True})
     await C.handle_command({"cmd": "manual_valve", "tag": rea, "on": True})
-    assert not (lk.manual_valve & (1 << DEV.valve_bit(rea))), "동시 열기 요청이 나갔다"
-    assert lk.manual_valve & (1 << DEV.valve_bit(pre))
+    assert not (sim.man_valve & (1 << DEV.valve_bit(rea))), "동시 열기 요청이 나갔다"
+    assert not (sim.reg[A.D_MANUAL_VALVE] & (1 << DEV.valve_bit(rea)))
+    assert sim.man_valve & (1 << DEV.valve_bit(pre))
 
 
 async def test_manual_rejected_during_process(wired):
@@ -280,37 +311,145 @@ async def test_manual_rejected_during_process(wired):
     assert await wait_until(lambda: sim.reg[A.D_STATE] == A.STATE_RUN, 5)
 
     state.manual_unlock_until = 9e9
-    before = lk.manual_valve
+    before = sim.reg[A.D_MANUAL_VALVE]
     await C.handle_command({"cmd": "manual_valve",
                             "tag": DEV.RECIPE_VALVES[0], "on": True})
-    assert lk.manual_valve == before, "공정 중에 수동 요청이 나갔다"
+    assert sim.reg[A.D_MANUAL_VALVE] == before, "공정 중에 수동 요청이 나갔다"
     await lk.send_command(A.CMD_ABORT)
 
 
-async def test_pc_request_follows_plc_when_cleared(wired):
-    """PLC 가 안전 정지·전체 닫기로 요청을 지우면 PC 요청도 0 으로 맞춘다 —
-    화면에 '열라고 해 둔' 표시가 남아 있으면 다음 조작이 엉뚱해진다."""
+async def test_screen_request_follows_plc_when_cleared(wired):
+    """PLC 가 전체 닫기로 반영을 지우면 화면의 '요청'도 0 이다 — 요청 표시는 PC 기억이
+    아니라 PLC 반영 영역(D04012)이다. PC 영역(D01004)은 PLC 가 지우지 않는다."""
     lk, sim, _cfg = wired
+    await at_vacuum(lk, sim)
     state.manual_unlock_until = 9e9
     tag = DEV.RECIPE_VALVES[0]
     await C.handle_command({"cmd": "manual_valve", "tag": tag, "on": True})
-    assert lk.manual_valve != 0
+    assert await wait_until(lambda: state.manual_state()["valve_request"] != 0, 2)
     r, _ = await lk.send_command(A.CMD_ALL_CLOSE)
     assert r == A.RESULT_OK
-    assert await wait_until(lambda: lk.manual_valve == 0, 4), \
-        "PLC 가 지운 요청을 PC 가 계속 들고 있다"
+    assert await wait_until(lambda: state.manual_state()["valve_request"] == 0, 2)
+    assert sim.reg[A.D_MANUAL_VALVE] != 0, "PLC 는 PC 영역을 지우지 않는다"
+
+
+async def test_valve_not_revived_after_emo(wired):
+    """PV-2 열기 → 비상정지 → 해제·리셋·펌핑 → PV-3 만 열기 → PV-2 는 되살아나지 않는다."""
+    lk, sim, _cfg = wired
+    a, b = DEV.RECIPE_VALVES[1], DEV.RECIPE_VALVES[2]
+    await at_vacuum(lk, sim)
+    state.manual_unlock_until = 9e9
+    await C.handle_command({"cmd": "manual_valve", "tag": a, "on": True})
+    assert await wait_until(lambda: A.bit(sim.reg[A.D_VALVE_OUT], DEV.valve_bit(a)), 2)
+    sim.set_fault("emo", True)
+    assert await wait_until(lambda: sim.man_valve == 0, 2)
+    sim.set_fault("emo", False)
+    await lk.send_command(A.CMD_ALARM_RESET)
+    assert await wait_until(lambda: not A.bit(lk.status[A.D_INTERLOCK], A.ILK_SAFE_STOP_REQ), 3)
+    await lk.send_command(A.CMD_PUMP_START)
+    await C.handle_command({"cmd": "manual_valve", "tag": b, "on": True})
+    want = 1 << DEV.valve_bit(b)
+    assert await wait_until(lambda: sim.reg[A.D_VALVE_OUT] == want, 2), \
+        f"이전 밸브가 되살아났다 (D00010 = {sim.reg[A.D_VALVE_OUT]:#06x})"
+
+
+@pytest.mark.skipif(not DEV.HAS_O3, reason="O3 라인이 있는 장비")
+async def test_o3_line_not_revived_after_safe_stop(wired):
+    """안전 정지로 꺼진 O3 라인이 밸브 하나 누른다고 다시 켜지지 않는다."""
+    lk, sim, _cfg = wired
+    sim.write(A.D_PRM_O3_MAX, [16000])
+    await at_vacuum(lk, sim)
+    state.manual_unlock_until = 9e9
+    await C.handle_command({"cmd": "manual_o3", "action": "on", "value": 50})
+    assert await wait_until(lambda: sim.man_aux != 0, 2)
+    sim.set_fault("emo", True)
+    assert await wait_until(lambda: sim.man_aux == 0, 2)
+    sim.set_fault("emo", False)
+    await lk.send_command(A.CMD_ALARM_RESET)
+    assert await wait_until(lambda: not A.bit(lk.status[A.D_INTERLOCK], A.ILK_SAFE_STOP_REQ), 3)
+    await C.handle_command({"cmd": "manual_valve", "tag": DEV.RECIPE_VALVES[0], "on": True})
+    await asyncio.sleep(0.2)
+    assert sim.man_aux == 0, "O3 라인이 되살아났다"
+    assert not (sim.reg[A.D_AUX_OUT] & DEV.AUX_CMD_MASK)
+
+
+def _run_process_directly(sim, cfg, rec):
+    """표를 올리고 PLC 쪽에서 공정을 시작했다가 끝낸다(블록 적재 → 공정 종료 정리)."""
+    tbl = R.to_plc_words(cfg, state.conv, rec)
+    sim.write(A.RCP_SUM_BASE, tbl["words"])
+    assert sim._process_start() == A.RESULT_OK
+    sim._process_end("시험 종료", aborted=True)
+
+
+async def test_mfc_after_process_keeps_other_channels_zero(wired):
+    """공정 뒤 MFC 한 채널만 바꿔도 다른 채널은 0 그대로(공정 전 수동값으로 돌아가지 않는다)."""
+    lk, sim, cfg = wired
+    for m in cfg["mfc"]:
+        m["full_scale_sccm"] = m.get("full_scale_sccm") or 1000
+    state.conv = Converters(cfg)
+    all_on = {str(m["no"]): 50.0 for m in cfg["mfc"]}
+    await C.handle_command({"cmd": "manual_mfc", "sccm": all_on})
+    assert all(sim.ao[m["no"]] for m in cfg["mfc"])
+    _run_process_directly(sim, cfg, short_recipe("공정뒤MFC"))
+    assert all(sim.ao[m["no"]] == 0 for m in cfg["mfc"]), "공정 종료 때 MFC AO 는 0"
+    await asyncio.sleep(0.05)
+    await C.handle_command({"cmd": "manual_mfc", "sccm": {"1": 20.0}})
+    assert sim.ao[1] == state.conv.mfc[1].to_raw(20.0)
+    for m in cfg["mfc"][1:]:
+        assert sim.ao[m["no"]] == 0, f"MFC{m['no']} 가 공정 전 수동값으로 돌아갔다"
+
+
+async def test_valve_after_process_keeps_pcv_o3(wired):
+    """공정 뒤 밸브 조작이 PCV 목표(PEALD)·O3 설정(Powder)을 바꾸지 않는다."""
+    from powderald.simulator import AO_PCV, AO_O3
+    lk, sim, cfg = wired
+    await at_vacuum(lk, sim)
+    state.manual_unlock_until = 9e9
+    key = AO_PCV if DEV.HAS_PCV else AO_O3
+    if DEV.HAS_PCV:
+        await C.handle_command({"cmd": "manual_pcv", "pct": 30})
+    else:
+        sim.write(A.D_PRM_O3_MAX, [16000])
+        await C.handle_command({"cmd": "manual_o3", "action": "set", "value": 30})
+    manual_val = sim.ao[key]
+    assert manual_val
+    rec = short_recipe("공정뒤PCV")
+    if DEV.HAS_PCV:
+        rec["blocks"][0]["pcv_pct"] = 55.0
+    else:
+        rec["blocks"][0]["o3"] = 55.0
+    _run_process_directly(sim, cfg, rec)
+    after_process = sim.ao[key]
+    assert after_process != manual_val, "블록 값으로 바뀌어 있어야 한다"
+    await asyncio.sleep(0.05)
+    await C.handle_command({"cmd": "manual_valve", "tag": DEV.RECIPE_VALVES[0], "on": True})
+    assert sim.man_valve, "밸브가 반영되지 않았다"
+    assert sim.ao[key] == after_process, \
+        f"밸브 하나 눌렀는데 설정이 바뀌었다 ({after_process} → {sim.ao[key]})"
+
+
+async def test_valve_at_atmosphere_reports_not_applied(wired, notices):
+    """대기압에서 밸브 열기 → 결과 0 이어도 '반영 안 됨'과 이유를 알린다."""
+    lk, sim, _cfg = wired
+    assert await wait_until(lambda: A.bit(lk.status[A.D_INPUT0], A.IN0_ATM), 2)
+    state.manual_unlock_until = 9e9
+    tag = DEV.RECIPE_VALVES[0]
+    await C.handle_command({"cmd": "manual_valve", "tag": tag, "on": True})
+    msgs = [m for _l, m in notices if "반영되지 않았습니다" in m]
+    assert msgs, notices
+    assert tag in msgs[0] and "대기압" in msgs[0]
 
 
 async def test_manual_mfc_writes_raw_setpoint(wired):
+    """PC 영역에 원시값을 쓰고 명령 14 로 AO 사본(D04121~)에 반영된다."""
     lk, sim, cfg = wired
     m = (cfg.get("mfc") or [])[0]
     if m.get("full_scale_sccm") is None:
         pytest.skip("풀스케일이 정해지지 않은 장비 설정이다")
     await C.handle_command({"cmd": "manual_mfc", "sccm": {str(m["no"]): 100.0}})
     want = state.conv.mfc[m["no"]].to_raw(100.0)
-    assert await wait_until(
-        lambda: sim.reg[A.D_MFC_SV + m["no"] - 1] == want, 3), \
-        f"MFC 설정이 반영되지 않았다 ({sim.reg[A.D_MFC_SV + m['no'] - 1]} ≠ {want})"
+    assert sim.reg[A.D_MFC_SV + m["no"] - 1] == want
+    assert sim.ao[m["no"]] == want, f"MFC AO 에 반영되지 않았다 ({sim.ao[m['no']]} ≠ {want})"
 
 
 async def test_manual_mfc_out_of_range_rejected(wired):
@@ -323,25 +462,74 @@ async def test_manual_mfc_out_of_range_rejected(wired):
     await C.handle_command({"cmd": "manual_mfc", "sccm": {str(m["no"]): float(fs) + 1}})
     await asyncio.sleep(0.2)
     assert sim.reg[A.D_MFC_SV + m["no"] - 1] == before
+    assert sim.ao[m["no"]] == 0
 
 
 async def test_manual_heater_keeps_other_channels(wired):
     """전원 비트는 한꺼번에 반영된다 — 한 채널을 켤 때 다른 채널이 꺼지면 안 된다."""
     lk, sim, cfg = wired
-    chs = [h["ch"] for h in (cfg.get("heaters") or []) if h.get("enabled")][:2]
+    chs = heater_channels(cfg)
     if len(chs) < 2:
         pytest.skip("사용 채널이 둘 미만이다")
     await C.handle_command({"cmd": "manual_heater", "power": {str(chs[0]): True}})
     await C.handle_command({"cmd": "manual_heater", "power": {str(chs[1]): True}})
     want = (1 << (chs[0] - 1)) | (1 << (chs[1] - 1))
-    assert await wait_until(lambda: sim.reg[A.D_HEATER_POWER] == want, 3), \
+    assert sim.reg[A.D_HEATER_POWER] == want, \
         f"먼저 켠 채널이 꺼졌다 (PLC {sim.reg[A.D_HEATER_POWER]:#06x})"
+    assert sim.heater_power == want
+
+
+async def test_heater_display_follows_command_area(wired):
+    """히터 목표·전원 표시는 연결 때 값에 고정되지 않는다 — 명령 13 성공 직후 바로 바뀐다."""
+    lk, sim, cfg = wired
+    chs = heater_channels(cfg, 1)
+    if not chs:
+        pytest.skip("한계가 정해진 사용 채널이 없다")
+    ch = chs[0]
+    await C.handle_command({"cmd": "manual_heater", "sv": {str(ch): 80}, "power": {str(ch): True}})
+    h = state.live()["heaters"][ch - 1]
+    assert h["sv"] == 80.0 and h["power"] is True
+    await C.handle_command({"cmd": "manual_heater", "power": {str(ch): False}})
+    assert state.live()["heaters"][ch - 1]["power"] is False, "켠 히터를 끌 수 없다"
+
+
+async def test_heater_without_limit_power_rejected(wired, notices):
+    """과온 한계가 없는 채널은 목표 온도뿐 아니라 전원 켜기도 거절한다."""
+    lk, sim, cfg = wired
+    h = next((x for x in cfg["heaters"] if DEV.HEATER_POWER_MASK & (1 << (x["ch"] - 1))), None)
+    h["max_c"] = None
+    await C.handle_command({"cmd": "manual_heater", "power": {str(h["ch"]): True}})
+    assert sim.reg[A.D_HEATER_POWER] == 0 and sim.heater_power == 0
+    assert any("한계" in m for _l, m in notices)
+
+
+async def test_over_temp_trip_not_revived_by_other_channel(wired, notices):
+    """과온 차단 뒤 다른 채널 히터 적용이 꺼진 채널을 되살리지 않는다."""
+    lk, sim, cfg = wired
+    chs = heater_channels(cfg)
+    if len(chs) < 2:
+        pytest.skip("사용 채널이 둘 미만이다")
+    await C.handle_command({"cmd": "manual_heater", "power": {str(chs[0]): True}})
+    assert sim.heater_power
+    sim.set_fault("ot", True)
+    assert await wait_until(lambda: sim.reg[A.D_HEATER_POWER] == 0, 3), "PC 가 D01010 을 0 으로 쓰지 않았다"
+    # 래치 중 켜기는 PC 가 거절한다
+    await C.handle_command({"cmd": "manual_heater", "power": {str(chs[1]): True}})
+    assert sim.reg[A.D_HEATER_POWER] == 0
+    assert any("과온" in m for _l, m in notices)
+    sim.set_fault("ot", False)
+    await lk.send_command(A.CMD_ALARM_RESET)
+    assert await wait_until(lambda: not A.bit(lk.status[A.D_ALARM0], A.ALM0_OT), 2)
+    await C.handle_command({"cmd": "manual_heater", "power": {str(chs[1]): True}})
+    assert sim.heater_power == 1 << (chs[1] - 1), \
+        f"꺼진 채널이 되살아났다 ({sim.heater_power:#06x})"
 
 
 async def test_manual_heater_over_max_rejected(wired):
     lk, sim, cfg = wired
-    h = next((x for x in (cfg.get("heaters") or []) if x.get("enabled")), None)
-    if not h or h.get("max_c") is None:
+    h = next((x for x in (cfg.get("heaters") or [])
+              if x.get("enabled") and x.get("max_c") is not None), None)
+    if not h:
         pytest.skip("과온 한계가 정해진 사용 채널이 없다")
     before = sim.reg[A.D_HEATER_SV + h["ch"] - 1]
     await C.handle_command({"cmd": "manual_heater",
@@ -355,42 +543,56 @@ async def test_rf_zero_watt_blocked(wired):
     """전력 0 으로 RF 를 켜면 PLC 가 요청을 지운다 — PC 가 먼저 막는다."""
     lk, sim, _cfg = wired
     await C.handle_command({"cmd": "manual_rf", "on": True, "watt": 0})
-    assert not (lk.manual_aux & (1 << A.AUX_RF)), "0 W 로 RF 요청이 나갔다"
+    assert not (sim.reg[A.D_MANUAL_AUX] & (1 << A.AUX_RF)), "0 W 로 RF 요청이 나갔다"
     await asyncio.sleep(0.2)
     assert not A.bit(sim.reg[A.D_AUX_OUT], A.AUX_RF)
 
 
 @pytest.mark.skipif(not DEV.HAS_RF, reason="RF 가 없는 장비")
 async def test_rf_over_limit_blocked(wired):
-    lk, _sim, cfg = wired
+    lk, sim, cfg = wired
     lim = (cfg.get("params") or {}).get("rf_max_w")
     if lim is None:
         pytest.skip("RF 상한이 정해지지 않았다")
     await C.handle_command({"cmd": "manual_rf", "on": True, "watt": float(lim) + 1})
-    assert not (lk.manual_aux & (1 << A.AUX_RF))
+    assert not (sim.reg[A.D_MANUAL_AUX] & (1 << A.AUX_RF))
 
 
 @pytest.mark.skipif(not DEV.HAS_O3, reason="O3 라인이 없는 장비")
 async def test_o3_off_turns_generator_first(wired):
-    """끄기는 발생기 먼저, 바이패스 라인은 지연 뒤에 — 배관에 남은 O3 를 뺀다."""
-    lk, _sim, cfg = wired
-    lk.manual_aux = ((1 << A.AUX_BYPASS_PUMP) | (1 << A.AUX_IVB)
-                     | (1 << A.AUX_O3_GEN)) & DEV.AUX_CMD_MASK
+    """끄기는 발생기 먼저, 바이패스 라인은 지연 뒤에 — 서버 타이머가 마무리한다
+    (화면을 닫거나 새로 고쳐도 진행)."""
+    lk, sim, cfg = wired
+    cfg["process"]["o3_off_delay_s"] = 0.5
+    sim.write(A.D_PRM_O3_MAX, [16000])
+    await C.handle_command({"cmd": "manual_o3", "action": "on", "value": 50})
+    assert await wait_until(lambda: sim.man_aux & (1 << A.AUX_O3_GEN), 2)
     await C.handle_command({"cmd": "manual_o3", "action": "off"})
-    assert not (lk.manual_aux & (1 << A.AUX_O3_GEN)), "발생기가 꺼지지 않았다"
-    assert lk.manual_aux & (1 << A.AUX_BYPASS_PUMP), "바이패스 펌프를 함께 꺼 버렸다"
-    assert state.o3_off_at > 0
-    await C.handle_command({"cmd": "manual_o3_finish"})
-    assert not (lk.manual_aux & (1 << A.AUX_BYPASS_PUMP))
-    assert not (lk.manual_aux & (1 << A.AUX_IVB))
+    assert not (sim.man_aux & (1 << A.AUX_O3_GEN)), "발생기가 꺼지지 않았다"
+    assert sim.man_aux & (1 << A.AUX_BYPASS_PUMP), "바이패스 펌프를 함께 꺼 버렸다"
+    assert state.o3_off_at > 0 and state.manual_state()["o3_off_left_s"] >= 0
+    assert await wait_until(lambda: sim.man_aux == 0, 3), "지연 뒤 바이패스 라인이 닫히지 않았다"
+    assert state.o3_off_at == 0.0
+
+
+@pytest.mark.skipif(not DEV.HAS_O3, reason="O3 라인이 있는 장비")
+async def test_o3_finish_cancelled_when_plc_cleared_line(wired, notices):
+    """지연 사이 PLC 가 라인을 지웠으면(안전 정지 등) 닫기를 취소하고 로그만 남긴다."""
+    lk, sim, cfg = wired
+    cfg["process"]["o3_off_delay_s"] = 0.5
+    sim.write(A.D_PRM_O3_MAX, [16000])
+    await C.handle_command({"cmd": "manual_o3", "action": "on", "value": 50})
+    await C.handle_command({"cmd": "manual_o3", "action": "off"})
+    await lk.send_command(A.CMD_ALL_CLOSE)          # PLC 가 라인을 지운다
+    assert await wait_until(lambda: any("닫기 취소" in m for _l, m in notices), 3), notices
 
 
 @pytest.mark.skipif(DEV.HAS_O3, reason="O3 라인이 있는 장비")
 async def test_o3_command_rejected_without_o3_line(wired):
-    lk, _sim, _cfg = wired
-    before = lk.manual_aux
+    lk, sim, _cfg = wired
+    before = sim.reg[A.D_MANUAL_AUX]
     await C.handle_command({"cmd": "manual_o3", "action": "on", "value": 50})
-    assert lk.manual_aux == before
+    assert sim.reg[A.D_MANUAL_AUX] == before
 
 
 # ===================== 종료 감지 · 데이터 로그 =====================
@@ -455,6 +657,66 @@ async def test_datalog_survives_write_failure(wired):
     dl.tick(1)                                  # 예외가 밖으로 나오면 안 된다
     assert not dl.active
     assert dl.error
+
+
+async def test_datalog_new_file_on_back_to_back_start(wired, monkeypatch):
+    """앞 파일이 종료 꼬리(TAIL_S)를 쓰는 중에 다음 공정이 시작되면
+    앞 파일을 바로 닫고 새 파일을 연다 — 새 공정 줄이 앞 파일에 섞이지 않는다."""
+    lk, _sim, _cfg = wired
+    from powderald import datalog as DL
+    from powderald.datalog import DataLog
+    dl = DataLog(state)
+    stamps = iter(["20260101_000001", "20260101_000002", "20260101_000003"])
+    monkeypatch.setattr(DL.time, "strftime",
+                        lambda fmt, *a: next(stamps) if fmt == "%Y%m%d_%H%M%S" else "x")
+    starts = []
+
+    def start():
+        dl.start("연속", short_recipe(), {}, 1000)
+        starts.append(dl.name)
+
+    dl.follow(True, start)
+    first = dl.name
+    dl.follow(False, start)                     # 끝 — 꼬리를 쓰는 중
+    assert dl.active and dl.stop_at
+    dl.follow(True, start)                      # 4 s 뒤 다시 시작(꼬리 5 s 안)
+    assert len(starts) == 2 and dl.name != first, "새 파일이 생기지 않았다"
+    assert dl.active and dl.stop_at == 0.0, "공정 중인데 종료 표시가 남았다"
+    dl.follow(True, start)
+    assert len(starts) == 2, "공정 중에 파일을 또 열었다"
+    dl.close()
+
+
+# ===================== 사전 판정 =====================
+async def test_precheck_pause_when_paused(wired, monkeypatch):
+    lk, _sim, _cfg = wired
+    st = list(lk.status)
+    st[A.D_STATE] = A.STATE_PAUSE
+    monkeypatch.setattr(lk, "status", st)
+    ok, why = C.precheck(A.CMD_PAUSE)
+    assert not ok and "이미 일시정지" in why
+
+
+async def test_precheck_vent_allowed_while_pumping(wired):
+    """벤트는 IV-E 가 열려 있어도(펌핑 중) PC 가 막지 않는다 — PLC 가 IV-E 를 닫고 VV 를 연다."""
+    lk, sim, _cfg = wired
+    await lk.send_command(A.CMD_PUMP_START)
+    assert await wait_until(lambda: A.bit(lk.status[A.D_INPUT0], A.IN0_IVE_OPEN), 5)
+    ok, why = C.precheck(A.CMD_VENT)
+    assert ok, why
+
+
+async def test_precheck_pump_uses_emo_input_not_latch(wired):
+    """비상정지를 푼 뒤 알람 리셋 전에도 펌핑 시작을 PC 가 막지 않는다(PLC 는 입력을 본다)."""
+    lk, sim, _cfg = wired
+    sim.set_fault("emo", True)
+    assert await wait_until(lambda: A.bit(lk.status[A.D_ALARM0], A.ALM0_EMO), 2)
+    assert not C.precheck(A.CMD_PUMP_START)[0]
+    assert not C.precheck(A.CMD_VENT)[0]
+    sim.set_fault("emo", False)
+    assert await wait_until(lambda: A.bit(lk.status[A.D_INPUT0], A.IN0_EMO), 2)
+    assert A.bit(lk.status[A.D_ALARM0], A.ALM0_EMO)
+    assert C.precheck(A.CMD_PUMP_START)[0]
 
 
 # ===================== 도우미 =====================

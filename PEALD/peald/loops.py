@@ -77,11 +77,9 @@ def _datalog_tick():
     if not (dl and runner):
         return
     prog = runner.progress()
-    if prog.get("running") and not dl.active:
-        dl.start(runner.recipe_name, runner.recipe, runner.table,
-                 runner.progress().get("total_ms") or 0)
-    elif not prog.get("running") and dl.active:
-        dl.note_end()
+    dl.follow(bool(prog.get("running")),
+              lambda: dl.start(runner.recipe_name, runner.recipe, runner.table,
+                               prog.get("total_ms") or 0))
     dl.tick((state.cfg.get("log") or {}).get("datalog_interval_s", 1))
 
 

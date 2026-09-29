@@ -1,6 +1,8 @@
 """내장 시뮬레이터 — 펌핑·벤트·전체 닫기·거절 규칙·알람 래치/확인/리셋.
 
 물리값은 대략이어도 되지만 상태 코드·결과 코드·비트 의미는 정확해야 한다.
+★ PLC 는 PC 영역(D01000~D01124)을 쓰지 않는다 — 스스로 지우는 것은 내부 사본
+  (D04012~13·D04050·D04120~·히터 전원 묶음)뿐이다. 시험도 그 기준으로 본다.
 """
 import asyncio
 
@@ -9,6 +11,28 @@ import pytest
 from powderald import addresses as A
 from powderald import device as DEV
 from conftest import wait_until
+
+PC_AREA = (A.D_PC_HB, A.D_PRM_O3_MAX + 1)
+
+
+def pc_area(s):
+    """PC 영역 사본 — 하트비트·명령 번호·코드처럼 PC 가 계속 쓰는 워드는 뺀다."""
+    skip = {A.D_PC_HB, A.D_CMD_NO, A.D_CMD_CODE}
+    return {a: s.reg[a] for a in range(*PC_AREA) if a not in skip}
+
+
+async def at_vacuum(lk, s):
+    """대기압 입력이 꺼질 만큼 압력을 낮춘다(대기압이면 PLC 가 밸브 반영을 지운다)."""
+    s.base_pressure = 1.0
+    assert await wait_until(lambda: not A.bit(lk.status[A.D_INPUT0], A.IN0_ATM), 3)
+
+
+async def manual(lk, valve=0, aux=0):
+    """PC 가 하듯 요청 영역을 쓰고 명령 12 를 보낸다."""
+    lo, hi = A.split_dword(valve)
+    r, _ = await lk.send_command(A.CMD_MANUAL_APPLY,
+                                 {A.D_MANUAL_VALVE: [lo, hi, 0, 0], A.D_MANUAL_AUX: aux})
+    return r
 
 
 async def test_pumping_opens_ive_and_lowers_pressure(link):
@@ -54,19 +78,25 @@ async def test_vent_reaches_atmosphere(link):
     assert await wait_until(lambda: A.bit(s.reg[A.D_INPUT0], A.IN0_ATM), 3)
 
 
-async def test_all_close_clears_requests_but_keeps_pump(link):
+async def test_all_close_clears_internal_copies_but_keeps_pump(link):
+    """전체 닫기는 PLC 내부 사본(D04012·D04050)만 지운다 — PC 요청 영역은 그대로다."""
     lk, s, _cfg = link
     await lk.send_command(A.CMD_PUMP_START)
     assert await wait_until(lambda: A.bit(s.reg[A.D_AUX_OUT], A.AUX_PUMP), 4)
-    s.reg[A.D_MANUAL_VALVE] = DEV.MANUAL_VALVE_MASK & 0x0007
-    s.reg[A.D_MANUAL_AUX] = DEV.AUX_CMD_MASK
+    await at_vacuum(lk, s)
+    want = DEV.MANUAL_VALVE_MASK & 0x0003
+    assert await manual(lk, want, DEV.AUX_CMD_MASK) == A.RESULT_OK
+    assert await wait_until(lambda: s.man_valve == want, 1)
+    before = pc_area(s)
 
     r, _ = await lk.send_command(A.CMD_ALL_CLOSE)
     assert r == A.RESULT_OK
     await asyncio.sleep(0.2)
-    assert s.reg[A.D_MANUAL_VALVE] == 0
-    assert s.reg[A.D_MANUAL_AUX] == 0
-    assert not A.bit(s.reg[A.D_AUX_OUT], A.AUX_IVE)
+    assert s.man_valve == 0 and s.man_aux == 0
+    assert s.reg[A.D_APPLIED_VALVE] == 0 and s.reg[A.D_APPLIED_AUX] == 0
+    assert s.reg[A.D_VALVE_OUT] == 0, "밸브 출력이 남았다"
+    assert pc_area(s) == before, "PLC 가 PC 영역을 바꿨다"
+    assert await wait_until(lambda: not A.bit(s.reg[A.D_AUX_OUT], A.AUX_IVE), 2)
     assert A.bit(s.reg[A.D_AUX_OUT], A.AUX_PUMP), "펌프는 그대로 둬야 한다"
 
 
@@ -92,19 +122,56 @@ async def test_manual_apply_blocked_during_safe_stop(link):
     assert r == A.RESULT_INTERLOCK
 
 
-async def test_safe_stop_clears_valve_requests(link):
-    """안전 정지 요구가 되면 공정 밸브·수동 보조 요청을 지운다(자동으로 다시 켜지지 않음)."""
+async def test_safe_stop_clears_internal_copies(link):
+    """안전 정지 요구가 되면 수동 밸브·보조 반영(내부 사본)을 지운다 — PC 영역은 그대로.
+    원인을 없애도 스스로 다시 켜지지 않는다."""
     lk, s, _cfg = link
-    s.reg[A.D_MANUAL_VALVE] = 0x0003
-    s.reg[A.D_MANUAL_AUX] = DEV.AUX_CMD_MASK
+    await at_vacuum(lk, s)
+    assert await manual(lk, 0x0003, DEV.AUX_CMD_MASK) == A.RESULT_OK
+    assert await wait_until(lambda: s.man_valve == 0x0003, 1)
+    before = pc_area(s)
     s.set_fault("emo", True)
-    assert await wait_until(lambda: s.reg[A.D_MANUAL_VALVE] == 0, 3)
-    assert s.reg[A.D_MANUAL_AUX] == 0
-    # 원인을 없애도 스스로 다시 켜지지 않는다
+    assert await wait_until(lambda: s.man_valve == 0 and s.man_aux == 0, 3)
+    assert await wait_until(lambda: s.reg[A.D_APPLIED_VALVE] == 0, 1)
+    assert s.reg[A.D_VALVE_OUT] == 0
     s.set_fault("emo", False)
     await lk.send_command(A.CMD_ALARM_RESET)
     await asyncio.sleep(0.3)
-    assert s.reg[A.D_MANUAL_VALVE] == 0
+    assert s.man_valve == 0 and s.reg[A.D_VALVE_OUT] == 0
+    assert pc_area(s) == before, "PLC 가 PC 영역을 바꿨다"
+
+
+async def test_atmosphere_clears_valve_copy(link):
+    """챔버 대기압 입력이면 PLC 가 밸브 반영을 매 스캔 지운다(명령 12 결과는 0)."""
+    lk, s, _cfg = link
+    assert await wait_until(lambda: A.bit(s.reg[A.D_INPUT0], A.IN0_ATM), 1)
+    assert await manual(lk, 0x0001) == A.RESULT_OK
+    await asyncio.sleep(0.1)
+    assert s.man_valve == 0 and s.reg[A.D_VALVE_OUT] == 0
+    assert s.reg[A.D_MANUAL_VALVE] == 0x0001, "PC 요청 영역은 PC 가 쓴 그대로여야 한다"
+
+
+async def test_internal_path_cannot_write_pc_area(link):
+    """시뮬레이터 내부 경로로 PC 영역을 쓰면 예외 — Modbus 쓰기 경로만 된다."""
+    from powderald.simulator import PcAreaWrite
+    _lk, s, _cfg = link
+    for addr in (A.D_MANUAL_VALVE, A.D_MANUAL_AUX, A.D_HEATER_POWER, A.D_MFC_SV,
+                 A.D_PCV_SV, A.D_O3_SV, A.D_PRM_PC_WDT_MS, A.D_PRM_O3_MAX):
+        with pytest.raises(PcAreaWrite):
+            s.reg[addr] = 1
+    s.write(A.D_MANUAL_AUX, [0])        # Modbus 경로는 된다
+
+
+async def test_rf_request_dropped_when_power_zero(link):
+    """PEALD: 명령 12 에서 RF 설정이 0 이면 보조 반영(D04050)을 버린다."""
+    if not DEV.HAS_RF:
+        pytest.skip("RF 가 있는 장비만")
+    lk, s, _cfg = link
+    r, _ = await lk.send_command(A.CMD_MANUAL_APPLY,
+                                 {A.D_MANUAL_AUX: 1 << A.AUX_RF, A.D_RF_SV: 0})
+    assert r == A.RESULT_OK
+    await asyncio.sleep(0.1)
+    assert s.man_aux == 0 and s.reg[A.D_APPLIED_AUX] == 0
 
 
 async def test_precursor_and_reactant_together_is_blocked(link):
@@ -127,7 +194,8 @@ async def test_precursor_and_reactant_together_is_blocked(link):
             opened.append(s.reg[A.D_VALVE_OUT])
         return (s.reg[A.D_ALARM0] >> A.ALM0_BOTH_OPEN) & 1
 
-    s.reg[A.D_MANUAL_VALVE] = pre | rea
+    await at_vacuum(lk, s)
+    await manual(lk, pre | rea)
     assert await wait_until(watch, 3, step=0.01), "동시 개방 알람이 걸리지 않았다"
     assert not opened, f"밸브가 열렸다: {opened}"
     assert saw_both_req, "동시 요청 인터락(b6)이 한 번도 서지 않았다"
@@ -178,32 +246,29 @@ async def test_warning_alarm_does_not_stop(link):
 async def test_recipe_table_checksum(link):
     lk, s, _cfg = link
     # 유효한 최소 표: 스텝 1, 블록 1, 그룹 0 + 합계
-    s.reg[A.D_RCP_STEP_COUNT] = 1
-    s.reg[A.D_RCP_BLOCK_COUNT] = 1
-    s.reg[A.D_RCP_GROUP_COUNT] = 0
+    s.write(A.D_RCP_STEP_COUNT, [1, 1, 0])
     total = 0
     for a in range(A.RCP_SUM_BASE, A.RCP_SUM_END + 1):
         if a != A.D_RCP_SUM:
             total = (total + s.reg[a]) & 0xFFFF
-    s.reg[A.D_RCP_SUM] = total
+    s.write(A.D_RCP_SUM, [total])
     assert await wait_until(lambda: s.reg[A.D_RECIPE_OK] == 1, 4), "합계가 맞는데 통과하지 않았다"
     assert s.reg[A.D_RECIPE_SUM_PLC] == total
 
-    # 합계를 흔들면 불합격 + 경고 알람
-    s.reg[A.D_RCP_SUM] = (total + 1) & 0xFFFF
+    # 합계를 흔들면 불합격 — ★ 주기 검사는 알람을 래치하지 않는다(올리는 도중 헛알람)
+    s.write(A.D_RCP_SUM, [(total + 1) & 0xFFFF])
     assert await wait_until(lambda: s.reg[A.D_RECIPE_OK] == 0, 4)
-    assert (s.reg[A.D_ALARM0] >> A.ALM0_RECIPE) & 1
+    assert not (s.reg[A.D_ALARM0] >> A.ALM0_RECIPE) & 1
 
 
 async def test_recipe_range_limits(link):
     lk, s, _cfg = link
-    s.reg[A.D_RCP_STEP_COUNT] = A.RCP_STEP_MAX + 1      # 범위 밖
-    s.reg[A.D_RCP_BLOCK_COUNT] = 1
+    s.write(A.D_RCP_STEP_COUNT, [A.RCP_STEP_MAX + 1, 1])      # 스텝 수 범위 밖
     total = 0
     for a in range(A.RCP_SUM_BASE, A.RCP_SUM_END + 1):
         if a != A.D_RCP_SUM:
             total = (total + s.reg[a]) & 0xFFFF
-    s.reg[A.D_RCP_SUM] = total
+    s.write(A.D_RCP_SUM, [total])
     assert await wait_until(lambda: s.reg[A.D_RECIPE_OK] == 0, 4)
 
 
@@ -215,3 +280,177 @@ async def test_cvg_raw_matches_configured_conversion(link):
     raw = s.reg[A.D_CVG_RAW]
     shown = lk.conv.cvg.to_torr(raw)
     assert shown == pytest.approx(s.pressure, rel=0.02)
+
+
+# ===================== 펌핑 · 벤트 (래더 확정 동작) =====================
+async def test_vent_while_pumping_closes_ive_then_opens_vv(link):
+    """펌핑 중(IV-E 열림)에도 벤트를 받는다 — 배기 요청을 내려 IV-E 가 닫힌 뒤 VV 를 연다."""
+    lk, s, _cfg = link
+    await lk.send_command(A.CMD_PUMP_START)
+    assert await wait_until(lambda: A.bit(s.reg[A.D_INPUT0], A.IN0_IVE_OPEN), 5)
+    assert not A.bit(s.reg[A.D_INTERLOCK], A.ILK_VENT_OK)
+    r, _ = await lk.send_command(A.CMD_VENT)
+    assert r == A.RESULT_OK
+    assert await wait_until(lambda: not A.bit(s.reg[A.D_AUX_OUT], A.AUX_IVE), 1)
+    assert await wait_until(lambda: A.bit(s.reg[A.D_AUX_OUT], A.AUX_VV), 4), "VV 가 열리지 않았다"
+
+
+async def test_emo_closes_ive(link):
+    """비상정지로 배기 요청이 지워지면 IV-E 출력도 바로 닫힌다."""
+    lk, s, _cfg = link
+    await lk.send_command(A.CMD_PUMP_START)
+    assert await wait_until(lambda: A.bit(s.reg[A.D_AUX_OUT], A.AUX_IVE), 5)
+    s.set_fault("emo", True)
+    assert await wait_until(lambda: not A.bit(s.reg[A.D_AUX_OUT], A.AUX_IVE), 1)
+    assert not s.exh_req and not s.pump_req
+
+
+async def test_pump_start_after_emo_release_before_reset(link):
+    """PLC 는 비상정지 '입력'을 본다 — 풀고 알람 리셋 전에도 펌핑 시작 결과 0."""
+    lk, s, _cfg = link
+    s.set_fault("emo", True)
+    assert await wait_until(lambda: (s.reg[A.D_ALARM0] >> A.ALM0_EMO) & 1, 3)
+    r, _ = await lk.send_command(A.CMD_PUMP_START)
+    assert r == A.RESULT_INTERLOCK
+    s.set_fault("emo", False)
+    await asyncio.sleep(0.1)
+    assert (s.reg[A.D_ALARM0] >> A.ALM0_EMO) & 1, "알람은 아직 래치돼 있어야 한다"
+    r, _ = await lk.send_command(A.CMD_PUMP_START)
+    assert r == A.RESULT_OK
+
+
+def test_vent_permit_not_during_prep(cfg):
+    """벤트 허가는 공정 준비(블록 준비) 중에도 서지 않는다."""
+    from powderald.simulator import PlcSim
+    s = PlcSim(cfg, 1)
+    assert s._vent_ok()
+    s.running, s.seq_state = True, 3
+    assert not s._vent_ok()
+
+
+# ===================== 명령 결과 (래더 P40) =====================
+def _one_block_words(cfg):
+    from powderald import recipe as R
+    from powderald.convert import Converters
+    r = R.empty_recipe("t")
+    b = R.empty_block("b")
+    b["steps"] = [{"name": "s", "time_ms": 50, "valves": [], "pause_ok": False}]
+    if DEV.HAS_RF:
+        b["steps"][0]["rf"] = False
+    r["blocks"] = [b]
+    return list(R.to_plc_words(cfg, Converters(cfg), r)["words"])
+
+
+def test_start_results(cfg):
+    """공정 시작 — 허가 없음 1 / 허가 있어도 그 순간 표가 틀리면 3 + b13 / 동작 중 2."""
+    from powderald.simulator import PlcSim
+    s = PlcSim(cfg, 1)
+    assert s._execute(A.CMD_PROCESS_START) == A.RESULT_INTERLOCK
+
+    words = _one_block_words(cfg)
+    s.write(A.RCP_SUM_BASE, words)
+    s.reg[A.D_INTERLOCK] = 1 << A.ILK_START_OK      # 1 s 전 검사로 허가가 선 상태
+    s.write(A.D_RCP_STEP_BASE, [s.reg[A.D_RCP_STEP_BASE] ^ 1])  # 그 뒤 표가 흠집 남
+    assert s._execute(A.CMD_PROCESS_START) == A.RESULT_RECIPE
+    assert (s.reg[A.D_ALARM0] >> A.ALM0_RECIPE) & 1
+    assert not s.running
+
+    s.write(A.RCP_SUM_BASE, words)
+    assert s._execute(A.CMD_PROCESS_START) == A.RESULT_OK
+    assert s.running
+    assert s._execute(A.CMD_PROCESS_START) == A.RESULT_STATE
+
+
+def test_start_rejects_bad_first_group(cfg):
+    """첫 그룹 적재 오류(끝 > 블록 수)는 결과 3 + b13 — 공정이 시작되지 않는다."""
+    from powderald.simulator import PlcSim
+    from powderald import recipe as R
+    s = PlcSim(cfg, 1)
+    words = _one_block_words(cfg)
+    words[A.D_RCP_GROUP_COUNT - A.RCP_SUM_BASE] = 1
+    g = A.D_RCP_GROUP_BASE - A.RCP_SUM_BASE
+    words[g:g + 3] = [1, 5, 1]                          # 끝 블록 5 > 블록 수 1
+    words[A.D_RCP_SUM - A.RCP_SUM_BASE] = R.checksum_of(words)
+    s.write(A.RCP_SUM_BASE, words)
+    s.reg[A.D_INTERLOCK] = 1 << A.ILK_START_OK
+    assert s._execute(A.CMD_PROCESS_START) == A.RESULT_RECIPE
+    assert (s.reg[A.D_ALARM0] >> A.ALM0_RECIPE) & 1 and not s.running
+
+
+async def test_recipe_check_does_not_latch_while_uploading(link):
+    """PC 가 올리는 도중(본문만 쓰인 상태)에 주기 검사가 돌아도 b13 이 래치되지 않는다."""
+    lk, s, _cfg = link
+    s.write(A.D_RCP_STEP_BASE, [100, 0, 0, 0, 50, 0, 0, 0])
+    s.write(A.D_RCP_STEP_COUNT, [1, 1, 0, 0x1234])        # 합계가 안 맞는 헤더
+    await asyncio.sleep(1.3)
+    assert s.reg[A.D_RECIPE_OK] == 0
+    assert not (s.reg[A.D_ALARM0] >> A.ALM0_RECIPE) & 1
+
+
+def test_abort_when_stopped_is_noop(cfg):
+    from powderald.simulator import PlcSim
+    s = PlcSim(cfg, 1)
+    assert s._execute(A.CMD_ABORT) == A.RESULT_OK
+    assert not s.running
+
+
+# ===================== 히터 (래더 확정 동작) =====================
+async def test_heater_power_is_internal_copy(link):
+    """명령 13 때만 D01010 을 전원 묶음으로 복사한다 — 그 뒤 D01010 을 바꿔도 출력은 그대로."""
+    lk, s, _cfg = link
+    r, _ = await lk.send_command(A.CMD_HEATER_APPLY, {A.D_HEATER_POWER: 0x0003})
+    assert r == A.RESULT_OK
+    assert s.heater_power == 0x0003 & DEV.HEATER_POWER_MASK
+    s.write(A.D_HEATER_POWER, [0])
+    await asyncio.sleep(0.1)
+    assert s.heater_power == 0x0003 & DEV.HEATER_POWER_MASK
+
+
+async def test_over_temp_latch_turns_heaters_off(link):
+    """과온 알람 래치 중에는 매 스캔 전원 묶음 = 0 — PC 영역 D01010 은 PLC 가 건드리지 않는다."""
+    lk, s, _cfg = link
+    await lk.send_command(A.CMD_HEATER_APPLY, {A.D_HEATER_POWER: 0x0001})
+    assert s.heater_power
+    s.set_fault("ot", True)
+    assert await wait_until(lambda: s.heater_power == 0, 1)
+    s.set_fault("ot", False)
+    await lk.send_command(A.CMD_ALARM_RESET)
+    await asyncio.sleep(0.2)
+    assert s.heater_power == 0, "리셋 뒤에도 스스로 다시 켜지지 않는다"
+
+
+def test_soft_over_temp_only_for_limited_channels(cfg):
+    """한계 0 인 채널은 소프트 과온 감시만 안 한다 — 한계가 있으면 넘을 때 b9."""
+    from powderald.simulator import PlcSim
+    s = PlcSim(cfg, 1)
+    s.write(A.D_PRM_HEATER_MAX, [0, 1000])              # CH1 한계 없음, CH2 100.0 ℃
+    s.heater_pv[0] = 500.0
+    assert not s._over_temp()
+    s.heater_pv[1] = 120.0
+    assert s._over_temp()
+
+
+# ===================== PC 영역을 쓰지 않는다 =====================
+async def test_scenarios_never_write_pc_area(link):
+    """공정 준비·전체 닫기·안전 정지·대기압 시나리오 전후로 PC 영역이 그대로다."""
+    lk, s, cfg = link
+    await lk.send_command(A.CMD_PUMP_START)
+    await at_vacuum(lk, s)
+    await manual(lk, 0x0002, DEV.AUX_CMD_MASK)
+    await lk.send_command(A.CMD_MFC_APPLY, {A.D_MFC_SV: [1000] * DEV.MFC_COUNT})
+    await lk.send_command(A.CMD_HEATER_APPLY, {A.D_HEATER_POWER: 0x0001})
+    before = pc_area(s)
+    # 공정: 표를 올리고 시작 → 블록 적재 → 중단(공정 종료 정리)
+    s.write(A.RCP_SUM_BASE, _one_block_words(cfg))
+    assert await wait_until(lambda: s.reg[A.D_RECIPE_OK] == 1, 3)
+    assert s._process_start() == A.RESULT_OK
+    await asyncio.sleep(0.2)
+    await lk.send_command(A.CMD_ABORT)
+    await lk.send_command(A.CMD_ALL_CLOSE)
+    s.set_fault("emo", True)
+    await asyncio.sleep(0.2)
+    s.set_fault("emo", False)
+    await lk.send_command(A.CMD_ALARM_RESET)
+    s.base_pressure = 760.0
+    await asyncio.sleep(0.3)
+    assert pc_area(s) == before, "PLC 가 PC 영역을 바꿨다"

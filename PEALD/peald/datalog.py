@@ -53,6 +53,7 @@ class DataLog:
         self._next = 0.0
         self._rows = 0
         self.error = ""
+        self._was_running = False
 
     @property
     def active(self) -> bool:
@@ -92,6 +93,20 @@ class DataLog:
             logger.write("err", self.error)
             self.fp = None
             self.writer = None
+
+    def follow(self, running: bool, start_fn):
+        """공정 상태를 따라 파일을 연다·닫는다.
+
+        ★ 시작 가장자리(멈춤 → 공정 중)를 잡아 앞 파일을 바로 닫고 새 파일을 연다.
+          앞 공정의 꼬리(TAIL_S)를 쓰는 중에 다음 공정이 시작되면, 새 공정 줄이
+          앞 파일에 섞이고 새 파일은 늦게 생기거나(첫 몇 초 빠짐) 아예 안 생긴다."""
+        if running and not self._was_running:
+            start_fn()                  # start() 가 열린 앞 파일을 먼저 닫는다
+        elif running and self.fp:
+            self.stop_at = 0.0          # 공정 중이면 종료 표시를 지운다
+        elif not running and self.fp:
+            self.note_end()
+        self._was_running = running
 
     def note_end(self):
         """종료를 본 시각. 여기서 바로 닫지 않고 조금 더 남긴다."""

@@ -107,14 +107,32 @@ def test_remaining_ms_counts_down(cfg):
     assert mid < at_start
 
 
-def test_remaining_ms_frozen_while_paused(cfg):
-    """일시정지 중에는 남은 시간이 줄지 않는다."""
+def test_remaining_ms_while_paused_excludes_finished_step(cfg):
+    """PLC 는 스텝 '끝'에서 멈춘다 — 일시정지 중이면 멈춘 스텝은 이미 끝났다."""
     cfg["params"]["mfc_stable_s"] = 0
     cfg["params"]["valve_min_ms"] = 0
-    r = recipe([block("A", 1, [step("a", 1000)])])
-    pos = {"block": 1, "step": 1, "cycle": 1, "group_pass": 1, "step_elapsed_ms": 700}
-    assert R.remaining_ms(cfg, r, dict(pos, paused=False)) == 300
-    assert R.remaining_ms(cfg, r, dict(pos, paused=True)) == 1000
+    r = recipe([block("A", 1, [step("a", 1000), step("b", 1000, pause_ok=True),
+                               step("c", 600)])])
+    pos = {"block": 1, "step": 2, "cycle": 1, "group_pass": 1, "step_elapsed_ms": 0}
+    assert R.remaining_ms(cfg, r, dict(pos, paused=True)) == 600
+    assert R.remaining_ms(cfg, r, dict(pos, paused=False)) == 1600
+
+
+def test_remaining_ms_after_pause_counts_min_open_from_closed(cfg):
+    """재개 뒤 첫 스텝은 직전 출력이 전부 닫힌 것으로 센다 — 최소 열림이 붙는다."""
+    cfg["params"]["mfc_stable_s"] = 0
+    cfg["params"]["valve_min_ms"] = 200
+    v = DEV.RECIPE_VALVES[0]
+    r = recipe([block("A", 2, [step("a", 100, [v], pause_ok=True), step("b", 100, [v])])])
+    # 스텝 a 에서 멈춤: 남은 것 = b(직전 닫힘 → 200) + 2 사이클(a 100·b 100 — 이미 열림)
+    pos = {"block": 1, "step": 1, "cycle": 1, "group_pass": 1, "paused": True}
+    assert R.remaining_ms(cfg, r, pos) == 200 + 200
+    # 사이클 1 의 마지막 스텝 b 에서 멈춤: 다음 사이클 a 는 직전 닫힘 → 200, b 100
+    pos = {"block": 1, "step": 2, "cycle": 1, "group_pass": 1, "paused": True}
+    assert R.remaining_ms(cfg, r, pos) == 200 + 100
+    # 마지막 사이클의 마지막 스텝이면 남은 것이 없다
+    pos = {"block": 1, "step": 2, "cycle": 2, "group_pass": 1, "paused": True}
+    assert R.remaining_ms(cfg, r, pos) == 0
 
 
 def test_remaining_ms_large_group_repeat_is_fast(cfg):

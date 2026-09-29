@@ -127,6 +127,8 @@ def _fill_devices(cfg: dict):
             "enabled": bool(h.get("enabled", False)),
             "max_c": h.get("max_c"),
             "default_sv": h.get("default_sv"),
+            # 온도조절기 국번(1~3). 없으면 4채널씩 묶은 기본 배선으로 본다.
+            "station": h.get("station") if h.get("station") is not None else (ch - 1) // 4 + 1,
         })
     cfg["heaters"] = out
 
@@ -156,6 +158,14 @@ def validate(cfg: dict) -> list:
                 p.append(("warn", f"plc.{key} 가 권장 범위({lo}~{hi})를 벗어납니다: {v}"))
         except (TypeError, ValueError):
             p.append(("warn", f"plc.{key} 값이 올바르지 않습니다"))
+    try:
+        wdt = int((cfg.get("params") or {}).get("pc_wdt_ms") or 3000)
+        if int(plc.get("heartbeat_ms")) > wdt / 3:
+            p.append(("err", f"plc.heartbeat_ms({plc.get('heartbeat_ms')})가 "
+                             f"PC 하트비트 판정(params.pc_wdt_ms={wdt})의 1/3 보다 깁니다 — "
+                             f"PLC 가 PC 끊김으로 보고 안전 정지할 수 있습니다"))
+    except (TypeError, ValueError):
+        pass
     if int(plc.get("sim_port") or 0) == int(srv.get("port") or 0):
         p.append(("err", "plc.sim_port 와 server.port 가 같습니다 — 포트를 나눠야 합니다"))
 
@@ -187,12 +197,20 @@ def validate(cfg: dict) -> list:
                 p.append(("err", f"MFC{m['no']} 풀스케일 값이 올바르지 않습니다: {fs!r}"))
 
     for h in cfg.get("heaters") or []:
+        try:
+            stn = int(h.get("station"))
+            if not (1 <= stn <= 3):
+                raise ValueError
+        except (TypeError, ValueError):
+            p.append(("err", f"히터 CH{h['ch']}: station(온도조절기 국번)은 1~3 이어야 합니다: "
+                             f"{h.get('station')!r}"))
         if not h.get("enabled"):
             continue
         if h.get("max_c") is None:
-            # ★ 0 을 쓰면 PLC 가 그 채널을 막는다. 히터가 안 올라가는 원인이 되므로 경고한다.
+            # ★ PLC 는 한계 0 인 채널의 소프트 과온 감시만 안 할 뿐 전원을 막지 않는다.
+            #   감시 없는 히터가 켜지지 않도록 PC 가 목표 온도·전원 켜기를 거절한다.
             p.append(("warn", f"히터 CH{h['ch']} ({h['name']}) 과온 한계가 정해지지 않았습니다 — "
-                              f"PLC 한계에 0 을 써서 해당 채널을 막습니다"))
+                              f"PLC 소프트 과온 감시가 꺼지므로 PC 가 이 채널의 설정·전원 켜기를 막습니다"))
         sv = h.get("default_sv")
         mx = h.get("max_c")
         if sv is not None and mx is not None and float(sv) > float(mx):
