@@ -1,0 +1,334 @@
+/* ============================================================
+ * style.css — 레이아웃 + 공통 컴포넌트
+ *
+ * ★ 색은 전부 tokens.css 의 변수다. 여기에 hex 값을 쓰지 않는다.
+ * ★ 공통 컴포넌트(.panel / .btn / .chip / .tbl / .field / .toast / .modal)는
+ *   한 번만 정의하고 모든 탭이 같이 쓴다.
+ *
+ * 디자인 캔버스는 960 × 1000 이다(#app) — 화면 가로 절반(1920÷2)에 맞춘 크기.
+ * core.js 의 fit() 이 창 크기에 맞춰 비율을 유지한 채 확대·축소한다.
+ * ============================================================ */
+
+* { box-sizing: border-box; margin: 0; padding: 0; }
+[hidden] { display: none !important; }
+
+html, body { height: 100%; }
+body {
+  background: var(--bg-deep);
+  color: var(--ink);
+  font-family: var(--font-sans);
+  font-size: var(--fs-md);
+  overflow: hidden;
+}
+button, input, select, textarea { font-family: inherit; font-size: inherit; color: inherit; }
+.mono { font-family: var(--font-mono); font-variant-numeric: tabular-nums; }
+
+#stage {
+  position: fixed; inset: 0;
+  display: flex; align-items: flex-start; justify-content: center;
+  overflow: hidden; background: var(--bg-deep);
+}
+#app {
+  width: 960px; height: 1000px; flex: 0 0 auto;
+  display: flex; flex-direction: column;
+  background: var(--bg);
+}
+
+/* ===================== 헤더 ===================== */
+.accentbar { height: 4px; flex: 0 0 auto; background: var(--accent); }
+header {
+  height: 56px; flex: 0 0 auto;
+  display: flex; align-items: center; gap: var(--sp-4);
+  padding: 0 var(--sp-5);
+  background: var(--panel); border-bottom: 1px solid var(--line-2);
+}
+.badge {
+  flex: 0 0 auto; padding: 7px 14px; border-radius: var(--r-2);
+  background: var(--accent); color: var(--accent-ink);
+  font-size: var(--fs-xl); font-weight: 700; letter-spacing: .3px;
+}
+.hdr-title { flex: 0 0 auto; line-height: 1.25; min-width: 0; }
+.hdr-title h1 { font-size: var(--fs-2xl); font-weight: 700; letter-spacing: -.2px; }
+.hdr-title .sub { font-size: var(--fs-sm); color: var(--ink-faint); }
+.hdr-spacer { flex: 1; }
+.hdr-right { display: flex; align-items: center; gap: var(--sp-3); }
+.clock { text-align: right; line-height: 1.2; }
+.clock .t { font-size: var(--fs-2xl); font-weight: 700; letter-spacing: .5px; }
+.clock .d { font-size: var(--fs-xs); color: var(--ink-faint); }
+/* 장비 상태 칩은 크게 — 멀리서도 읽혀야 한다 */
+.chip.big { padding: 6px 14px; font-size: var(--fs-lg); }
+
+/* ===================== 탭 바 ===================== */
+.tabbar {
+  flex: 0 0 auto; height: 40px;
+  display: flex; align-items: stretch; gap: var(--sp-1);
+  padding: 0 var(--sp-5);
+  background: var(--bg); border-bottom: 1px solid var(--line);
+}
+.tab {
+  padding: 0 16px; border: none; border-bottom: 3px solid transparent;
+  background: transparent; color: var(--ink-dim);
+  font-size: var(--fs-lg); font-weight: 600; cursor: pointer;
+}
+.tab:hover { color: var(--ink); }
+.tab.on { color: var(--ink); border-bottom-color: var(--accent); }
+.access {
+  margin-left: auto; align-self: center;
+  font-size: var(--fs-md); color: var(--ink-dim);
+}
+.access.remote { color: var(--warn); font-weight: 600; }
+
+/* ===================== 본문 · 뷰 ===================== */
+.views { flex: 1; min-height: 0; position: relative; }
+.view {
+  position: absolute; inset: 0; display: none;
+  flex-direction: column; gap: var(--sp-2);
+  padding: var(--sp-3) var(--sp-5);
+  overflow: hidden;
+}
+.view.on { display: flex; }
+.row { display: flex; gap: var(--sp-2); min-height: 0; }
+.col { display: flex; flex-direction: column; gap: var(--sp-2); min-height: 0; min-width: 0; }
+.grow { flex: 1; min-height: 0; min-width: 0; }
+
+/* ===================== 상태줄 ===================== */
+.statusbar {
+  flex: 0 0 auto; height: 26px;
+  display: flex; align-items: center; gap: var(--sp-2);
+  padding: 0 var(--sp-5);
+  background: var(--panel); border-top: 1px solid var(--line);
+  font-size: var(--fs-sm); color: var(--ink-dim);
+}
+.statusbar .dot { width: 7px; height: 7px; border-radius: 50%; background: var(--ok); flex: 0 0 auto; }
+.statusbar .dot.off { background: var(--off); }
+.statusbar .right { margin-left: auto; color: var(--ink-faint); }
+
+/* ===================== panel ===================== */
+.panel {
+  background: var(--panel); border: 1px solid var(--line);
+  border-radius: var(--r-3); box-shadow: var(--shadow);
+  display: flex; flex-direction: column; min-height: 0; overflow: hidden;
+}
+.panel-head {
+  flex: 0 0 auto; height: 30px;
+  display: flex; align-items: center; gap: var(--sp-2);
+  padding: 0 var(--sp-4);
+  background: var(--panel-head); border-bottom: 1px solid var(--line);
+  font-size: var(--fs-lg); font-weight: 700;
+}
+.panel-head .note {
+  margin-left: auto; font-size: var(--fs-sm); font-weight: 400; color: var(--ink-faint);
+  display: flex; align-items: center; gap: var(--sp-2);
+}
+.panel-body { flex: 1; min-height: 0; padding: var(--sp-3); overflow-y: auto; overflow-x: hidden; }
+.panel-body.tight { padding: var(--sp-1) var(--sp-3); }
+.panel-body.flush { padding: 0; }
+
+/* ===================== btn ===================== */
+.btn {
+  padding: 6px 13px; border: 1px solid var(--line-2); border-radius: var(--r-2);
+  background: var(--panel); color: var(--ink);
+  font-size: var(--fs-lg); font-weight: 600; cursor: pointer; white-space: nowrap;
+}
+.btn:hover:not(:disabled) { background: var(--panel-2); border-color: var(--ink-dim); }
+.btn:disabled { opacity: .40; cursor: not-allowed; }
+.btn.primary { background: var(--primary); border-color: var(--primary); color: var(--primary-ink); }
+.btn.danger { background: var(--stop); border-color: var(--stop); color: #fff; }
+.btn.danger-line { color: var(--stop); border-color: var(--stop-line); }
+.btn.danger-line:hover:not(:disabled) { background: var(--stop-bg); border-color: var(--stop); }
+.btn.sm { padding: 3px 9px; font-size: var(--fs-md); }
+.btn.wide { flex: 1 1 0; min-width: 0; text-align: center; padding-left: var(--sp-2); padding-right: var(--sp-2); }
+
+/* ===================== chip ===================== */
+.chip {
+  display: inline-flex; align-items: center; gap: 5px;
+  padding: 3px 9px; border-radius: 999px;
+  border: 1px solid var(--neutral-line); background: var(--neutral-bg);
+  color: var(--ink-dim); font-size: var(--fs-md); font-weight: 600; white-space: nowrap;
+}
+.chip .dot { width: 7px; height: 7px; border-radius: 50%; background: currentColor; }
+.chip.ok   { color: var(--ok);   background: var(--ok-bg);   border-color: var(--ok-line); }
+.chip.warn { color: var(--warn); background: var(--warn-bg); border-color: var(--warn-line); }
+.chip.stop { color: var(--stop); background: var(--stop-bg); border-color: var(--stop-line); }
+.chip.info { color: var(--info); background: var(--info-bg); border-color: var(--info-line); }
+.chip.off  { color: var(--off);  background: var(--off-bg);  border-color: var(--off-line); }
+.chip.accent { color: var(--accent); background: transparent; border-color: var(--accent); }
+.chip.click { cursor: pointer; }
+.chip[title] { cursor: help; }
+
+/* ===================== tbl ===================== */
+.tbl { width: 100%; border-collapse: collapse; font-size: var(--fs-md); }
+.tbl th {
+  padding: 3px var(--sp-3); text-align: right;
+  color: var(--ink-faint); font-size: var(--fs-sm); font-weight: 600;
+  border-bottom: 1px solid var(--line-2); white-space: nowrap;
+}
+.tbl th:first-child, .tbl td:first-child { text-align: left; }
+.tbl th.l, .tbl td.l { text-align: left; }
+.tbl td {
+  padding: 2px var(--sp-3); text-align: right;
+  border-bottom: 1px solid var(--line); white-space: nowrap;
+}
+.tbl tbody tr:last-child td { border-bottom: none; }
+.tbl tbody tr.hl { background: var(--warn-bg); }
+.tbl tbody tr.dim td { color: var(--ink-faint); }
+.tbl td.pv { color: var(--pv); font-weight: 700; }
+.tbl td.sv { color: var(--sv); font-weight: 700; }
+.tbl .chip { padding: 0 7px; font-size: var(--fs-sm); line-height: 1.5; }
+.tbl .unit { color: var(--ink-faint); font-size: var(--fs-sm); margin-left: 2px; }
+
+/* ===================== field ===================== */
+.field { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.field > label { font-size: var(--fs-sm); color: var(--ink-faint); }
+.field .inwrap { display: flex; align-items: center; gap: var(--sp-2); }
+.field input, .inp {
+  width: 100%; min-width: 0; padding: 4px var(--sp-3);
+  border: 1px solid var(--line-2); border-radius: var(--r-2);
+  background: var(--panel-2); color: var(--ink); font-size: var(--fs-md);
+}
+.field input:disabled, .inp:disabled { color: var(--ink-dim); }
+.field .suffix { font-size: var(--fs-sm); color: var(--ink-faint); flex: 0 0 auto; }
+.grid2 { display: grid; grid-template-columns: 1fr 1fr; gap: var(--sp-2) var(--sp-4); }
+.grid3 { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: var(--sp-2) var(--sp-4); }
+.hint { font-size: var(--fs-sm); color: var(--ink-faint); }
+.hint.warn { color: var(--warn); }
+
+/* 값 옆에 붙는 "환산 미확정" 표시 */
+.unconf {
+  display: inline-block; margin-left: 5px; padding: 0 5px;
+  border: 1px solid var(--warn-line); border-radius: var(--r-1);
+  background: var(--warn-bg); color: var(--warn);
+  font-size: var(--fs-xs); font-weight: 600; vertical-align: 1px;
+}
+
+/* ===================== 운전 탭 ===================== */
+.schem-wrap { flex: 1; min-height: 0; }
+#schemSvg { width: 100%; height: 100%; display: block; }
+.legend {
+  flex: 0 0 auto; display: flex; align-items: center; gap: var(--sp-4);
+  padding: 2px var(--sp-4) var(--sp-2);
+  font-size: var(--fs-xs); color: var(--ink-dim);
+}
+.legend i { display: inline-block; width: 14px; height: 7px; margin-right: 4px; vertical-align: -1px; }
+
+.kv { display: flex; justify-content: space-between; align-items: baseline; margin-bottom: 2px; }
+.kv .k { font-size: var(--fs-md); font-weight: 600; }
+.kv .v { font-size: var(--fs-md); font-weight: 700; font-family: var(--font-mono); }
+.gauges { display: flex; gap: var(--sp-2); margin-bottom: var(--sp-1); }
+.gauge {
+  flex: 1; min-width: 0; padding: var(--sp-1) var(--sp-3);
+  border: 1px solid var(--line); border-radius: var(--r-2); background: var(--panel-2);
+}
+.gauge .k { font-size: var(--fs-sm); color: var(--ink-faint); }
+.gauge .v { font-size: var(--fs-xl); font-weight: 700; color: var(--primary); font-family: var(--font-mono); }
+.gauge .v .u { font-size: var(--fs-sm); color: var(--ink-faint); font-weight: 400; margin-left: 3px; }
+.ilks { display: flex; flex-wrap: wrap; gap: var(--sp-1); margin-top: var(--sp-2); }
+.ilks .chip { padding: 1px 6px; font-size: var(--fs-xs); }
+
+.cmdbar {
+  flex: 0 0 auto; display: flex; align-items: center; gap: var(--sp-2);
+  padding: var(--sp-2) var(--sp-4);
+  background: var(--panel); border: 1px solid var(--line);
+  border-radius: var(--r-3); box-shadow: var(--shadow);
+}
+.cmdbar .lockmsg { margin-left: auto; margin-right: var(--sp-2); font-size: var(--fs-md); color: var(--ink-faint); }
+
+/* ===================== 트렌드 ===================== */
+.trendbar { flex: 0 0 auto; display: flex; align-items: center; gap: var(--sp-2); }
+.trendbar .right { margin-left: auto; display: flex; align-items: center; gap: var(--sp-3); }
+.chartpanel { flex: 1; min-height: 0; }
+.chartpanel .panel-body { padding: 0; position: relative; }
+.chartpanel canvas { display: block; width: 100%; height: 100%; }
+.legend-inline { margin-left: auto; display: flex; gap: var(--sp-3); font-size: var(--fs-xs); }
+.legend-inline span { display: flex; align-items: center; gap: 4px; color: var(--ink-dim); }
+.legend-inline i { width: 12px; height: 2.5px; border-radius: 2px; }
+#tip {
+  position: absolute; z-index: 20; pointer-events: none;
+  padding: var(--sp-2) var(--sp-3); border-radius: var(--r-2);
+  border: 1px solid var(--line-2); background: var(--panel);
+  box-shadow: var(--shadow-lg); font-size: var(--fs-sm); white-space: nowrap;
+}
+#tip .tt { color: var(--ink-faint); margin-bottom: 3px; }
+#tip .tr { display: flex; align-items: center; gap: 5px; }
+#tip .tr i { width: 8px; height: 8px; border-radius: 2px; }
+#tip .tr b { font-family: var(--font-mono); margin-left: auto; }
+
+/* ===================== 알람 · 로그 ===================== */
+.logbox {
+  height: 100%; overflow: auto;
+  padding: var(--sp-2) var(--sp-3);
+  background: var(--panel-2); border: 1px solid var(--line); border-radius: var(--r-2);
+  font-family: var(--font-mono); font-size: var(--fs-sm); line-height: 1.7;
+}
+.logbox .ln { display: flex; gap: var(--sp-3); }
+.logbox .ln .ts { color: var(--ink-faint); flex: 0 0 auto; }
+.logbox .ln.warn { color: var(--warn); }
+.logbox .ln.err { color: var(--stop); }
+.logbox .ln.ok { color: var(--ok); }
+.empty { padding: var(--sp-5); text-align: center; color: var(--ink-faint); font-size: var(--fs-md); }
+
+/* PC 자체 알림(PLC 알람이 아님)은 구분해서 보여 준다 */
+.pcnotice {
+  display: flex; align-items: center; gap: var(--sp-2);
+  padding: var(--sp-2) var(--sp-3); margin-bottom: var(--sp-2);
+  border: 1px dashed var(--line-2); border-radius: var(--r-2);
+  background: var(--panel-2); font-size: var(--fs-md); color: var(--ink-dim);
+}
+.pcnotice.warn { border-color: var(--warn-line); color: var(--warn); background: var(--warn-bg); }
+.pcnotice.err { border-color: var(--stop-line); color: var(--stop); background: var(--stop-bg); }
+
+/* ===================== toast ===================== */
+#toasts {
+  position: fixed; left: 50%; bottom: 46px; transform: translateX(-50%);
+  display: flex; flex-direction: column; gap: var(--sp-2);
+  z-index: 60; pointer-events: none;
+}
+.toast {
+  padding: 8px 16px; border-radius: var(--r-2);
+  border: 1px solid var(--line-2); background: var(--panel);
+  box-shadow: var(--shadow-lg);
+  font-size: var(--fs-lg); font-weight: 600; color: var(--ink); max-width: 620px;
+}
+.toast.ok   { border-color: var(--ok-line);   background: var(--ok-bg);   color: var(--ok); }
+.toast.warn { border-color: var(--warn-line); background: var(--warn-bg); color: var(--warn); }
+.toast.err  { border-color: var(--stop-line); background: var(--stop-bg); color: var(--stop); }
+.toast.info { border-color: var(--info-line); background: var(--info-bg); color: var(--info); }
+
+/* ===================== modal ===================== */
+.modal {
+  position: fixed; inset: 0; z-index: 80;
+  display: flex; align-items: center; justify-content: center;
+  background: var(--overlay);
+}
+.modal-box {
+  width: 420px; max-height: 86%; overflow: auto;
+  background: var(--panel);
+  /* ★ 확인 창은 장비 고유색 테두리를 두른다 — 두 창이 나란히 떠 있을 때
+     어느 장비에 명령을 보내는지 착각하지 않게 하는 마지막 방어선이다. */
+  border: 2px solid var(--accent); border-radius: var(--r-3);
+  box-shadow: var(--shadow-lg);
+}
+.modal-head {
+  display: flex; align-items: center; gap: var(--sp-3);
+  padding: var(--sp-4) var(--sp-5) var(--sp-2);
+}
+.modal-head .dev { font-size: var(--fs-2xl); font-weight: 700; color: var(--accent); }
+.modal-head h3 { font-size: var(--fs-xl); font-weight: 700; }
+.modal-body { padding: 0 var(--sp-5) var(--sp-4); font-size: var(--fs-lg); color: var(--ink-dim); line-height: 1.6; }
+.modal-btns { display: flex; gap: var(--sp-2); justify-content: flex-end; padding: 0 var(--sp-5) var(--sp-5); }
+
+/* 시뮬레이터 조작판 */
+.simpanel { width: 360px; }
+.simpanel .row2 { display: flex; align-items: center; justify-content: space-between; padding: 4px 0; }
+.simpanel .row2 + .row2 { border-top: 1px solid var(--line); }
+.sw {
+  width: 40px; height: 20px; border-radius: 999px; border: 1px solid var(--line-2);
+  background: var(--off-bg); position: relative; cursor: pointer; flex: 0 0 auto;
+}
+.sw::after {
+  content: ''; position: absolute; top: 2px; left: 2px;
+  width: 14px; height: 14px; border-radius: 50%; background: var(--off);
+  transition: left .12s;
+}
+.sw.on { background: var(--stop-bg); border-color: var(--stop-line); }
+.sw.on::after { left: 21px; background: var(--stop); }

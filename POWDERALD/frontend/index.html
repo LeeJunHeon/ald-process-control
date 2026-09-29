@@ -1,0 +1,223 @@
+<!DOCTYPE html>
+<html lang="ko" data-theme="light">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Powder ALD 공정 제어</title>
+<link rel="icon" href="data:,">
+<link rel="stylesheet" href="css/tokens.css?v=__ASSET_V__">
+<link rel="stylesheet" href="css/style.css?v=__ASSET_V__">
+</head>
+<body>
+<div id="stage">
+  <div id="app">
+    <div class="accentbar"></div>
+
+    <!-- ===================== 헤더 ===================== -->
+    <header>
+      <span class="badge" data-bind="devBadge">&mdash;</span>
+      <div class="hdr-title">
+        <h1>공정 제어</h1>
+        <div class="sub" data-bind="plcAddr">&mdash;</div>
+      </div>
+      <div class="hdr-spacer"></div>
+      <div class="hdr-right">
+        <span class="chip accent click" data-bind="simChip" hidden title="시뮬레이터 조작판 열기">시뮬레이터</span>
+        <span class="chip big off" data-bind="stateChip">PLC 끊김</span>
+        <span class="chip" data-bind="alarmChip">알람 없음</span>
+        <div class="clock">
+          <div class="t mono" data-bind="clock">--:--:--</div>
+          <div class="d mono" data-bind="date">&mdash;</div>
+        </div>
+      </div>
+    </header>
+
+    <!-- ===================== 탭 ===================== -->
+    <nav class="tabbar">
+      <button class="tab on" data-tab="main">운전</button>
+      <button class="tab" data-tab="recipe">레시피</button>
+      <button class="tab" data-tab="trend">트렌드</button>
+      <button class="tab" data-tab="alarm">알람·로그</button>
+      <button class="tab" data-tab="setup">설정</button>
+      <span class="access" data-bind="access">조작 권한: 이 PC</span>
+    </nav>
+
+    <div class="views">
+      <!-- ---------- 운전 ---------- -->
+      <section class="view on" id="view-main">
+        <div class="row grow">
+          <div class="panel" style="flex:0 0 604px">
+            <div class="panel-head">배관도<span class="note" data-bind="schemNote">&mdash;</span></div>
+            <div class="panel-body flush col">
+              <div class="schem-wrap"><svg id="schemSvg" preserveAspectRatio="xMidYMid meet"></svg></div>
+              <div class="legend" data-bind="schemLegend"></div>
+            </div>
+          </div>
+          <div class="col grow">
+            <div class="panel" style="flex:0 0 auto">
+              <div class="panel-head">공정 진행<span class="note" data-bind="seqChip"></span></div>
+              <div class="panel-body" data-bind="seqBody"></div>
+            </div>
+            <div class="panel grow">
+              <div class="panel-head">압력 · 배기 · 인터락</div>
+              <div class="panel-body" data-bind="vacBody"></div>
+            </div>
+            <div class="panel" style="flex:0 0 auto" data-bind="devPanel" hidden>
+              <div class="panel-head" data-bind="devPanelHead">&mdash;</div>
+              <div class="panel-body" data-bind="devPanelBody"></div>
+            </div>
+          </div>
+        </div>
+        <div class="row" style="flex:0 0 232px">
+          <div class="panel grow">
+            <div class="panel-head">히터 · 온도<span class="note" data-bind="tcNote"></span></div>
+            <div class="panel-body tight"><table class="tbl" data-bind="heaterTbl"></table></div>
+          </div>
+          <div class="panel" style="flex:0 0 330px">
+            <div class="panel-head">MFC · 유량</div>
+            <div class="panel-body tight"><table class="tbl" data-bind="mfcTbl"></table></div>
+          </div>
+        </div>
+        <div class="cmdbar">
+          <button class="btn" data-cmd="pump_start">펌핑 시작</button>
+          <button class="btn" data-cmd="pump_stop">펌핑 정지</button>
+          <button class="btn" data-cmd="vent">벤트</button>
+          <button class="btn" data-cmd="all_close">전체 밸브 닫기</button>
+          <button class="btn" data-cmd="alarm_ack">알람 확인</button>
+          <button class="btn" data-cmd="alarm_reset">알람 리셋</button>
+          <span class="lockmsg" data-bind="lockMsg"></span>
+          <button class="btn danger-line" data-cmd="exit">프로그램 종료</button>
+        </div>
+      </section>
+
+      <!-- ---------- 레시피 (2단계) ---------- -->
+      <section class="view" id="view-recipe">
+        <div class="panel grow">
+          <div class="panel-head">레시피</div>
+          <div class="panel-body">
+            <div class="empty" style="padding:40px 20px;line-height:2">
+              레시피는 <b>2단계</b>에서 새 PLC 레시피 표 구조로 만듭니다.<br>
+              스텝(밸브·시간·플래그) · 블록(MFC·PCV·RF) · 반복 그룹을 편집해 PLC 표 영역에 올리고,<br>
+              PLC 가 계산한 합계·검증 결과를 확인한 뒤 베이스 압력에 도달하면 시작합니다.
+            </div>
+            <div class="hint" style="text-align:center">
+              주소 정의(D02000~D03119)는 이번 단계에 이미 들어 있습니다.
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- ---------- 트렌드 ---------- -->
+      <section class="view" id="view-trend">
+        <div class="trendbar">
+          <button class="btn sm primary" data-range="120">2분</button>
+          <button class="btn sm" data-range="600">10분</button>
+          <button class="btn sm" data-range="3600">1시간</button>
+          <span class="right"><span class="mono" data-bind="trendInfo">&mdash;</span></span>
+        </div>
+        <div class="panel chartpanel">
+          <div class="panel-head">압력 (Torr)<span class="legend-inline" data-bind="lgP"></span></div>
+          <div class="panel-body"><canvas data-chart="p"></canvas></div>
+        </div>
+        <div class="panel chartpanel">
+          <div class="panel-head">온도 (°C)<span class="legend-inline" data-bind="lgT"></span></div>
+          <div class="panel-body"><canvas data-chart="t"></canvas></div>
+        </div>
+        <div class="panel chartpanel">
+          <div class="panel-head">MFC 유량 (sccm)<span class="legend-inline" data-bind="lgM"></span></div>
+          <div class="panel-body"><canvas data-chart="m"></canvas></div>
+        </div>
+        <div id="tip" hidden></div>
+      </section>
+
+      <!-- ---------- 알람 · 로그 ---------- -->
+      <section class="view" id="view-alarm">
+        <div class="panel" style="flex:0 0 auto">
+          <div class="panel-head">현재 알람
+            <span class="note"><span data-bind="alarmCount">&mdash;</span>
+            <button class="btn sm" data-cmd="alarm_ack">확인 (부저 끄기)</button>
+            <button class="btn sm" data-cmd="alarm_reset">알람 리셋</button></span>
+          </div>
+          <div class="panel-body tight"><table class="tbl" data-bind="alarmTbl"></table></div>
+        </div>
+        <div class="panel" style="flex:0 0 auto">
+          <div class="panel-head">프로그램 알림<span class="note">PLC 알람이 아니라 이 프로그램이 판단한 것</span></div>
+          <div class="panel-body tight" data-bind="pcNotices"></div>
+        </div>
+        <div class="panel" style="flex:0 0 190px">
+          <div class="panel-head">알람 이력<span class="note" data-bind="histNote"></span></div>
+          <div class="panel-body tight"><table class="tbl" data-bind="histTbl"></table></div>
+        </div>
+        <div class="panel grow">
+          <div class="panel-head">프로그램 로그</div>
+          <div class="panel-body"><div class="logbox" data-bind="logBox"></div></div>
+        </div>
+      </section>
+
+      <!-- ---------- 설정 ---------- -->
+      <section class="view" id="view-setup">
+        <div class="row grow" style="overflow:auto">
+          <div class="col grow" data-bind="setupLeft"></div>
+          <div class="col grow" data-bind="setupRight"></div>
+        </div>
+      </section>
+    </div>
+
+    <div class="statusbar">
+      <span class="dot" data-bind="sbDot"></span>
+      <span data-bind="sbText">&mdash;</span>
+      <span class="right mono" data-bind="sbVer">&mdash;</span>
+    </div>
+  </div>
+</div>
+
+<div id="toasts"></div>
+
+<!-- 확인 창 (위험한 명령) -->
+<div class="modal" id="confirmModal" hidden>
+  <div class="modal-box">
+    <div class="modal-head"><span class="dev" data-bind="cfDev">&mdash;</span><h3 data-bind="cfTitle">&mdash;</h3></div>
+    <div class="modal-body" data-bind="cfBody"></div>
+    <div class="modal-btns">
+      <button class="btn" data-cf="cancel">취소</button>
+      <button class="btn danger" data-cf="ok">실행</button>
+    </div>
+  </div>
+</div>
+
+<!-- 알람 창 (새 알람이 생기면 자동으로) -->
+<div class="modal" id="alarmModal" hidden>
+  <div class="modal-box">
+    <div class="modal-head"><span class="dev" data-bind="amDev">&mdash;</span><h3>알람 발생</h3></div>
+    <div class="modal-body"><table class="tbl" data-bind="amTbl"></table></div>
+    <div class="modal-btns">
+      <button class="btn" data-am="close">닫기</button>
+      <button class="btn" data-am="ack">확인 (부저 끄기)</button>
+      <button class="btn danger" data-am="reset">알람 리셋</button>
+    </div>
+  </div>
+</div>
+
+<!-- 시뮬레이터 조작판 -->
+<div class="modal" id="simModal" hidden>
+  <div class="modal-box simpanel">
+    <div class="modal-head"><span class="dev" data-bind="smDev">&mdash;</span><h3>시뮬레이터 조작판</h3></div>
+    <div class="modal-body">
+      <div class="hint" style="margin-bottom:8px">이상 입력을 켜서 알람·인터락 동작을 확인합니다. 실장비에는 없는 기능입니다.</div>
+      <div data-bind="simList"></div>
+    </div>
+    <div class="modal-btns"><button class="btn" data-sm="close">닫기</button></div>
+  </div>
+</div>
+
+<script src="js/fmt.js?v=__ASSET_V__"></script>
+<script src="js/core.js?v=__ASSET_V__"></script>
+<script src="js/app.js?v=__ASSET_V__"></script>
+<script src="js/views/schematic.js?v=__ASSET_V__"></script>
+<script src="js/views/main.js?v=__ASSET_V__"></script>
+<script src="js/views/trend.js?v=__ASSET_V__"></script>
+<script src="js/views/alarm.js?v=__ASSET_V__"></script>
+<script src="js/views/setup.js?v=__ASSET_V__"></script>
+<script src="js/views/recipe.js?v=__ASSET_V__"></script>
+</body>
+</html>
