@@ -15,6 +15,8 @@
     pump_stop: { t: '펌핑을 정지할까요?', b: '배기 격리(IV-E)를 닫고 펌프를 멈춥니다. 챔버 압력이 서서히 올라갑니다.', ok: '펌핑 정지' },
     vent: { t: '벤트를 시작할까요?', b: '배기 격리(IV-E)를 닫고 N2 로 챔버를 대기압까지 올립니다.<br>공정 중에는 실행할 수 없습니다.', ok: '벤트' },
     all_close: { t: '전체 밸브를 닫을까요?', b: '공정 밸브와 수동 보조 출력 요청을 모두 지우고 배기 격리를 닫습니다.<br>펌프는 그대로 둡니다.', ok: '전체 닫기' },
+    process_abort: { t: '공정을 즉시 중단할까요?', b: '진행 중인 스텝을 그 자리에서 끊고 모든 공정 밸브를 닫습니다.<br>웨이퍼는 중간 상태로 남습니다 — 되돌릴 수 없습니다.', ok: '즉시 중단' },
+    process_stop_after_cycle: { t: '이번 사이클 후에 정지할까요?', b: '지금 돌고 있는 사이클을 끝까지 마친 뒤 정지합니다.<br>남은 블록·그룹 반복은 실행하지 않습니다.', ok: '사이클 후 정지' },
     alarm_reset: { t: '알람을 리셋할까요?', b: '원인이 사라진 알람만 지웁니다. 원인이 남아 있으면 즉시 다시 걸립니다.<br>PC 통신 끊김 알람도 이것으로 풀립니다.', ok: '알람 리셋' }
   };
 
@@ -35,12 +37,23 @@
     var seq = core.bind('seqBody');
     if (seq) {
       seq.innerHTML =
-        '<div class="kv"><span class="k">시퀀서</span><span class="v" data-bind="sqName">—</span></div>' +
-        '<div class="kv"><span class="k">블록 / 스텝</span><span class="v" data-bind="sqBS">—</span></div>' +
-        '<div class="kv"><span class="k">블록 반복 / 그룹 회차</span><span class="v" data-bind="sqRep">—</span></div>' +
-        '<div class="kv"><span class="k">스텝 경과</span><span class="v" data-bind="sqMs">—</span></div>' +
-        '<div class="kv"><span class="k">레시피 표</span><span class="v" data-bind="sqRcp">—</span></div>' +
-        '<div class="hint" style="margin-top:4px">레시피 실행은 <b>2단계</b>. 여기는 PLC 보고값 그대로입니다.</div>';
+        '<div class="kv"><span class="k">레시피 <span data-bind="sqRcpChip"></span></span>' +
+        '<span class="v" data-bind="sqRec">—</span></div>' +
+        '<div class="kv"><span class="k">블록/스텝</span><span class="v" data-bind="sqBS">—</span></div>' +
+        '<div class="kv"><span class="k">경과/남은/예정</span><span class="v" data-bind="sqTime">—</span></div>' +
+        '<div class="bar"><span data-bind="sqBar"></span></div>' +
+        '<div class="steplist" data-bind="sqSteps"></div>' +
+        '<div class="ck-list" data-bind="sqChecks"></div>' +
+        '<div class="procmsg" data-bind="seqMsg" hidden></div>' +
+        '<div class="procbar">' +
+        '<button class="btn sm primary" data-cmd="process_start">공정 시작</button>' +
+        '<button class="btn sm" data-cmd="process_pause">일시정지</button>' +
+        '<button class="btn sm" data-cmd="process_resume">재개</button>' +
+        '<button class="btn sm" data-cmd="process_stop_after_cycle">사이클 후 정지</button>' +
+        '<button class="btn sm danger" data-cmd="process_abort">즉시 중단</button>' +
+        '<button class="btn sm" data-cmd="process_cancel_wait" data-bind="sqCancel" hidden>대기 취소</button>' +
+        '<button class="btn sm" data-bind="mnOpen">수동 조작…</button>' +
+        '</div>';
     }
     var vac = core.bind('vacBody');
     if (vac) {
@@ -134,18 +147,103 @@
 
   function updateSeq(t, conn) {
     var q = t.seq || {};
-    core.setText('sqName', conn ? (q.name || fmt.DASH) : fmt.DASH);
-    core.setText('sqBS', conn ? (q.block || 0) + ' / ' + (q.step || 0) : fmt.DASH);
-    core.setText('sqRep', conn ? (q.block_pass || 0) + ' / ' + (q.group_pass || 0) : fmt.DASH);
-    core.setText('sqMs', conn ? fmt.ms(q.step_ms) + ' s' : fmt.DASH);
-    var r = core.bind('sqRcp');
-    if (r) {
-      r.innerHTML = !conn ? fmt.DASH
-        : core.chip(q.recipe_ok ? '통과' : '미통과', q.recipe_ok ? 'ok' : 'off',
-                    'PLC 합계 ' + fmt.hex16(q.recipe_sum));
+    core.setText('sqBS', conn
+      ? (q.block || 0) + ' / ' + (q.step || 0) + ' · ' + (q.block_pass || 0) +
+        '회 · 그룹 ' + (q.group_pass || 0)
+      : fmt.DASH);
+    // 스텝 경과와 레시피 표 통과는 위 두 줄에 붙여 보여 준다(패널을 낮게 유지한다).
+    var bs = core.bind('sqBS');
+    if (bs && conn) {
+      bs.innerHTML = core.esc(bs.textContent) + ' · 스텝 ' + fmt.ms(q.step_ms) + ' s';
+    }
+    var rc = core.bind('sqRcpChip');
+    if (rc) {
+      rc.innerHTML = !conn ? '' : core.chip(q.recipe_ok ? '표 통과' : '표 미통과',
+        q.recipe_ok ? 'ok' : 'off', 'PLC 합계 ' + fmt.hex16(q.recipe_sum));
     }
     var chip = core.bind('seqChip');
-    if (chip) chip.innerHTML = conn && t.state ? core.chip(t.state.name, stateLevel(t.state.code)) : '';
+    if (chip) {
+      // 시퀀서 상태는 장비 상태와 다를 때만 함께 보여 준다(같은 말이 두 번 보이면 읽지 않는다).
+      var qn = (t.seq || {}).name || '';
+      chip.innerHTML = conn && t.state
+        ? (qn && qn !== t.state.name ? core.chip(qn, 'info') + ' ' : '') +
+          core.chip(t.state.name, stateLevel(t.state.code))
+        : '';
+    }
+    updateProcess(t, conn);
+  }
+
+  /* ---------- 공정 진행 ---------- */
+  function updateProcess(t, conn) {
+    var p = t.process || {};
+    var run = !!p.running;
+
+    core.setText('sqRec', !conn ? fmt.DASH
+      : (p.recipe || '레시피를 고르세요') + (p.number ? ' · 번호 ' + p.number : ''));
+
+    if (run && p.total_ms) {
+      core.setText('sqTime', fmt.hms(p.elapsed_s) + ' / ' + fmt.hms((p.remaining_ms || 0) / 1000) +
+        ' / ' + (p.eta || fmt.DASH));
+    } else if (p.estimate && p.estimate.total_ms) {
+      core.setText('sqTime', '예상 ' + fmt.hms(p.estimate.total_ms / 1000));
+    } else {
+      core.setText('sqTime', fmt.DASH);
+    }
+
+    var bar = core.bind('sqBar');
+    if (bar) {
+      var done = (run && p.total_ms) ? (1 - (p.remaining_ms || 0) / p.total_ms) : 0;
+      bar.style.width = Math.max(0, Math.min(100, done * 100)).toFixed(1) + '%';
+      bar.className = p.paused ? 'warn' : '';
+    }
+
+    // 스텝 목록 — 지금 스텝을 굵게. 열리는 밸브 이름을 함께 보여 준다.
+    var sl = core.bind('sqSteps');
+    if (sl) {
+      var steps = p.steps || [];
+      sl.innerHTML = (run && steps.length)
+        ? steps.map(function (x, i) {
+            var on = (i + 1) === p.step_in_block;
+            return '<span class="st' + (on ? ' on' : '') + '">' + core.esc(x.name || (i + 1)) +
+              '<i>' + fmt.ms(x.ms) + 's</i></span>';
+          }).join('')
+        : '';
+    }
+
+    // 시작 조건 — 판정은 서버가 했고 여기서는 안 된 것만 보여 준다.
+    var cl = core.bind('sqChecks');
+    if (cl) {
+      var bad = (p.checks || []).filter(function (c) { return !c.ok; });
+      // ★ 안 된 것만, 그것도 앞 셋만 보여 준다 — 패널이 넘치면 아무것도 안 읽힌다.
+      //   전체 목록은 시작을 누를 때 확인 창에서 다시 보여 준다.
+      cl.innerHTML = (!run && bad.length)
+        ? bad.slice(0, 3).map(function (c) {
+            return core.chip(c.label + ': ' + c.detail, c.key === 'base' ? 'warn' : 'stop');
+          }).join('') + (bad.length > 3 ? core.chip('외 ' + (bad.length - 3) + '건', 'stop') : '')
+        : '';
+    }
+
+    var msg = p.message || '';
+    if (p.last_result && !run && !msg) msg = '지난 공정: ' + p.last_result;
+    var pm = core.bind('seqMsg');
+    if (pm) { pm.textContent = msg; pm.hidden = !msg; }
+    var cancel = core.bind('sqCancel');
+    if (cancel) cancel.hidden = (p.phase !== 'base_wait');
+
+    // 상태에 맞는 단추만 살린다 — 누를 수 없는 단추를 눌러 보게 두지 않는다.
+    var local = core.canOperate();
+    var busy = p.phase && p.phase !== 'idle';
+    en('process_start', local && conn && !run && !busy && !!p.can_start);
+    en('process_pause', local && conn && run && !p.paused);
+    en('process_resume', local && conn && !!p.paused);
+    en('process_stop_after_cycle', local && conn && run && !p.paused);
+    en('process_abort', local && conn && run);
+    en('process_cancel_wait', local && p.phase === 'base_wait');
+  }
+
+  function en(cmd, ok) {
+    var b = d.querySelector('.procbar [data-cmd="' + cmd + '"]');
+    if (b) b.disabled = !ok;
   }
 
   function stateLevel(code) {
@@ -273,6 +371,7 @@
     if (!local) msg = '🔒 원격 접속은 보기 전용입니다';
     else if (!conn) msg = '🔒 PLC 연결이 끊겨 명령을 보낼 수 없습니다';
 
+    // ★ 공정 단추는 updateProcess 가 상태별로 따로 판단한다 — 여기서 덮어쓰지 않는다.
     Array.prototype.forEach.call(d.querySelectorAll('.cmdbar [data-cmd]'), function (b) {
       var c = b.dataset.cmd;
       if (c === 'exit') { b.disabled = !local; return; }
@@ -294,6 +393,7 @@
     if (!b || b.disabled) return;
     var c = b.dataset.cmd;
     if (c === 'exit') { core.askExit(); return; }
+    if (c === 'process_start') { askStart(); return; }
     var cf = CONFIRM[c];
     if (cf) {
       core.confirmAsk(cf.t, cf.b, cf.ok, function () { w.app.send(c); });
@@ -301,6 +401,26 @@
       w.app.send(c);
     }
   });
+
+  /** 시작은 흐름이다 — 무엇을 올리고 무엇을 기다리는지 먼저 알려 준다. */
+  function askStart() {
+    var p = ((core.state || {}).live || {}).process || {};
+    var est = p.estimate || {};
+    core.confirmAsk('공정을 시작할까요?',
+      '레시피 <b>' + core.esc(p.recipe || '') + '</b>' +
+      (p.number ? ' (번호 ' + p.number + ')' : '') + '<br>' +
+      '스텝 ' + (est.step_count || 0) + ' · 블록 ' + (est.block_count || 0) +
+      ' · 예상 <b>' + fmt.hms((est.total_ms || 0) / 1000) + '</b><br><br>' +
+      'PLC 에 레시피 표를 올리고, 베이스 압력에 도달하면 시작합니다.<br>' +
+      '대기 중에는 [대기 취소]로 멈출 수 있습니다.' +
+      ((p.checks || []).filter(function (c) { return !c.ok; }).length
+        ? '<br><br>아직 안 된 조건:<br>' +
+          (p.checks || []).filter(function (c) { return !c.ok; })
+            .map(function (c) { return '· ' + core.esc(c.label) + ' — ' + core.esc(c.detail); })
+            .join('<br>')
+        : ''),
+      '시작', function () { w.app.send('process_start'); });
+  }
 
   core.register('main', { render: render, update: update });
   w.viewMain = { render: render, update: update };

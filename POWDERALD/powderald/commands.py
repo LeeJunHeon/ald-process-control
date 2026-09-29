@@ -311,11 +311,11 @@ async def _cmd_recipe_upload(d, ws):
     await push_log(f"레시피 올리기 [{name}] 번호 {tbl['number']} — {detail}",
                    "ok" if good else "err")
     await push_notice(f"레시피 올리기: {detail}", "ok" if good else "err", ws)
-    await _refresh_plc_recipe()
+    await refresh_plc_recipe()
     await push_state()
 
 
-async def _refresh_plc_recipe():
+async def refresh_plc_recipe():
     """지금 PLC 에 올라가 있는 레시피 요약을 갱신한다(역변환 + 이름 찾기)."""
     link = state.link
     if not (link and link.connected):
@@ -331,7 +331,7 @@ async def _refresh_plc_recipe():
 
 
 async def _cmd_plc_recipe_read(d, ws):
-    await _refresh_plc_recipe()
+    await refresh_plc_recipe()
     await push_state()
 
 

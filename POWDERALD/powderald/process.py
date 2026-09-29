@@ -240,7 +240,9 @@ class ProcessRunner:
         self.message = ""
         if result == A.RESULT_OK:
             self.started_at = time.time()
-            self._was_running = True
+            # ★ '공정 중'으로 본 적이 있다는 표시(_was_running)는 여기서 세우지 않는다.
+            #   PLC 상태는 100 ms 주기로 읽어 오므로, 명령이 처리된 직후에도 아직 '대기'로
+            #   읽힌다. 그 한 번을 종료로 오해해 '정상 종료' 로그가 먼저 찍힌다.
             await push_log(f"공정 시작 — {self.recipe_name} (번호 {self.table['number']}, "
                            f"예상 {_hms(R.total_ms(st.cfg, self.recipe))})", "ok")
             return True, "공정을 시작했습니다"
@@ -338,6 +340,14 @@ class ProcessRunner:
             "last_result": self.last_result,
             "elapsed_s": int(time.time() - self.started_at) if self.started_at else 0,
         }
+        if not running:
+            # 시작 조건은 화면이 아니라 서버가 판정한다 — 화면은 항목과 이유만 그린다.
+            ok, blocking, checks = self.can_start()
+            out["checks"] = checks
+            out["can_start"] = ok
+            out["blocking"] = [c["label"] for c in blocking]
+            if self.recipe:
+                out["estimate"] = self.estimate()
         if self.recipe and running:
             pos = {"block": s[A.D_SEQ_BLOCK], "step": s[A.D_SEQ_STEP], "cycle": cycle,
                    "group_pass": s[A.D_SEQ_GROUP_PASS], "step_elapsed_ms": step_ms,

@@ -85,10 +85,28 @@ def _datalog_tick():
     dl.tick((state.cfg.get("log") or {}).get("datalog_interval_s", 1))
 
 
+async def plc_recipe_loop():
+    """지금 PLC 에 올라가 있는 레시피 요약을 주기적으로 되읽는다.
+
+    ★ 화면이 '편집 중인 것'과 '장비가 들고 있는 것'을 나란히 보여 주려면 이 값이
+      필요하다. 공정 중에는 읽지 않는다 — 통신을 공정 감시에 쓴다.
+    """
+    from .commands import refresh_plc_recipe
+    while True:
+        try:
+            link = state.link
+            if link and link.connected and not (state.runner and state.runner.progress().get("running")):
+                await refresh_plc_recipe()
+        except Exception as e:  # noqa: BLE001
+            logger.write("warn", f"PLC 레시피 되읽기 실패(계속 진행): {e}")
+        await asyncio.sleep(5.0)
+
+
 def start_all() -> list:
     return [asyncio.create_task(sample_loop()),
             asyncio.create_task(live_loop()),
-            asyncio.create_task(event_loop())]
+            asyncio.create_task(event_loop()),
+            asyncio.create_task(plc_recipe_loop())]
 
 
 async def stop_all(tasks: list):

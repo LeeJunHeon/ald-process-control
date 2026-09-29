@@ -332,6 +332,7 @@ class State:
             "pcv": cfg.get("pcv") or {},
             "o3": cfg.get("o3") or {},
             "log": cfg.get("log") or {},
+            "process": cfg.get("process") or {},
         }
 
     def sim_faults(self):

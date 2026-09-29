@@ -211,19 +211,19 @@ header {
 }
 .legend i { display: inline-block; width: 14px; height: 7px; margin-right: 4px; vertical-align: -1px; }
 
-.kv { display: flex; justify-content: space-between; align-items: baseline; margin-bottom: 2px; }
+.kv { display: flex; justify-content: space-between; align-items: baseline; margin-bottom: 1px; }
 .kv .k { font-size: var(--fs-md); font-weight: 600; }
 .kv .v { font-size: var(--fs-md); font-weight: 700; font-family: var(--font-mono); }
-.gauges { display: flex; gap: var(--sp-2); margin-bottom: var(--sp-1); }
+.gauges { display: flex; gap: var(--sp-2); margin-bottom: 2px; }
 .gauge {
-  flex: 1; min-width: 0; padding: var(--sp-1) var(--sp-3);
+  flex: 1; min-width: 0; padding: 2px var(--sp-3);
   border: 1px solid var(--line); border-radius: var(--r-2); background: var(--panel-2);
 }
 .gauge .k { font-size: var(--fs-sm); color: var(--ink-faint); }
 .gauge .v { font-size: var(--fs-xl); font-weight: 700; color: var(--primary); font-family: var(--font-mono); }
 .gauge .v .u { font-size: var(--fs-sm); color: var(--ink-faint); font-weight: 400; margin-left: 3px; }
-.ilks { display: flex; flex-wrap: wrap; gap: var(--sp-1); margin-top: var(--sp-2); }
-.ilks .chip { padding: 1px 6px; font-size: var(--fs-xs); }
+.ilks { display: flex; flex-wrap: wrap; gap: 3px; margin-top: var(--sp-1); }
+.ilks .chip { padding: 0 6px; font-size: var(--fs-xs); }
 
 .cmdbar {
   flex: 0 0 auto; display: flex; align-items: center; gap: var(--sp-2);
@@ -332,3 +332,174 @@ header {
 }
 .sw.on { background: var(--stop-bg); border-color: var(--stop-line); }
 .sw.on::after { left: 21px; background: var(--stop); }
+
+/* ===================== 공정 진행 (운전 탭) ===================== */
+.bar {
+  height: 8px; margin: var(--sp-1) 0 2px;
+  background: var(--neutral-bg); border: 1px solid var(--line); border-radius: 999px;
+  overflow: hidden;
+}
+.bar > span { display: block; height: 100%; width: 0; background: var(--ok); transition: width .3s linear; }
+.bar > span.warn { background: var(--warn); }
+.steplist { display: flex; flex-wrap: wrap; gap: var(--sp-1); margin-bottom: var(--sp-1); }
+/* 비어 있는 줄이 자리를 차지하면 그만큼 아래 패널이 눌린다. */
+.steplist:empty, .ck-list:empty { display: none; }
+.steplist .st {
+  padding: 1px 6px; border: 1px solid var(--line); border-radius: var(--r-1);
+  font-size: var(--fs-xs); color: var(--ink-faint); background: var(--panel-2);
+}
+/* ★ 지금 돌고 있는 스텝만 진하게 — 눈이 한 곳에 가야 한다. */
+.steplist .st.on {
+  color: var(--ok); background: var(--ok-bg); border-color: var(--ok-line); font-weight: 700;
+}
+.steplist .st i { font-style: normal; margin-left: 4px; opacity: .7; }
+.ck-list { display: flex; flex-wrap: wrap; gap: var(--sp-1); }
+.ck-list .chip { padding: 1px 6px; font-size: var(--fs-xs); }
+.procmsg { font-size: var(--fs-sm); color: var(--warn); min-height: 14px; }
+.procbar { display: flex; flex-wrap: wrap; gap: var(--sp-1); margin-top: var(--sp-1); }
+.procbar .btn { padding: 2px 8px; }
+
+/* ===================== 레시피 탭 ===================== */
+.rcbar {
+  flex: 0 0 auto; display: flex; align-items: center; gap: var(--sp-1);
+  padding-bottom: var(--sp-1);
+}
+.rcbar .sep { width: 1px; height: 18px; background: var(--line-2); margin: 0 var(--sp-2); }
+.rcbar .right { margin-left: auto; display: flex; align-items: center; gap: var(--sp-2); font-size: var(--fs-md); }
+.warn-txt { color: var(--warn); font-size: var(--fs-md); font-weight: 600; }
+.plcrow {
+  flex: 0 0 auto; display: flex; align-items: center; gap: var(--sp-2);
+  padding: var(--sp-1) var(--sp-3); margin-bottom: var(--sp-2);
+  border: 1px solid var(--line); border-radius: var(--r-1);
+  background: var(--panel-2); font-size: var(--fs-md); color: var(--ink-dim);
+}
+.dim { color: var(--ink-faint); }
+.scroll { overflow: auto; }
+
+.rc-item { padding: var(--sp-2); border-bottom: 1px solid var(--line); cursor: pointer; }
+.rc-item:hover { background: var(--panel-2); }
+.rc-item.on { background: var(--primary-soft); }
+.rc-item .n { font-size: var(--fs-lg); font-weight: 700; }
+.rc-item .m { font-size: var(--fs-sm); color: var(--ink-dim); }
+.rc-item .s { font-size: var(--fs-xs); color: var(--ink-faint); }
+
+.rc-head { display: flex; gap: var(--sp-3); margin-bottom: var(--sp-2); }
+.rc-head label, .rc-brow label, .rc-grow label, .onelabel {
+  display: flex; flex-direction: column; gap: 2px;
+  font-size: var(--fs-sm); color: var(--ink-faint);
+}
+.rc-head label.grow { flex: 1; }
+.rc-head input, .rc-brow input, .rc-grow input, .onelabel input, .rc-steps input {
+  padding: 3px 6px; border: 1px solid var(--line-2); border-radius: var(--r-1);
+  background: var(--panel); color: var(--ink); font-size: var(--fs-md);
+  font-family: var(--font-sans);
+}
+.rc-brow input, .rc-grow input { width: 84px; }
+.rc-tabs { display: flex; flex-wrap: wrap; gap: 2px; margin-bottom: var(--sp-2); }
+.rc-btab {
+  padding: 3px 10px; border: 1px solid var(--line-2); border-radius: var(--r-1);
+  background: var(--panel-2); color: var(--ink-dim); font-size: var(--fs-md); cursor: pointer;
+}
+.rc-btab.on { background: var(--panel); color: var(--ink); border-color: var(--accent); font-weight: 700; }
+.rc-btab.add { color: var(--primary); font-weight: 700; }
+.rc-block { border: 1px solid var(--line); border-radius: var(--r-2); padding: var(--sp-2); }
+.rc-brow { display: flex; flex-wrap: wrap; align-items: flex-end; gap: var(--sp-3); margin-bottom: var(--sp-2); }
+.rc-brow .dim { margin-left: auto; font-size: var(--fs-sm); }
+
+.rc-steps th.vh { font-size: var(--fs-xs); line-height: 1.15; }
+.rc-steps input { width: 100%; }
+.rc-steps input.ms { width: 72px; text-align: right; font-family: var(--font-mono); }
+.rc-steps td { padding: 2px 3px; }
+/* ★ 오류가 있는 스텝 줄은 눈에 띄게 — 검증 항목을 눌러 여기로 온다. */
+.rc-steps tr.bad td { background: var(--stop-bg); }
+.cb {
+  display: inline-block; width: 16px; height: 16px; cursor: pointer;
+  border: 1px solid var(--line-2); border-radius: var(--r-1); background: var(--panel);
+}
+.cb.on { background: var(--primary); border-color: var(--primary); position: relative; }
+.cb.on::after {
+  content: ""; position: absolute; left: 4px; top: 1px;
+  width: 5px; height: 9px; border: solid var(--primary-ink);
+  border-width: 0 2px 2px 0; transform: rotate(45deg);
+}
+.xbtn {
+  border: none; background: transparent; color: var(--ink-faint);
+  cursor: pointer; font-size: var(--fs-md); padding: 0 4px;
+}
+.xbtn:hover { color: var(--stop); }
+
+.rc-groups { margin-top: var(--sp-2); }
+.rc-ghead { display: flex; align-items: center; gap: var(--sp-3); font-weight: 700; font-size: var(--fs-md); }
+.rc-ghead .hint { font-weight: 400; }
+.rc-ghead .btn { margin-left: auto; }
+.rc-grow { display: flex; align-items: flex-end; gap: var(--sp-3); margin-top: var(--sp-1); }
+
+.ck {
+  padding: 2px var(--sp-2); margin-bottom: 2px; border-radius: var(--r-1);
+  border: 1px solid var(--line); font-size: var(--fs-md); cursor: pointer;
+}
+.ck .loc { font-family: var(--font-mono); font-size: var(--fs-xs); margin-right: var(--sp-2); opacity: .8; }
+.ck.err  { color: var(--stop); background: var(--stop-bg); border-color: var(--stop-line); }
+.ck.warn { color: var(--warn); background: var(--warn-bg); border-color: var(--warn-line); }
+.ck.ok   { color: var(--ok);   background: var(--ok-bg);   border-color: var(--ok-line); cursor: default; }
+
+/* ===================== 수동 조작 창 ===================== */
+.manualpanel { width: 620px; }
+.mn-lock {
+  display: flex; align-items: center; gap: var(--sp-3);
+  padding: var(--sp-2); margin-bottom: var(--sp-2);
+  border: 1px solid var(--warn-line); border-radius: var(--r-2); background: var(--warn-bg);
+  color: var(--ink); font-size: var(--fs-md);
+}
+.mn-lock .right { margin-left: auto; color: var(--ink-dim); font-size: var(--fs-sm); }
+.mn-sec {
+  font-size: var(--fs-md); font-weight: 700; color: var(--ink);
+  border-bottom: 1px solid var(--line); padding-bottom: 2px;
+  margin: var(--sp-3) 0 var(--sp-2);
+}
+.mn-sec .hint { font-weight: 400; }
+.mn-valves { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: var(--sp-1); }
+.mn-v {
+  display: flex; align-items: center; gap: var(--sp-2);
+  padding: 3px var(--sp-2); border: 1px solid var(--line-2); border-radius: var(--r-1);
+  background: var(--panel); cursor: pointer; font-size: var(--fs-md);
+}
+.mn-v .t { font-weight: 700; font-family: var(--font-mono); }
+.mn-v .n { color: var(--ink-faint); font-size: var(--fs-sm); overflow: hidden; white-space: nowrap; }
+.mn-v .st { margin-left: auto; }
+.mn-v.on { background: var(--ok-bg); border-color: var(--ok-line); }
+/* ★ 요청했지만 아직 안 열린 것 — '열렸다'로 보이지 않게 따로 칠한다. */
+.mn-v.req { background: var(--warn-bg); border-color: var(--warn-line); }
+.mn-v.dis { opacity: .45; cursor: not-allowed; }
+.mn-grid { display: grid; grid-template-columns: 1fr 1fr; gap: var(--sp-2) var(--sp-4); align-items: end; }
+.mn-grid > label { display: flex; flex-direction: column; gap: 2px; font-size: var(--fs-sm); color: var(--ink-faint); }
+.mn-grid .inrow { display: flex; align-items: center; gap: var(--sp-2); }
+.mn-grid input {
+  width: 86px; padding: 3px 6px; border: 1px solid var(--line-2); border-radius: var(--r-1);
+  background: var(--panel); color: var(--ink); font-size: var(--fs-md); text-align: right;
+  font-family: var(--font-mono);
+}
+.mn-grid input:disabled { opacity: .5; }
+.mn-grid .unit { font-size: var(--fs-sm); color: var(--ink-faint); }
+.mn-grid .cur { font-size: var(--fs-sm); color: var(--ink-dim); }
+.mn-grid .hint { grid-column: 1 / -1; }
+.mn-grid > .btn { justify-self: start; }
+.sw.sm { width: 32px; height: 16px; }
+.sw.sm::after { width: 10px; height: 10px; }
+.sw.sm.on::after { left: 19px; }
+
+/* ===================== 상태바 데이터 로그 ===================== */
+.statusbar .rec { color: var(--ok); font-weight: 600; }
+.statusbar .rec.err { color: var(--stop); }
+
+/* ★ 인터락 칩 무리만 스크롤시킨다 — 압력·펌프·IV-E 줄은 언제나 보여야 한다.
+   장비마다 칩 수가 달라(입력·인터락 개수) 패널을 통째로 스크롤시키면
+   가장 중요한 압력이 화면 밖으로 밀린다. */
+#view-main [data-bind="vacBody"] { display: flex; flex-direction: column; }
+#view-main .ilks { flex: 1 1 auto; min-height: 34px; overflow-y: auto; align-content: flex-start; }
+
+/* 수동 창 다듬기 — 태그 이름이 길어도 가로 스크롤이 생기지 않게 한다. */
+.mn-valves { grid-template-columns: 1fr 1fr; }
+.mn-v { min-width: 0; }
+.mn-v .n { flex: 1; min-width: 0; text-overflow: ellipsis; }
+.mn-grid > label > .unconf { align-self: flex-start; }

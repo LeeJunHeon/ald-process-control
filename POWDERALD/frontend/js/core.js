@@ -141,6 +141,15 @@
         ? '⚠ ' + (crit ? '중대 ' : '경고 ') + alarms.length + '건'
         : '알람 없음';
     }
+    // 데이터 로그는 기록 중인 파일 이름까지 보여 준다 — 나중에 그 파일을 찾아야 한다.
+    var rec = bind('sbRec');
+    if (rec) {
+      var dl = t.datalog || {};
+      rec.hidden = !dl.active && !dl.error;
+      rec.className = 'rec' + (dl.error ? ' err' : '');
+      rec.textContent = dl.error ? '⚠ ' + dl.error
+        : '● 데이터 로그 기록 중 (' + (dl.file || '') + '.csv)';
+    }
     var plc = t.plc || {};
     var dot = bind('sbDot');
     if (dot) dot.classList.toggle('off', !plc.connected);

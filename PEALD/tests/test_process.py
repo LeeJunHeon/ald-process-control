@@ -3,6 +3,7 @@
 여기는 "PC 가 PLC 에게 실제로 무엇을 썼는가"를 본다. 화면 문구가 아니라 레지스터를 본다 —
 운전자가 누른 것과 PLC 가 받은 것이 어긋나면 현장에서 가장 위험하다.
 """
+import os
 import asyncio
 
 import pytest
@@ -390,6 +391,70 @@ async def test_o3_command_rejected_without_o3_line(wired):
     before = lk.manual_aux
     await C.handle_command({"cmd": "manual_o3", "action": "on", "value": 50})
     assert lk.manual_aux == before
+
+
+# ===================== 종료 감지 · 데이터 로그 =====================
+async def test_end_logged_once(wired):
+    """★ 시작 직후에는 PLC 상태가 아직 '대기'로 읽힌다 — 그 한 번을 종료로 보면
+    '정상 종료'가 먼저 찍히고 진짜 종료가 또 찍힌다(현장에서 두 번 돈 줄 안다)."""
+    lk, sim, cfg = wired
+    await pumped(lk, sim)
+    rec = short_recipe("한번만")
+    assert storage.save("한번만", rec)
+    assert state.runner.select("한번만")[0]
+    state.recipe_check = R.validate(cfg, rec)
+    assert (await state.runner.start(_log, _notice))[0]
+
+    seen = []
+    for _ in range(300):                       # 공정이 끝날 때까지 tick 을 돌린다
+        state.refresh()
+        state.runner.tick(lambda lvl, msg: seen.append(msg))
+        if seen:
+            await asyncio.sleep(0.5)           # 끝난 뒤에도 조금 더 돌려 본다
+            state.runner.tick(lambda lvl, msg: seen.append(msg))
+            break
+        await asyncio.sleep(0.05)
+    ends = [m for m in seen if "공정" in m and "종료" in m]
+    assert len(ends) == 1, f"종료 기록이 {len(ends)}번 남았다: {ends}"
+    assert "정상 종료" in ends[0]
+
+
+async def test_datalog_writes_csv(wired, tmp_path):
+    lk, sim, cfg = wired
+    from peald.datalog import DataLog
+    from peald import paths
+    rec = short_recipe("로그시험")
+    tbl = R.to_plc_words(cfg, state.conv, rec)
+    dl = DataLog(state)
+    dl.start("로그시험", rec, tbl, 4000)
+    assert dl.active, dl.error
+    for _ in range(3):
+        dl._next = 0.0                          # 간격을 기다리지 않고 바로 한 줄
+        dl.tick(1)
+    path = dl.path
+    dl.close()
+
+    import csv
+    with open(path, encoding="utf-8-sig", newline="") as f:
+        rows = list(csv.reader(f))
+    assert len(rows) == 4, "머리글 + 3줄이어야 한다"
+    assert len(rows[0]) == len(rows[1]), "머리글과 값의 열 수가 다르다"
+    assert rows[0][0] == "시각" and "CVG Torr" in rows[0]
+    assert os.path.exists(os.path.join(paths.DATALOG_DIR, dl.name + ".recipe.json"))
+
+
+async def test_datalog_survives_write_failure(wired):
+    """★ 기록을 못 해도 공정은 계속 돌아야 한다 — 로그로만 알리고 조용히 그만둔다."""
+    lk, _sim, cfg = wired
+    from peald.datalog import DataLog
+    dl = DataLog(state)
+    dl.start("실패시험", short_recipe(), {}, 1000)
+    assert dl.active
+    dl.fp.close()                               # 파일을 밖에서 닫아 쓰기를 실패시킨다
+    dl._next = 0.0
+    dl.tick(1)                                  # 예외가 밖으로 나오면 안 된다
+    assert not dl.active
+    assert dl.error
 
 
 # ===================== 도우미 =====================

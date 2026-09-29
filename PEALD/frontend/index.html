@@ -46,7 +46,7 @@
       <!-- ---------- 운전 ---------- -->
       <section class="view on" id="view-main">
         <div class="row grow">
-          <div class="panel" style="flex:0 0 604px">
+          <div class="panel" style="flex:0 0 540px">
             <div class="panel-head">배관도<span class="note" data-bind="schemNote">&mdash;</span></div>
             <div class="panel-body flush col">
               <div class="schem-wrap"><svg id="schemSvg" preserveAspectRatio="xMidYMid meet"></svg></div>
@@ -68,7 +68,7 @@
             </div>
           </div>
         </div>
-        <div class="row" style="flex:0 0 232px">
+        <div class="row" style="flex:0 0 auto">
           <div class="panel grow">
             <div class="panel-head">히터 · 온도<span class="note" data-bind="tcNote"></span></div>
             <div class="panel-body tight"><table class="tbl" data-bind="heaterTbl"></table></div>
@@ -90,18 +90,37 @@
         </div>
       </section>
 
-      <!-- ---------- 레시피 (2단계) ---------- -->
+      <!-- ---------- 레시피 ---------- -->
       <section class="view" id="view-recipe">
-        <div class="panel grow">
-          <div class="panel-head">레시피</div>
-          <div class="panel-body">
-            <div class="empty" style="padding:40px 20px;line-height:2">
-              레시피는 <b>2단계</b>에서 새 PLC 레시피 표 구조로 만듭니다.<br>
-              스텝(밸브·시간·플래그) · 블록(MFC·PCV·RF) · 반복 그룹을 편집해 PLC 표 영역에 올리고,<br>
-              PLC 가 계산한 합계·검증 결과를 확인한 뒤 베이스 압력에 도달하면 시작합니다.
+        <div class="rcbar">
+          <button class="btn sm" data-rcbtn="new">새로</button>
+          <button class="btn sm primary" data-rcbtn="save" data-bind="rcSave">저장</button>
+          <button class="btn sm" data-rcbtn="saveas" data-bind="rcSaveAs">다른 이름으로</button>
+          <button class="btn sm" data-rcbtn="rename" data-bind="rcRename">이름 바꾸기</button>
+          <button class="btn sm danger-line" data-rcbtn="delete" data-bind="rcDelete">삭제</button>
+          <span class="sep"></span>
+          <button class="btn sm" data-rcbtn="upload" data-bind="rcUpload">PLC 로 올리기</button>
+          <button class="btn sm primary" data-rcbtn="start" data-bind="rcStart">이 레시피로 시작</button>
+          <span class="right">
+            <span class="mono" data-bind="rcName">&mdash;</span>
+            <span class="chip warn" data-bind="rcDirty" hidden>저장 안 함</span>
+            <span class="warn-txt" data-bind="rcRunNote"></span>
+          </span>
+        </div>
+        <div class="plcrow">지금 PLC: <span data-bind="rcPlc"></span></div>
+        <div class="row grow">
+          <div class="panel" style="flex:0 0 232px">
+            <div class="panel-head">저장된 레시피</div>
+            <div class="panel-body tight scroll" data-bind="rcList"></div>
+          </div>
+          <div class="col grow">
+            <div class="panel grow">
+              <div class="panel-head">편집<span class="note" data-bind="rcSum"></span></div>
+              <div class="panel-body scroll" data-bind="rcEdit"></div>
             </div>
-            <div class="hint" style="text-align:center">
-              주소 정의(D02000~D03119)는 이번 단계에 이미 들어 있습니다.
+            <div class="panel" style="flex:0 0 132px">
+              <div class="panel-head">검증 결과<span class="note">서버가 판정합니다 · 항목을 누르면 해당 칸으로 갑니다</span></div>
+              <div class="panel-body tight scroll" data-bind="rcCheck"></div>
             </div>
           </div>
         </div>
@@ -166,6 +185,7 @@
     <div class="statusbar">
       <span class="dot" data-bind="sbDot"></span>
       <span data-bind="sbText">&mdash;</span>
+      <span class="rec" data-bind="sbRec" hidden>&#9679; 데이터 로그 기록 중</span>
       <span class="right mono" data-bind="sbVer">&mdash;</span>
     </div>
   </div>
@@ -210,6 +230,15 @@
   </div>
 </div>
 
+<!-- 수동 조작 창 -->
+<div class="modal" id="manualModal" hidden>
+  <div class="modal-box manualpanel">
+    <div class="modal-head"><span class="dev" data-bind="mnDev">&mdash;</span><h3>수동 조작</h3></div>
+    <div class="modal-body" data-bind="mnBody"></div>
+    <div class="modal-btns"><button class="btn" data-mn="close">닫기</button></div>
+  </div>
+</div>
+
 <script src="js/fmt.js?v=__ASSET_V__"></script>
 <script src="js/core.js?v=__ASSET_V__"></script>
 <script src="js/app.js?v=__ASSET_V__"></script>
@@ -219,5 +248,6 @@
 <script src="js/views/alarm.js?v=__ASSET_V__"></script>
 <script src="js/views/setup.js?v=__ASSET_V__"></script>
 <script src="js/views/recipe.js?v=__ASSET_V__"></script>
+<script src="js/views/manual.js?v=__ASSET_V__"></script>
 </body>
 </html>
