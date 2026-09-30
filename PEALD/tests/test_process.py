@@ -751,3 +751,136 @@ async def test_manual_valve_waits_without_permit(wired):
     await valve_permit(lk, sim)
     assert await wait_until(lambda: A.bit(sim.reg[A.D_VALVE_OUT], DEV.valve_bit(tag)), 2)
     assert await wait_until(lambda: tag not in state.manual_state()["pending"], 2)
+
+
+
+# ===================== v0.4.2 공정 끝 결과 =====================
+def long_recipe(name):
+    r = short_recipe(name)
+    r["blocks"][0]["repeat"] = 500              # 몇 분짜리 — 시험 중에는 끝나지 않는다
+    return r
+
+
+async def _start(lk, sim, cfg, name, rec=None):
+    from peald.datalog import DataLog
+    await pumped(lk, sim)
+    rec = rec or long_recipe(name)
+    assert storage.save(name, rec)
+    assert state.runner.select(name)[0]
+    state.recipe_check = R.validate(cfg, rec)
+    state.datalog = DataLog(state)
+    assert (await state.runner.start(_log, _notice))[0]
+    assert await wait_until(lambda: lk.status[A.D_STATE] in (A.STATE_READY, A.STATE_RUN), 5)
+
+
+async def _run_to_end(timeout=30.0):
+    """샘플링 루프가 하는 것(알람 갱신 → 종료 감지 → 데이터 로그)을 끝날 때까지 돌린다."""
+    from peald import loops
+    seen = []
+    end = asyncio.get_event_loop().time() + timeout
+    while asyncio.get_event_loop().time() < end:
+        state.refresh()
+        state.runner.tick(lambda lvl, msg: seen.append(msg))
+        loops._datalog_tick()
+        if seen:
+            break
+        await asyncio.sleep(0.05)
+    dl = state.datalog
+    name = dl.name
+    dl.close()
+    return seen, name
+
+
+def _meta_and_list(name):
+    import json
+    from peald import logview, paths
+    meta = json.load(open(os.path.join(paths.DATALOG_DIR, name + ".recipe.json"), encoding="utf-8"))
+    item = next(i for i in logview.list_logs() if i["name"] == name)
+    return meta["result"], item["result"]
+
+
+@pytest.mark.parametrize("how,want", [
+    ("pc_hb", "PC 통신 끊김"),
+    ("emo", "비상정지"),
+    ("mfc", "MFC 이상"),
+])
+async def test_aborted_process_is_never_normal(wired, how, want):
+    """PC 하트비트 끊김·비상정지·MFC 편차 중단 → 모두 '중단 (안전 정지 — 알람)'.
+    이벤트 로그·데이터 로그 메타·목록이 같은 결과를 쓴다."""
+    lk, sim, cfg = wired
+    await _start(lk, sim, cfg, f"중단{how}")
+    await asyncio.sleep(0.3)
+    if how == "pc_hb":
+        sim.write(A.D_PRM_PC_WDT_MS, [300])
+        sim.set_fault("pc_hb_stop", True)
+    elif how == "emo":
+        sim.set_fault("emo", True)
+    else:
+        sim._latch0(A.ALM0_MFC)
+        sim._process_end("공정 중 MFC 편차", aborted=True)
+    seen, name = await _run_to_end()
+    msg = next(m for m in seen if m.startswith("공정 "))
+    assert "정상 종료" not in msg and "중단" in msg and want in msg, msg
+    assert state.runner.last_result.startswith("중단 (안전 정지")
+    meta_res, list_res = _meta_and_list(name)
+    assert meta_res == list_res == state.runner.last_result
+    for k in ("pc_hb_stop", "emo"):
+        sim.set_fault(k, False)
+
+
+async def test_operator_abort_result(wired):
+    lk, sim, cfg = wired
+    await _start(lk, sim, cfg, "운전자중단")
+    await asyncio.sleep(0.3)
+    await C.handle_command({"cmd": "process_abort"})
+    seen, name = await _run_to_end()
+    assert state.runner.last_result == "중단 (운전자 중단)"
+    assert _meta_and_list(name) == ("중단 (운전자 중단)", "중단 (운전자 중단)")
+
+
+@pytest.mark.parametrize("how", ["stop_after_cycle", "normal"])
+async def test_normal_end_results(wired, how):
+    """사이클 후 정지·정상 끝 → 시퀀서 상태 6(완료) → '정상 종료'."""
+    lk, sim, cfg = wired
+    rec = long_recipe("정상" + how) if how == "stop_after_cycle" else short_recipe("정상" + how)
+    await _start(lk, sim, cfg, "정상" + how, rec)
+    if how == "stop_after_cycle":
+        await asyncio.sleep(0.3)
+        r, _ = await lk.send_command(A.CMD_STOP_AFTER_CYCLE)
+        assert r == A.RESULT_OK
+    seen, name = await _run_to_end()
+    assert state.runner.last_result == "정상 종료", seen
+    assert _meta_and_list(name) == ("정상 종료", "정상 종료")
+
+
+def test_end_result_rules():
+    """'정상 종료'는 시퀀서 6 일 때만. 끝 상태를 모르면 '끝 확인 안 됨'."""
+    runner = ProcessRunner(state)
+    state.alarms.clear_all()
+    s = [0] * A.STATUS_COUNT
+    s[A.D_STATE], s[A.D_SEQ_STATE] = A.STATE_IDLE, 6
+    assert runner.end_result(s) == "정상 종료"
+    s[A.D_SEQ_STATE] = 8
+    assert runner.end_result(s) == "중단 (PLC 중단)"
+    s[A.D_SEQ_STATE] = 4                         # 예전 시뮬레이터처럼 '6 + 4' 가 읽혀도
+    assert runner.end_result(s) == "중단 (끝 확인 안 됨)"
+    s[A.D_STATE] = A.STATE_SAFE_STOP
+    assert runner.end_result(s).startswith("중단 (안전 정지")
+    runner.note_abort()
+    assert runner.end_result(s) == "중단 (운전자 중단)"
+
+
+def test_simulator_aborts_sequencer_in_same_scan(cfg):
+    """래더와 같게 — 안전 정지 요구가 서는 스캔에 시퀀서도 8 이 된다(6 + 4 가 읽히지 않는다)."""
+    import time as _t
+    from peald.simulator import PlcSim
+    sim = PlcSim(cfg, 1)
+    tbl = R.to_plc_words(cfg, Converters(cfg), long_recipe("같은스캔"))
+    sim.write(A.RCP_SUM_BASE, tbl["words"])
+    assert sim._process_start() == A.RESULT_OK
+    sim.tick()
+    sim.set_fault("emo", True)
+    _t.sleep(0.02)
+    sim.tick()
+    assert sim.reg[A.D_STATE] == A.STATE_SAFE_STOP
+    assert sim.reg[A.D_SEQ_STATE] == 8, "안전 정지 스캔에 시퀀서가 멈추지 않았다"

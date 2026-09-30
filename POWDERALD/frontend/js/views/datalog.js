@@ -97,8 +97,18 @@
     if (!box || !data) return;
     box.innerHTML = (data.cols || []).map(function (c, i) {
       return '<label class="hs"><input type="checkbox" data-dlcol="' + i + '"' +
-        (hidden[c.label] ? '' : ' checked') + '>' + core.esc(c.label) + '</label>';
+        (hidden[c.label] ? '' : ' checked') + '><i class="sw-c" style="background:' + colorOf(i) +
+        '"></i>' + core.esc(c.label) + '</label>';
     }).join('');
+  }
+
+  /** 열 색 — 같은 묶음 안 순서로(체크박스 색 표시와 선이 같게). */
+  function colorOf(idx) {
+    var cols = (data || {}).cols || [];
+    var g = (cols[idx] || {}).group;
+    var n = 0;
+    for (var i = 0; i < idx; i++) if (cols[i].group === g) n++;
+    return cssVar('--series-' + ((n % 6) + 1));
   }
 
   function draw() {
@@ -111,7 +121,7 @@
       if (!per[c.group]) return;
       per[c.group].push({
         label: c.label, unit: '', hidden: !!hidden[c.label],
-        color: cssVar('--series-' + ((per[c.group].length % 6) + 1)),
+        color: colorOf(i),
         pts: rows.map(function (r) {
           var v = r[i + 1];
           return v ? [r[0], v[0], v[1], v[2]] : [r[0], null, null, null];

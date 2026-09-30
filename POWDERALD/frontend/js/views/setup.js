@@ -127,6 +127,9 @@
         '<div class="kv"><span class="k">PLC 응답 시간</span><span class="v" data-bind="dgRtt">—</span></div>' +
         '<div class="kv"><span class="k">PLC 최대 스캔 시간</span><span class="v" data-bind="dgScan">—</span></div>' +
         '<div class="kv"><span class="k">PLC 하트비트</span><span class="v" data-bind="dgHb">—</span></div>' +
+        '<div class="kv"><span class="k">PC 하트비트 쓰기 간격 (최대)</span><span class="v" data-bind="dgHbGap">—</span></div>' +
+        '<div class="kv"><span class="k">이벤트 루프 지연 (최근 10분 최대)</span><span class="v" data-bind="dgLag">—</span></div>' +
+        '<div class="hint">500 ms 를 넘으면 PC 하트비트가 늦습니다 — 로그에 그때 하던 일이 남습니다.</div>' +
         '<div class="kv"><span class="k">웹 서버</span><span class="v">' +
         core.esc((c.server || {}).host + ':' + (c.server || {}).port) + '</span></div>');
 
@@ -151,9 +154,9 @@
         tbl(prmRows) +
         '<div class="hint" style="margin-top:6px">저장하면 원시값으로 바꿔 PLC 에 다시 쓰고 되읽어 확인합니다. ' +
         '0 이면 PLC 가 해당 기능을 막거나 감시하지 않습니다.</div>' +
-        '<table class="tbl" style="margin-top:8px"><thead><tr><th class="l">PRM</th><th>설정값</th><th>쓴 원시값</th>' +
-        '<th>되읽은 값</th><th>일치</th><th>주소</th></tr></thead><tbody data-bind="prmBody">' +
-        '<tr><td class="l dim" colspan="6">PLC 에 연결되면 표시합니다</td></tr></tbody></table>') +
+        '<table class="tbl prmtbl" style="margin-top:8px"><thead><tr><th class="l">PRM · 주소</th><th>설정값</th><th>쓴 원시값</th>' +
+        '<th>되읽은 값</th><th>일치</th></tr></thead><tbody data-bind="prmBody">' +
+        '<tr><td class="l dim" colspan="5">PLC 에 연결되면 표시합니다</td></tr></tbody></table>') +
       panel('MFC', '<span class="dim">개수는 장비 고정</span>',
         '<table class="tbl form"><thead><tr><th class="l">번호</th><th>이름</th><th>가스</th><th>풀스케일 sccm</th><th>확정</th></tr></thead>' +
         '<tbody>' + mfcRows + '</tbody></table>') +
@@ -174,6 +177,12 @@
     core.setText('dgRtt', conn && t.plc.rtt_ms != null ? t.plc.rtt_ms + ' ms' : fmt.DASH);
     core.setText('dgScan', conn && t.scan_max_ms != null ? t.scan_max_ms + ' ms' : fmt.DASH);
     core.setText('dgHb', !conn ? fmt.DASH : (t.plc.hb_ok ? '정상' : '멈춤'));
+    core.setText('dgHbGap', conn && t.plc.hb_gap_max_ms != null
+      ? t.plc.hb_gap_ms + ' ms (최대 ' + t.plc.hb_gap_max_ms + ' ms)' : fmt.DASH);
+    var lg = t.loop || {};
+    core.setText('dgLag', lg.recent_max_ms == null ? fmt.DASH
+      : lg.recent_max_ms + ' ms' + (lg.recent_max_work ? ' (' + lg.recent_max_work + ')' : '') +
+        ' · 기동 뒤 최대 ' + (lg.max_ms || 0) + ' ms');
     var ic = core.bind('idCell');
     if (ic) {
       var p = t.plc || {};
@@ -191,16 +200,16 @@
         var ev = r.eng == null ? fmt.DASH
           : r.unit === 'Torr' ? fmt.torr(r.eng)
             : (Number.isInteger(r.eng) ? String(r.eng) : fmt.num(r.eng, 1));
-        return '<tr' + (r.match ? '' : ' class="hl"') + '><td class="l">' + core.esc(r.name) + '</td>' +
+        return '<tr' + (r.match ? '' : ' class="hl"') + '><td class="l">' + core.esc(r.name) +
+          '<div class="mono dim small">' + core.esc(r.addr) + '</div></td>' +
           '<td class="mono">' + (r.setting == null ? '<span class="unconf">없음</span>' : core.esc(r.setting)) + '</td>' +
           '<td class="mono">' + r.written + '</td>' +
           '<td class="mono">' + (r.readback == null ? fmt.DASH : r.readback) +
-          ' <span class="dim">(' + ev + (r.unit ? ' ' + core.esc(r.unit) : '') + ')</span></td>' +
-          '<td>' + core.chip(r.match ? '일치' : '불일치', r.match ? 'ok' : 'stop') + '</td>' +
-          '<td class="mono dim">' + core.esc(r.addr) + '</td></tr>';
+          '<div class="dim small">' + ev + (r.unit ? ' ' + core.esc(r.unit) : '') + '</div></td>' +
+          '<td>' + core.chip(r.match ? '일치' : '불일치', r.match ? 'ok' : 'stop') + '</td></tr>';
       }).join('');
     } else if (body && !conn) {
-      body.innerHTML = '<tr><td class="l dim" colspan="6">PLC 끊김 — 값 없음</td></tr>';
+      body.innerHTML = '<tr><td class="l dim" colspan="5">PLC 끊김 — 값 없음</td></tr>';
     }
     var pc = core.bind('prmChip');
     if (pc) {

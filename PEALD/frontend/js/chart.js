@@ -7,6 +7,8 @@
  *   - 압력은 로그 축.
  *   - 끌어서 확대, [되돌리기]로 한 단계씩 되돌린다. 마우스를 올리면 커서 값.
  *   - bands: 배경 띠(데이터 로그의 블록·스텝 구간). 마우스를 올리면 이름을 보여 준다.
+ *   - 범례: 실시간 트렌드와 같은 방식 — 라벨은 그래프 밖 오른쪽 띠에 두고 지시선으로만
+ *     선 끝에 잇는다. 그래프 안에는 글자를 두지 않는다.
  *
  * 사용: var c = HistChart(canvas, tipEl, { onZoom: fn(x0, x1) });
  *       c.set({ series, x0, x1, logY, gap, xLabel, bands, unit });
@@ -14,7 +16,8 @@
 (function (w, d) {
   'use strict';
 
-  var PAD_L = 52, PAD_R = 12, PAD_T = 10, PAD_B = 26;
+  var PAD_L = 52, PAD_R = 178, PAD_T = 10, PAD_B = 26;
+  var LABEL_VAL_W = 62, LABEL_H = 13;
 
   function cssVar(n) { return getComputedStyle(d.documentElement).getPropertyValue(n).trim(); }
 
@@ -154,6 +157,7 @@
         g.stroke();
       });
       g.restore();
+      drawLabels(G, r);
 
       if (drag && drag.x1 != null) {
         g.fillStyle = cssVar('--accent'); g.globalAlpha = 0.18;
@@ -161,6 +165,41 @@
         g.globalAlpha = 1;
       }
       if (hoverX != null) drawHover(G, r);
+    }
+
+    /** 오른쪽 띠의 라벨 — 선마다 구간 안 마지막 값에서 지시선을 끌어낸다. */
+    function drawLabels(G, r) {
+      var ends = [];
+      st.series.forEach(function (se) {
+        if (se.hidden) return;
+        for (var i = se.pts.length - 1; i >= 0; i--) {
+          var p = se.pts[i];
+          if (!p || p[3] == null || p[0] > st.x1 || (st.logY && p[3] <= 0)) continue;
+          if (p[0] < st.x0) break;
+          ends.push({ se: se, v: p[3], x: xPos(p[0], G), y: yPos(p[3], r, G) });
+          return;
+        }
+      });
+      var list = ends.sort(function (a, b) { return a.y - b.y; });
+      list.forEach(function (e) { e.ly = e.y; });
+      for (var i = 1; i < list.length; i++) {
+        if (list[i].ly - list[i - 1].ly < LABEL_H) list[i].ly = list[i - 1].ly + LABEL_H;
+      }
+      var over = list.length ? list[list.length - 1].ly - G.y1 : 0;
+      if (over > 0) list.forEach(function (e) { e.ly = Math.max(G.y0 + 6, e.ly - over); });
+      list.forEach(function (e) {
+        g.strokeStyle = e.se.color; g.lineWidth = 1;
+        g.beginPath();
+        g.moveTo(e.x, e.y); g.lineTo(G.x1 + 8, e.ly); g.lineTo(G.x1 + 16, e.ly);
+        g.stroke();
+        g.fillStyle = cssVar('--ink'); g.textAlign = 'left'; g.textBaseline = 'middle';
+        g.font = 'bold 10px ' + cssVar('--font-sans');
+        g.fillText(e.se.label, G.x1 + 20, e.ly, Math.max(20, PAD_R - 20 - LABEL_VAL_W - 6));
+        g.font = '10px ' + cssVar('--font-mono');
+        g.fillStyle = cssVar('--ink-dim'); g.textAlign = 'right';
+        g.fillText((st.logY ? fmt.torr(e.v) : fmt.num(e.v, 1)) + (e.se.unit ? ' ' + e.se.unit : ''),
+                   G.W - 4, e.ly);
+      });
     }
 
     function nearest(pts, x) {

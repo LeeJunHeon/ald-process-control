@@ -7,6 +7,9 @@ data/trend/YYYYMMDD.db — 표준 sqlite3, WAL, 5 s 마다 묶어서 커밋한�
   바뀌지 않아야 옛 파일을 그대로 읽을 수 있다.
 ★ 값은 공학 단위를 고정 배율 정수로 둔다(온도·유량·전력·개도·O3 ×10, 압력은 실수).
   환산을 나중에 바꿔도 그때 본 값이 바뀌지 않는다. 하루 10 MB 안팎.
+★ 조회·내보내기는 이벤트 루프에서 하지 않는다(작업 스레드). 7일치 조회는 수 초가 걸려,
+  루프에서 돌면 PC 하트비트가 멈춰 PLC 가 'PC 통신 끊김'으로 공정을 세운다.
+  쓰기 연결은 루프 스레드에서만 쓰고(조회 전에 루프에서 flush), 조회는 읽기 전용 새 연결로 한다.
 ★ 쓰기 실패는 로그만 남기고 화면·공정을 막지 않는다. PLC 가 끊긴 동안은 줄을 남기지 않는다
   (그래프가 선을 잇지 않도록 — 0 을 채우면 거짓말이 된다).
 """
@@ -15,6 +18,7 @@ import os
 import csv
 import glob
 import time
+import asyncio
 import shutil
 import sqlite3
 import datetime
@@ -26,7 +30,9 @@ from . import paths
 COMMIT_S = 5.0
 MAX_POINTS = 2000
 LOW_DISK_BYTES = 1 << 30        # 1 GB
-EXPORT_MAX_S = 31 * 86400
+QUERY_MAX_S = 31 * 86400         # 이력 조회 최대 구간
+EXPORT_MAX_S = 7 * 86400         # 내보내기 최대 구간
+FUTURE_S = 3600                  # 끝 시각은 지금 + 1 h 까지만
 
 
 def _cols():
@@ -135,11 +141,14 @@ class TrendLog:
 
     # ===================== 쓰기 =====================
     def record(self, live: dict, now: float = None):
-        """샘플링 루프가 매 tick 부른다. 1 Hz 로 줄여 쌓는다."""
-        now = time.time() if now is None else now
-        if now < self._next:
+        """샘플링 루프가 매 tick 부른다. 1 Hz 로 줄여 쌓는다.
+        ★ 간격은 time.monotonic 으로 센다 — PC 시계를 뒤로 돌려도 기록이 비지 않는다.
+          저장하는 시각 값만 time.time 이다. (now 를 주면 시험용으로 둘 다 now 로 센다)"""
+        mono = time.monotonic() if now is None else now
+        if mono < self._next:
             return
-        self._next = now + 1.0
+        self._next = mono + 1.0
+        now = time.time() if now is None else now
         row = row_from_live(now, live)
         if row is not None:
             self.pending.append(row)
@@ -193,39 +202,56 @@ class TrendLog:
     # ===================== 읽기 =====================
     def query(self, t0: float, t1: float, cols=None, max_points: int = MAX_POINTS) -> dict:
         """구간을 최대 max_points 묶음(최소·최대·평균)으로 줄여 돌려준다.
-        반환 {t0, t1, bucket_s, cols, rows:[[t, [min,max,avg], ...]]} — 값은 공학 단위."""
-        self.flush()
+        반환 {t0, t1, bucket_s, cols, rows:[[t, [min,max,avg], ...]]} — 값은 공학 단위.
+        ★ 동기 함수다 — 루프에서는 query_async 를 쓴다(작업 스레드에서 돈다)."""
         cols = [c for c in (cols or [c[0] for c in PLOT_COLS]) if c in SCALE]
         t0, t1 = float(t0), float(t1)
         if t1 <= t0:
             t1 = t0 + 1
         width = max(1.0, (t1 - t0) / max(1, int(max_points)))
-        agg = ", ".join(f"MIN({c}), MAX({c}), AVG({c})" for c in cols)
-        q = (f"SELECT CAST((t - ?) / ? AS INTEGER) AS b, AVG(t) {', ' + agg if agg else ''} "
+        # 묶음마다 최소·최대·합·개수를 모은다 — 자정에 걸친 묶음은 두 날짜 파일에서 나오므로
+        # 같은 묶음 번호끼리 합쳐야 최대 max_points 묶음이 지켜진다.
+        agg = ", ".join(f"MIN({c}), MAX({c}), SUM({c}), COUNT({c})" for c in cols)
+        q = (f"SELECT CAST((t - ?) / ? AS INTEGER) AS b, SUM(t), COUNT(*) {', ' + agg if agg else ''} "
              f"FROM trend WHERE t >= ? AND t < ? GROUP BY b ORDER BY b")
-        rows = []
+        merged = {}
         for path in _files_between(t0, t1):
             try:
                 con = sqlite3.connect(f"file:{path}?mode=ro", uri=True, timeout=5)
                 try:
                     for rec in con.execute(q, (t0, width, t0, t1)):
-                        row = [rec[1]]
-                        for i, c in enumerate(cols):
-                            mn, mx, av = rec[2 + i * 3: 5 + i * 3]
-                            s = SCALE[c]
-                            row.append(None if av is None else
-                                       [mn / s, mx / s, av / s] if s != 1 else [mn, mx, av])
-                        rows.append(row)
+                        bk = min(int(rec[0]), int(max_points) - 1)
+                        cur = merged.get(bk)
+                        if cur is None:
+                            merged[bk] = cur = [0.0, 0] + [[None, None, 0.0, 0] for _ in cols]
+                        cur[0] += rec[1]
+                        cur[1] += rec[2]
+                        for i in range(len(cols)):
+                            mn, mx, sm, n = rec[3 + i * 4: 7 + i * 4]
+                            if not n:
+                                continue
+                            acc = cur[2 + i]
+                            acc[0] = mn if acc[0] is None else min(acc[0], mn)
+                            acc[1] = mx if acc[1] is None else max(acc[1], mx)
+                            acc[2] += sm
+                            acc[3] += n
                 finally:
                     con.close()
             except sqlite3.Error as e:
                 logger.write("warn", f"트렌드 이력 읽기 실패: {os.path.basename(path)} ({e})")
-        rows.sort(key=lambda r: r[0])
+        rows = []
+        for bk in sorted(merged):
+            cur = merged[bk]
+            row = [cur[0] / cur[1]]
+            for i, c in enumerate(cols):
+                mn, mx, sm, n = cur[2 + i]
+                s = SCALE[c]
+                row.append(None if not n else [mn / s, mx / s, sm / n / s])
+            rows.append(row)
         return {"t0": t0, "t1": t1, "bucket_s": width, "cols": cols, "rows": rows}
 
     def raw_rows(self, t0: float, t1: float):
         """묶지 않은 줄(내보내기용). 공학 단위로 바꿔 돌려준다."""
-        self.flush()
         for path in _files_between(t0, t1):
             con = sqlite3.connect(f"file:{path}?mode=ro", uri=True, timeout=5)
             try:
@@ -241,7 +267,8 @@ class TrendLog:
                 con.close()
 
     def export_csv(self, t0: float, t1: float) -> str:
-        """구간을 CSV(UTF-8 BOM)로 data/export/ 에 저장한다. 파일 이름을 돌려준다."""
+        """구간을 CSV(UTF-8 BOM)로 data/export/ 에 저장한다. 파일 이름을 돌려준다.
+        ★ 동기 함수다 — 루프에서는 export_async 를 쓴다."""
         t1 = min(float(t1), float(t0) + EXPORT_MAX_S)
         os.makedirs(export_dir(), exist_ok=True)
         name = (f"trend_{DEV.LOG_PREFIX}_"
@@ -261,15 +288,55 @@ class TrendLog:
         return name
 
 
+    # ===================== 루프에서 부르는 것 =====================
+    async def query_async(self, t0, t1, cols=None, max_points: int = MAX_POINTS,
+                          keep_days=90) -> dict:
+        """구간을 자르고 검사한 뒤, 루프에서 flush 하고 조회는 작업 스레드에서 한다."""
+        t0, t1, err = clamp_range(t0, t1, keep_days, QUERY_MAX_S, "이력 조회")
+        if err:
+            return {"error": err, "t0": t0, "t1": t1, "rows": [], "cols": [], "bucket_s": 1}
+        self.flush()
+        return await asyncio.to_thread(self.query, t0, t1, cols, max_points)
+
+    async def export_async(self, t0, t1, keep_days=90):
+        """(파일 이름, 오류). 오류가 있으면 내보내지 않는다."""
+        t0, t1, err = clamp_range(t0, t1, keep_days, EXPORT_MAX_S, "내보내기")
+        if err:
+            return "", err
+        self.flush()
+        return await asyncio.to_thread(self.export_csv, t0, t1), ""
+
+
+def clamp_range(t0, t1, keep_days, max_s, what):
+    """[지금 − 보존 일수, 지금 + 1 h] 로 자르고 최대 구간을 넘으면 거절한다. (t0, t1, 오류)"""
+    try:
+        t0, t1 = float(t0), float(t1)
+    except (TypeError, ValueError):
+        return 0.0, 0.0, "구간이 올바르지 않습니다"
+    now = time.time()
+    try:
+        keep = max(1, int(keep_days))
+    except (TypeError, ValueError):
+        keep = 90
+    t0 = max(t0, now - keep * 86400)
+    t1 = min(t1, now + FUTURE_S)
+    if t1 <= t0:
+        return t0, t1, "구간이 비어 있습니다 (보존 기간 밖이거나 끝이 시작보다 앞)"
+    if t1 - t0 > max_s + 1:
+        return t0, t1, (f"{what} 구간은 최대 {int(max_s // 86400)}일입니다 — 구간을 줄이세요 "
+                        f"(요청 {(t1 - t0) / 86400:.1f}일)")
+    return t0, t1, ""
+
+
 def _files_between(t0: float, t1: float) -> list:
+    """있는 날짜 파일 중 구간에 걸치는 것만(날짜마다 파일을 확인하지 않는다)."""
+    a = datetime.date.fromtimestamp(max(0.0, t0)).strftime("%Y%m%d")
+    z = datetime.date.fromtimestamp(max(0.0, t1)).strftime("%Y%m%d")
     out = []
-    d = datetime.date.fromtimestamp(t0)
-    end = datetime.date.fromtimestamp(t1)
-    while d <= end:
-        p = os.path.join(trend_dir(), d.strftime("%Y%m%d") + ".db")
-        if os.path.isfile(p):
+    for p in sorted(glob.glob(os.path.join(trend_dir(), "*.db"))):
+        day = os.path.basename(p)[:8]
+        if day.isdigit() and a <= day <= z:
             out.append(p)
-        d += datetime.timedelta(days=1)
     return out
 
 

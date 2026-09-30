@@ -24,6 +24,49 @@ from .connection import manager, push_live, push_log
 
 SAMPLE_HZ = 10
 LIVE_HZ = 5
+LAG_PERIOD_S = 0.100
+LAG_WARN_S = 0.500
+LAG_WINDOW_S = 600.0             # 설정 탭에 보여 주는 '최근' 최대 지연 창
+
+
+# ===================== 이벤트 루프 지연 감시 =====================
+# ★ 루프가 막히면 PC 하트비트가 멈춘다. 100 ms 주기 작업이 늦어진 시간을 재서
+#   500 ms 를 넘으면 그때 하던 일과 함께 경고를 남긴다.
+_work = ["", 0.0]                # (최근 시작한 일, 시작 시각)
+lag = {"last_ms": 0, "max_ms": 0, "max_at": "", "max_work": "", "hist": []}
+
+
+def note_work(name: str):
+    """무거울 수 있는 일을 시작할 때 부른다(지연 경고에 이름을 붙이려고)."""
+    _work[0], _work[1] = name, time.monotonic()
+
+
+def lag_status() -> dict:
+    now = time.monotonic()
+    recent = [(t, ms, w) for t, ms, w in lag["hist"] if now - t <= LAG_WINDOW_S]
+    top = max(recent, key=lambda x: x[1]) if recent else (0, 0, "")
+    return {"last_ms": lag["last_ms"], "recent_max_ms": top[1], "recent_max_work": top[2],
+            "max_ms": lag["max_ms"], "max_at": lag["max_at"], "max_work": lag["max_work"]}
+
+
+async def lag_loop():
+    expect = time.monotonic() + LAG_PERIOD_S
+    while True:
+        await asyncio.sleep(max(0.0, expect - time.monotonic()))
+        now = time.monotonic()
+        late = max(0.0, now - expect)
+        ms = int(late * 1000)
+        lag["last_ms"] = ms
+        work = _work[0] if now - _work[1] <= late + LAG_PERIOD_S + 1.0 else ""
+        if ms >= 50:
+            lag["hist"].append((now, ms, work))
+            del lag["hist"][:-600]
+        if ms > lag["max_ms"]:
+            lag.update(max_ms=ms, max_at=time.strftime("%H:%M:%S"), max_work=work)
+        if late > LAG_WARN_S:
+            logger.write("warn", f"이벤트 루프 지연 {ms} ms" + (f" — {work}" if work else "")
+                         + " (PC 하트비트가 그만큼 늦었습니다)")
+        expect = now + LAG_PERIOD_S
 
 
 def _log_sync(level, msg):
@@ -132,7 +175,8 @@ def start_all() -> list:
     return [asyncio.create_task(sample_loop()),
             asyncio.create_task(live_loop()),
             asyncio.create_task(event_loop()),
-            asyncio.create_task(plc_recipe_loop())]
+            asyncio.create_task(plc_recipe_loop()),
+            asyncio.create_task(lag_loop())]
 
 
 async def stop_all(tasks: list):

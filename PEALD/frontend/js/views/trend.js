@@ -362,6 +362,15 @@
 
   function cols() { return ((core.state || {}).trend_cols) || []; }
 
+  /** 열마다 고정 색 — 묶음 안 순서로 정한다(체크박스 색 표시와 그래프 선이 같게). */
+  function colorOf(key) {
+    var c = cols().filter(function (x) { return x.key === key; })[0];
+    if (!c) return cssVar('--series-1');
+    var i = cols().filter(function (x) { return x.group === c.group; })
+      .map(function (x) { return x.key; }).indexOf(key);
+    return cssVar('--series-' + ((i % 6) + 1));
+  }
+
   function defaults() {
     var s = core.state || {};
     var str = s.structure || {};
@@ -397,7 +406,8 @@
       if (!list.length) return;
       html += '<span class="hs-g">' + names[g] + '</span>' + list.map(function (c) {
         return '<label class="hs"><input type="checkbox" data-hcol="' + core.esc(c.key) + '"' +
-          (chosen[c.key] ? ' checked' : '') + '>' + core.esc(c.label) + '</label>';
+          (chosen[c.key] ? ' checked' : '') + '><i class="sw-c" style="background:' + colorOf(c.key) +
+          '"></i>' + core.esc(c.label) + '</label>';
       }).join('');
     });
     box.innerHTML = html;
@@ -456,6 +466,11 @@
     fetch('api/trend/history?t0=' + t0 + '&t1=' + t1 + '&cols=' + encodeURIComponent(keys.join(',')))
       .then(function (r) { return r.json(); })
       .then(function (js) {
+        if (js.error) {
+          core.setText('trendInfo', js.error);
+          core.toast(js.error, 'warn');
+          return;
+        }
         lastRes = js;
         var bs = js.bucket_s || 1;
         core.setText('trendInfo', (js.rows || []).length + '묶음 · 묶음당 ' +
@@ -485,7 +500,7 @@
       if (!c || !per[c.group]) return;
       per[c.group].push({
         label: c.label, unit: c.unit,
-        color: cssVar('--series-' + ((per[c.group].length % 6) + 1)),
+        color: colorOf(key),
         pts: (js.rows || []).map(function (r) {
           var v = r[i + 1];
           return v ? [r[0] * 1000, v[0], v[1], v[2]] : [r[0] * 1000, null, null, null];

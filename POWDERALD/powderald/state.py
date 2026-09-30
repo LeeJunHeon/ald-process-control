@@ -175,8 +175,11 @@ class State:
                 "id_state": getattr(link, "id_state", "") if conn else "",
                 "device_id": getattr(link, "device_id", None) if conn else None,
                 "expected_id": DEV.DEVICE_ID,
+                "hb_gap_ms": getattr(link, "hb_gap_ms", 0) if conn else None,
+                "hb_gap_max_ms": getattr(link, "hb_gap_max_ms", 0) if conn else None,
                 "config_error": getattr(link, "config_error", "") if link else "",
             },
+            "loop": _loop_lag(),
             "alarms": self.alarms.list(),
             "alarm_new": bool(conn and link.status[A.D_ALARM_NEW]),
             "alarm_popup": self.alarm_popup,
@@ -428,6 +431,11 @@ def _config_fields():
 def _trend_cols():
     from .trendlog import columns_meta
     return columns_meta()
+
+
+def _loop_lag():
+    from .loops import lag_status
+    return lag_status()
 
 
 state = State()

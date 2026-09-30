@@ -948,6 +948,10 @@ class PlcSim:
             if f["bp_alm"]:
                 self._latch1(A.ALM1_BYPASS_PUMP)
         self.safe_stop = self._critical()
+        # 래더와 같게 — 안전 정지 요구가 서는 그 스캔에 시퀀서도 중단(8)한다.
+        #   (다음 스캔까지 미루면 '장비 상태 6 + 시퀀서 4' 가 한 번 읽혀 종료 판정이 틀린다)
+        if self.safe_stop and self.running:
+            self._process_end("안전 정지 요구", aborted=True)
 
     def _critical(self) -> bool:
         return bool((self.reg[A.D_ALARM0] & DEV.CRITICAL_MASK0) or self.reg[A.D_ALARM1])

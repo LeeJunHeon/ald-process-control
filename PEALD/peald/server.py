@@ -189,24 +189,31 @@ def _routes(app: FastAPI):
     # ---- 이력 · 데이터 로그 (읽기 전용 — 원격 보기에서도 된다) ----
     @app.get("/api/trend/history")
     async def api_trend_history(t0: float, t1: float, cols: str = "", points: int = 2000):
+        # ★ 조회는 작업 스레드에서 — 루프를 붙잡으면 PC 하트비트가 멈춰 공정이 선다
         cl = [c for c in cols.split(",") if c] or None
         points = max(10, min(int(points or 2000), 2000))
-        return JSONResponse(trendlog_mod.trendlog.query(t0, t1, cl, points))
+        loops.note_work("트렌드 이력 조회")
+        keep = (state.cfg.get("log") or {}).get("trend_keep_days", 90)
+        res = await trendlog_mod.trendlog.query_async(t0, t1, cl, points, keep)
+        return JSONResponse(res, status_code=400 if res.get("error") else 200)
 
     @app.get("/api/datalog/list")
     async def api_datalog_list():
-        return JSONResponse({"items": logview.list_logs()})
+        loops.note_work("데이터 로그 목록")
+        return JSONResponse({"items": await logview.list_async()})
 
     @app.get("/api/datalog/chart")
     async def api_datalog_chart(name: str):
-        res = logview.chart(name)
+        loops.note_work("데이터 로그 그래프")
+        res = await logview.chart_async(name)
         if res is None:
             return JSONResponse({"error": "목록에 없는 파일입니다"}, status_code=404)
         return JSONResponse(res)
 
     @app.get("/api/datalog/rows")
     async def api_datalog_rows(name: str, offset: int = 0):
-        res = logview.table(name, offset)
+        loops.note_work("데이터 로그 표")
+        res = await logview.table_async(name, offset)
         if res is None:
             return JSONResponse({"error": "목록에 없는 파일입니다"}, status_code=404)
         return JSONResponse(res)
@@ -222,6 +229,7 @@ def _routes(app: FastAPI):
                 except Exception:  # noqa: BLE001
                     continue
                 if isinstance(data, dict) and "cmd" in data:
+                    loops.note_work(f"명령 {data.get('cmd')}")
                     await handle_command(data, ws)
         except WebSocketDisconnect:
             manager.disconnect(ws)

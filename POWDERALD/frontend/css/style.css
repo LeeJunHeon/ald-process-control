@@ -566,3 +566,8 @@ header {
 /* 다른 장비의 PLC — 머리에 빨간 띠 */
 .idband { flex: 0 0 auto; padding: 6px var(--sp-5); background: var(--stop); color: #fff;
   font-weight: 700; font-size: var(--fs-lg); text-align: center; }
+
+/* v0.4.2 — 범례 색 표시 · PRM 표 폭 */
+.hs .sw-c { display: inline-block; width: 10px; height: 3px; border-radius: 1px; margin-right: 2px; }
+.prmtbl td, .prmtbl th { white-space: nowrap; }
+.prmtbl .small, .tbl .small { font-size: var(--fs-sm); }

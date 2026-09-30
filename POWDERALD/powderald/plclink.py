@@ -21,6 +21,7 @@ plclink.py — PLC 링크. 백그라운드 태스크 하나가 소켓을 가진�
   명령 잠금 안에서 반영 영역을 새로 읽고, 거기에 이번 변경만 얹어 전부 쓴다.
 """
 
+import sys
 import time
 import asyncio
 import logging
@@ -39,6 +40,7 @@ ACK_TIMEOUT_S = 1.5             # 명령 응답을 기다리는 최대 시간
 APPLY_SETTLE_S = 0.1            # 명령 12 결과 뒤 반영 영역을 다시 읽기까지(PLC 몇 스캔)
 PLC_HB_STALL_S = 2.0            # PLC 하트비트가 이만큼 안 바뀌면 멈춘 것으로 본다
 RECONNECT_DELAYS = (1.0, 2.0, 5.0)
+GIL_SWITCH_S = 0.001            # 작업 스레드가 돌 때도 루프가 자주 돌게
 
 BLOCKED_TEXT = "다른 장비의 PLC 입니다 — 주소를 확인하세요 (쓰기 차단)"
 
@@ -111,6 +113,8 @@ class PlcLink:
         self._seen = None               # (반영 밸브, 반영 보조, 그때의 _cmd_seq)
         self._ot_prev = False
         self._trip_task = None
+        self.hb_gap_ms = 0                  # 마지막 하트비트 쓰기 간격
+        self.hb_gap_max_ms = 0              # 기동 뒤 최대 간격
         self._plc_hb_val = None
         self._plc_hb_at = 0.0
         self._hb = 0
@@ -127,6 +131,11 @@ class PlcLink:
 
     # ===================== 수명 주기 =====================
     def start(self):
+        # ★ 무거운 조회·내보내기는 작업 스레드에서 돈다. 파이썬 스레드는 GIL 을 나눠 쓰므로
+        #   전환 간격(기본 5 ms)이 길면 루프의 Modbus 왕복이 줄줄이 늦어져 하트비트가 밀린다.
+        #   1 ms 로 줄여 루프가 자주 돌게 한다.
+        if sys.getswitchinterval() > GIL_SWITCH_S:
+            sys.setswitchinterval(GIL_SWITCH_S)
         self._task = asyncio.create_task(self._run())
         return self._task
 
@@ -190,14 +199,43 @@ class PlcLink:
         self._seen = None
 
     async def _serve(self):
-        """연결된 동안 주기 작업을 돈다."""
-        next_poll = next_hb = next_disp = next_cmd = 0.0
+        """연결된 동안 주기 작업을 돈다.
+        ★ 하트비트는 따로 태스크로 돈다 — 읽기 여러 개 뒤에 줄을 서면 그만큼 밀린다."""
+        hb = asyncio.create_task(self._heartbeat_loop())
+        try:
+            await self._serve_reads(hb)
+        finally:
+            hb.cancel()
+            try:
+                await hb
+            except (asyncio.CancelledError, Exception):  # noqa: BLE001
+                pass
+
+    async def _heartbeat_loop(self):
+        nxt = time.monotonic()
+        last = None
         while not self._stop:
+            if self.write_ok:               # ★ 다른 장비의 PLC 면 하트비트도 쓰지 않는다
+                await self._write_heartbeat()
+                done = time.monotonic()
+                if last is not None:
+                    # 진단 — 하트비트 쓰기가 실제로 끝난 간격(설정 탭에 최대값을 보여 준다)
+                    self.hb_gap_ms = int((done - last) * 1000)
+                    self.hb_gap_max_ms = max(self.hb_gap_max_ms, self.hb_gap_ms)
+                last = done
+            nxt += self.heartbeat_s
             now = time.monotonic()
-            if now >= next_hb:
-                next_hb = now + self.heartbeat_s
-                if self.write_ok:           # ★ 다른 장비의 PLC 면 하트비트도 쓰지 않는다
-                    await self._write_heartbeat()
+            if nxt < now:                   # 밀렸으면 따라잡으려 몰아 쓰지 않는다
+                nxt = now + self.heartbeat_s
+            await asyncio.sleep(nxt - now)
+
+    async def _serve_reads(self, hb):
+        next_poll = next_disp = next_cmd = 0.0
+        while not self._stop:
+            if hb.done():                   # 하트비트 쓰기가 통신 오류로 끝났으면 연결을 버린다
+                hb.result()
+                raise ModbusError("하트비트 태스크가 끝났습니다")
+            now = time.monotonic()
             if now >= next_poll:
                 next_poll = now + self.poll_s
                 await self._read_status()

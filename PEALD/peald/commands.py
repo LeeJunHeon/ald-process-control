@@ -898,10 +898,15 @@ async def _cmd_trend_export(d, ws):
         await push_notice("끝 시각이 시작 시각보다 앞입니다", "warn", ws)
         return
     try:
-        name = trendlog.export_csv(t0, t1)
+        # ★ 작업 스레드에서 쓴다 — 7일치는 십수 초가 걸린다(루프에서 돌면 하트비트가 멈춘다)
+        keep = (state.cfg.get("log") or {}).get("trend_keep_days", 90)
+        name, err = await trendlog.export_async(t0, t1, keep)
     except Exception as e:  # noqa: BLE001
         logger.write("err", f"트렌드 내보내기 실패: {e}")
         await push_notice(f"내보내지 못했습니다 — {type(e).__name__}", "err", ws)
+        return
+    if err:
+        await push_notice(f"내보내지 않았습니다 — {err}", "warn", ws)
         return
     await push_notice(f"저장했습니다: data/export/{name}", "ok", ws)
     await manager.send_to(ws, {"type": "trend_exported", "name": name})

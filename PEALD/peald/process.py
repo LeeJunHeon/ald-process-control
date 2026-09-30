@@ -46,7 +46,6 @@ class ProcessRunner:
         self.last_result = ""
         self._was_running = False
         self._abort_sent = False
-        self._saw_alarm = False
         self._cancel = False
 
     # ===================== 시작 조건 =====================
@@ -178,7 +177,6 @@ class ProcessRunner:
         st.manual_unlock_until = 0.0
         self._cancel = False
         self._abort_sent = False
-        self._saw_alarm = False
         self.last_result = ""
 
         # --- 올리기 ---
@@ -287,8 +285,6 @@ class ProcessRunner:
             self._was_running = True
             if not self.started_at:
                 self.started_at = time.time()
-            if st.alarms.has_critical():
-                self._saw_alarm = True
             return
         if self._was_running:
             self._was_running = False
@@ -296,18 +292,27 @@ class ProcessRunner:
             took = self.ended_at - (self.started_at or self.ended_at)
             where = (f"블록 {s[A.D_SEQ_BLOCK]} · 스텝 {s[A.D_SEQ_STEP]} · "
                      f"사이클 {A.dword(s[A.D_SEQ_BLOCK_PASS], s[A.D_SEQ_BLOCK_PASS + 1])}")
-            if self._abort_sent or self._saw_alarm or s[A.D_SEQ_STATE] == 8:
-                why = "운전자 중단" if self._abort_sent else (
-                    "알람" if self._saw_alarm else "PLC 중단")
-                self.last_result = f"중단 ({why})"
-            else:
-                self.last_result = "정상 종료"
+            self.last_result = self.end_result(s)
             push_log_sync("ok" if self.last_result == "정상 종료" else "warn",
                           f"공정 {self.last_result} — {self.recipe_name or ''} · "
                           f"걸린 시간 {_hms(int(took * 1000))} · 마지막 위치 {where}")
             self.started_at = 0.0
             self._abort_sent = False
-            self._saw_alarm = False
+
+    def end_result(self, s) -> str:
+        """끝났을 때의 결과. ★ '정상 종료'는 시퀀서 상태 6(완료)일 때만이다 —
+        그 밖은 모두 '중단'이고 사유를 붙인다(이벤트 로그·데이터 로그 메타·목록이 이 값을 쓴다)."""
+        seq, st = s[A.D_SEQ_STATE], s[A.D_STATE]
+        if self._abort_sent:
+            return "중단 (운전자 중단)"
+        if seq == 6:
+            return "정상 종료"
+        if st == A.STATE_SAFE_STOP:
+            crit = [a["name"] for a in self.state.alarms.list() if a["crit"]]
+            return "중단 (안전 정지 — " + (" · ".join(crit) if crit else "중대 알람 이름 없음") + ")"
+        if seq == 8:
+            return "중단 (PLC 중단)"
+        return "중단 (끝 확인 안 됨)"
 
     def note_abort(self):
         """즉시 중단 명령을 보냈다는 표시(종료 사유 구분용)."""

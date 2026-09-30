@@ -4,12 +4,14 @@ logview.py — 데이터 로그 보기 (목록 · 그래프 · 표 · 레시피 
 ★ 파일 이름은 목록에 있는 것만 받는다. 정규식으로 모양을 보고, 실제 경로가
   DATALOG_DIR 바로 아래인지 한 번 더 확인한다 — '..\\' 같은 경로 탈출을 막는다.
 ★ 화면에서 지우기는 두지 않는다. 정리는 보존 기간(log.datalog_keep_days)으로만 한다.
+★ 여기 함수는 파일 크기에 따라 오래 걸린다 — 루프에서는 *_async 로 작업 스레드에서 돌린다.
 """
 
 import os
 import re
 import csv
 import glob
+import asyncio
 import datetime
 
 from . import paths
@@ -173,7 +175,8 @@ def chart(name: str, max_points: int = MAX_POINTS):
         width = max((t1 - t0) / max(1, max_points), 1e-9)
         buckets = {}
         for t, vals in pts:
-            b = int((t - t0) / width) if t1 > t0 else 0
+            # 마지막 점(t1)이 한 칸을 더 만들지 않게 max_points-1 로 자른다
+            b = min(int((t - t0) / width), max_points - 1) if t1 > t0 else 0
             buckets.setdefault(b, []).append((t, vals))
         for b in sorted(buckets):
             grp = buckets[b]
@@ -187,6 +190,18 @@ def chart(name: str, max_points: int = MAX_POINTS):
             "cols": [{"label": h, "group": g} for _i, h, g in cols],
             "rows": out, "segments": segs,
             "recipe": (rec or {}).get("recipe") if isinstance(rec, dict) else None}
+
+
+async def list_async():
+    return await asyncio.to_thread(list_logs)
+
+
+async def chart_async(name: str):
+    return await asyncio.to_thread(chart, name)
+
+
+async def table_async(name: str, offset: int = 0):
+    return await asyncio.to_thread(table, name, offset)
 
 
 def table(name: str, offset: int = 0, limit: int = PAGE):
