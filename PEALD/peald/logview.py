@@ -17,6 +17,15 @@ import datetime
 from . import paths
 from .storage import read_json
 
+_writing = None         # 지금 데이터 로그가 쓰고 있는 파일 이름(종료 뒤 꼬리 포함)
+
+
+def set_writing(name):
+    """DataLog 가 파일을 열 때 이름, 닫을 때 None 을 알린다."""
+    global _writing
+    _writing = name
+
+
 NAME_RE = re.compile(r"^\d{8}_\d{6}_[^\\/:*?\"<>|\x00-\x1f]{1,60}$")
 MAX_POINTS = 2000
 PAGE = 200
@@ -94,7 +103,12 @@ def meta_of(name: str) -> dict:
         "number": rec.get("number"),
         "estimated_ms": rec.get("estimated_ms"),
     }
-    if rec.get("ended"):
+    if name == _writing:
+        # ★ 아직 쓰는 중(종료 뒤 꼬리 포함)인 파일은 결과를 짐작하지 않는다 — 운전자 중단 직후
+        #   마지막 줄이 '대기'라서 '정상 종료(추정)'로 보이는 일을 막는다.
+        meta.update(_guess_meta(os.path.join(_dir(), name + ".csv")))
+        meta.update({"result": "기록 중", "writing": True, "guessed": False, "ended": ""})
+    elif rec.get("ended"):
         meta.update({"ended": rec.get("ended"), "result": rec.get("result", ""),
                      "rows": rec.get("rows"), "took_s": rec.get("took_s"), "guessed": False})
     else:

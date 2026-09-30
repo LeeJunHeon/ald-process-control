@@ -149,8 +149,10 @@
     ((s.structure || {}).heaters || []).forEach(function (x) {
       if (!x.enabled) return;
       var v = (t.heaters || [])[x.ch - 1] || {};
-      setText('[data-mnhcur="' + x.ch + '"]',
-        conn ? '현재 ' + fmt.temp(v.pv) + ' / 설정 ' + fmt.temp(v.sv) : fmt.DASH);
+      // 온도조절기 통신이 없는 채널은 PLC 과온 감시가 없다 — 켜기는 서버가 막고, 이유를 여기 보인다
+      setText('[data-mnhcur="' + x.ch + '"]', !conn ? fmt.DASH : (v.comm_ok === false
+        ? '온도조절기 통신 없음 — 켤 수 없음(끄기는 됨) · 설정 ' + fmt.temp(v.sv)
+        : '현재 ' + fmt.temp(v.pv) + ' / 설정 ' + fmt.temp(v.sv)));
       var p = d.querySelector('[data-mnhpow="' + x.ch + '"]');
       var busy = heaterBusy[x.ch];
       if (busy && (!conn || v.power === busy.target || Date.now() > busy.until)) {
@@ -160,7 +162,7 @@
       if (p) {
         p.classList.toggle('on', !!(conn && v.power));
         p.classList.toggle('busy', !!busy);
-        p.title = busy ? '응답을 기다리는 중' : '';
+        p.title = busy ? '응답을 기다리는 중' : (conn && v.comm_ok === false ? (v.power_block || '') : '');
       }
     });
 
@@ -187,7 +189,7 @@
 
   /* ===================== 조작 ===================== */
   d.addEventListener('click', function (ev) {
-    if (ev.target.closest('[data-bind="mnOpen"]')) { open(); return; }
+    if (ev.target.closest('[data-bind="mnOpen"]') || ev.target.closest('[data-mnopen]')) { open(); return; }
     var v = ev.target.closest('[data-mnv]');
     if (v && !v.classList.contains('dis')) {
       var tag = v.dataset.mnv;

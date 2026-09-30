@@ -28,6 +28,11 @@ def isolated_data(tmp_path):
 def cfg():
     from powderald import config as C
     c, _problems, _src = C.load("")
+    # 예시 설정은 MFC 풀스케일이 비어 있다(현장 확인 전). 풀스케일이 없는 MFC 에 설정값이 있으면
+    # 레시피 검증이 막으므로(v0.4.5), 시험은 풀스케일을 넣은 설정으로 돈다.
+    for m, fs in zip(c.get("mfc") or [], (1000.0, 500.0)):
+        if m.get("full_scale_sccm") is None:
+            m["full_scale_sccm"] = fs
     return c
 
 

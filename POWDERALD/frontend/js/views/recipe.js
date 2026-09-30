@@ -85,7 +85,7 @@
         '" data-rcopen="' + core.esc(r.name) + '">' +
         '<div class="n">' + core.esc(r.name) + '</div>' +
         '<div class="m">' + core.esc(r.memo || '') + '</div>' +
-        '<div class="s mono">블록 ' + r.block_count + ' · 번호 ' + r.number +
+        '<div class="s mono">블록 ' + core.esc(r.block_count) + ' · 번호 ' + core.esc(r.number) +
         (r.modified ? ' · ' + core.esc(r.modified) : '') + '</div></div>';
     }).join('') : '<div class="empty">저장된 레시피가 없습니다 — [새로]를 누르세요</div>';
   }
@@ -118,7 +118,7 @@
     if (!cur) { drawEmpty(); return; }
     var box = core.bind('rcEdit');
     if (!box) return;
-    var blocks = cur.blocks || [];
+    var blocks = arr(cur.blocks);
     if (sel.block > blocks.length) sel.block = blocks.length || 1;
 
     var html =
@@ -143,27 +143,27 @@
   }
 
   function blockHtml(b, no) {
-    var mfc = b.mfc_sccm || [];
+    var mfc = arr(b.mfc_sccm);
     var h = '<div class="rc-block">' +
       '<div class="rc-brow">' +
       '<label>블록 이름<input type="text" data-rcb="name" value="' + core.esc(b.name || '') + '"></label>' +
-      '<label>반복(사이클)<input type="number" min="1" max="' + (lim.block_repeat_max || 1000000) +
-      '" data-rcb="repeat" value="' + (b.repeat || 1) + '"></label>';
+      '<label>반복(사이클)<input type="number" min="1" max="' + core.esc(lim.block_repeat_max || 1000000) +
+      '" data-rcb="repeat" value="' + attr(b.repeat) + '"></label>';
     for (var i = 0; i < (lim.mfc_count || 0); i++) {
       h += '<label>MFC' + (i + 1) + ' sccm<input type="number" min="0" step="0.1" ' +
-        'data-rcm="' + i + '" value="' + num(mfc[i]) + '"></label>';
+        'data-rcm="' + i + '" value="' + attr(mfc[i]) + '"></label>';
     }
     if ((core.state.device || {}).has_pcv) {
       h += '<label>PCV %<input type="number" min="0" max="100" data-rcb="pcv_pct" value="' +
-        num(b.pcv_pct) + '"></label>';
+        attr(b.pcv_pct) + '"></label>';
     }
     if ((core.state.device || {}).has_rf) {
       h += '<label>RF W<input type="number" min="0" step="1" data-rcb="rf_w" value="' +
-        num(b.rf_w) + '"></label>';
+        attr(b.rf_w) + '"></label>';
     }
     if ((core.state.device || {}).has_o3) {
       h += '<label>O3 설정<input type="number" min="0" step="0.1" data-rcb="o3" value="' +
-        num(b.o3) + '"></label>';
+        attr(b.o3) + '"></label>';
     }
     h += '<button class="btn sm danger-line" data-rcdel="block" title="이 블록 삭제">블록 삭제</button>' +
       '</div>';
@@ -175,12 +175,13 @@
       ((core.state.device || {}).has_rf ? '<th class="vh">RF</th>' : '') +
       '<th class="vh" title="이 스텝에서 일시정지를 받아도 안전한가">정지<br>허용</th>' +
       '<th></th></tr></thead><tbody>';
-    (b.steps || []).forEach(function (st, i) {
+    arr(b.steps).forEach(function (st, i) {
+      st = st || {};
       h += '<tr data-rcstep="' + (i + 1) + '">' +
         '<td class="mono">' + (i + 1) + '</td>' +
         '<td class="l"><input type="text" data-rcs="name" value="' + core.esc(st.name || '') + '"></td>' +
-        '<td><input type="number" class="ms" min="' + (lim.step_ms_min || 20) + '" max="' +
-        (lim.step_ms_max || 3276700) + '" data-rcs="time_ms" value="' + (st.time_ms || 0) + '"></td>' +
+        '<td><input type="number" class="ms" min="' + core.esc(lim.step_ms_min || 20) + '" max="' +
+        core.esc(lim.step_ms_max || 3276700) + '" data-rcs="time_ms" value="' + attr(st.time_ms) + '"></td>' +
         valves.map(function (v) {
           return '<td><span class="cb' + (hasValve(st, v) ? ' on' : '') +
             '" data-rcv="' + core.esc(v) + '"></span></td>';
@@ -198,21 +199,23 @@
   }
 
   function groupsHtml() {
-    var gs = cur.groups || [];
-    var n = (cur.blocks || []).length;
+    var gs = arr(cur.groups);
+    var n = arr(cur.blocks).length;
     var h = '<div class="rc-groups"><div class="rc-ghead">반복 그룹' +
       '<span class="hint">블록 여러 개를 묶어 다시 돌립니다. 겹치게 둘 수 없습니다.</span>' +
       '<button class="btn sm" data-rcadd="group">＋ 그룹</button></div>';
     if (!gs.length) h += '<div class="dim">없음</div>';
     gs.forEach(function (g, i) {
+      // ★ 키는 서버·저장 파일·PLC 표와 같은 from_block / to_block (from / to 가 아니다)
+      g = g || {};
       h += '<div class="rc-grow" data-rcgroup="' + (i + 1) + '">' +
         '<span class="mono">' + (i + 1) + '</span>' +
-        '<label>시작 블록<input type="number" min="1" max="' + n + '" data-rcg="from" value="' +
-        (g.from || 1) + '"></label>' +
-        '<label>끝 블록<input type="number" min="1" max="' + n + '" data-rcg="to" value="' +
-        (g.to || 1) + '"></label>' +
-        '<label>반복<input type="number" min="1" max="' + (lim.group_repeat_max || 65535) +
-        '" data-rcg="repeat" value="' + (g.repeat || 1) + '"></label>' +
+        '<label>시작 블록<input type="number" min="1" max="' + n + '" data-rcg="from_block" value="' +
+        attr(g.from_block) + '"></label>' +
+        '<label>끝 블록<input type="number" min="1" max="' + n + '" data-rcg="to_block" value="' +
+        attr(g.to_block) + '"></label>' +
+        '<label>반복<input type="number" min="1" max="' + core.esc(lim.group_repeat_max || 32767) +
+        '" data-rcg="repeat" value="' + attr(g.repeat) + '"></label>' +
         '<button class="xbtn" data-rcdel="group">✕</button></div>';
     });
     return h + '</div>';
@@ -271,9 +274,14 @@
   }
 
   /* ===================== 편집 이벤트 ===================== */
-  function num(v) { return (v === null || v === undefined) ? '' : v; }
+  /** 속성 값 — ★ 모든 값은 이스케이프해서 넣는다. 조작된 레시피 파일(USB 로 받은 것 등)의
+   *  '1"><img onerror=…>' 가 운전 PC 화면에서 스크립트로 돌면 로컬 권한으로 장비 명령을 보낼 수 있다. */
+  function attr(v) { return core.esc((v === null || v === undefined) ? '' : v); }
 
-  function hasValve(st, tag) { return (st.valves || []).indexOf(tag) >= 0; }
+  function hasValve(st, tag) { return arr(st.valves).indexOf(tag) >= 0; }
+
+  /** 목록이 아닌 값(형식이 틀린 파일)은 빈 목록으로 그린다 — 오류는 서버 검증이 알려 준다. */
+  function arr(v) { return Array.isArray(v) ? v : []; }
 
   function curBlock() { return (cur.blocks || [])[sel.block - 1]; }
 
@@ -403,7 +411,7 @@
         core.toast('반복 그룹은 최대 ' + (lim.group_max || 5) + '개입니다', 'warn');
         return;
       }
-      cur.groups.push({ from: 1, to: (cur.blocks || []).length || 1, repeat: 2 });
+      cur.groups.push({ from_block: 1, to_block: (cur.blocks || []).length || 1, repeat: 2 });
     }
     draw();
     validateSoon();

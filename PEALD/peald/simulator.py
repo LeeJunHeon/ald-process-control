@@ -64,6 +64,9 @@ FAULTS = [
     {"key": "o3_room",   "name": "실내 O3 감지", "dev": "powderald"},
     {"key": "bp_alm",    "name": "바이패스 펌프 알람", "dev": "powderald"},
     {"key": "mfc1_stuck", "name": "MFC1 막힘 (현재값 0)"},
+    {"key": "tc1_comm",  "name": "온도조절기 국번1 통신 끊김"},
+    {"key": "tc2_comm",  "name": "온도조절기 국번2 통신 끊김"},
+    {"key": "tc3_comm",  "name": "온도조절기 국번3 통신 끊김"},
     {"key": "pc_hb_stop", "name": "PC 하트비트 멈춤 (시험)"},
 ]
 
@@ -402,11 +405,17 @@ class PlcSim:
     def _wd(self, addr: int) -> int:
         return A.dword(self._w(addr), self._w(addr + 1))
 
+    def _ws(self, addr: int) -> int:
+        """작업본의 한 워드를 래더 비교처럼 부호 있는 16비트로 — 32768 이상은 음수다."""
+        return A.to_signed16(self._w(addr))
+
     def _process_start(self) -> int:
         """레시피 영역을 작업본으로 복사하고 그룹 1·블록 1 부터 시작한다.
         첫 그룹·첫 블록 적재가 틀리면 시작하지 않고 결과 3 + 알람0 b13."""
         self.work = [self.reg[a] & 0xFFFF
                      for a in range(A.RCP_SUM_BASE, A.RCP_SUM_END + 1)]
+        # 래더: 시작 때만 블록·스텝·사이클·그룹을 지운다(FMOV 0 D04001 11). 끝에서는 지우지 않는다.
+        self.blk = self.step_no = self.cycle = self.group_pass = 0
         self.group_idx = 1 if self._w(A.D_RCP_GROUP_COUNT) >= 1 else 0
         if self.group_idx and self._group_error(1):
             self._latch0(A.ALM0_RECIPE)
@@ -435,7 +444,7 @@ class PlcSim:
         if idx < 1 or idx > self._w(A.D_RCP_GROUP_COUNT):
             return None
         b = A.D_RCP_GROUP_BASE + (idx - 1) * A.RCP_GROUP_STRIDE
-        return self._w(b), self._w(b + 1), self._w(b + 2)
+        return self._ws(b), self._ws(b + 1), self._ws(b + 2)
 
     def _group_error(self, idx: int) -> str:
         g = self._group(idx)
@@ -449,8 +458,8 @@ class PlcSim:
 
     def _block_error(self, n: int) -> str:
         base = A.D_RCP_BLOCK_BASE + (n - 1) * A.RCP_BLOCK_STRIDE
-        first = self._w(base + A.RCP_BLOCK_FIRST)
-        last = self._w(base + A.RCP_BLOCK_LAST)
+        first = self._ws(base + A.RCP_BLOCK_FIRST)
+        last = self._ws(base + A.RCP_BLOCK_LAST)
         repeat = self._wd(base + A.RCP_BLOCK_REPEAT_LO)
         ns = self._w(A.D_RCP_STEP_COUNT)
         if first < 1 or last < first or last > ns or repeat < 1:
@@ -460,6 +469,8 @@ class PlcSim:
     def _load_block(self, n: int):
         nb = self._w(A.D_RCP_BLOCK_COUNT)
         if n > nb:
+            # 래더: INC SEQ_BLOCK 뒤에 끝낸다 — 정상 완료면 D00021 = 블록 수 + 1
+            self.blk = n
             self._process_end("정상 종료")
             return
         why = self._block_error(n)
@@ -652,11 +663,8 @@ class PlcSim:
         """정상·중단 공통 정리."""
         self.running = False
         self.seq_state = 8 if aborted else 6
-        self.blk = 0
-        self.step_no = 0
-        self.cycle = 0
+        # ★ 블록·스텝·사이클·그룹 회차는 지우지 않는다 — 래더는 다음 시작 때만 지운다
         self.group_idx = 0
-        self.group_pass = 0
         self.step_ms = 0.0
         self.step_dur = 0
         self.seq_valves = 0
@@ -1086,7 +1094,11 @@ class PlcSim:
             sv = heater_temp(self.heater_sv[ch])
             gap = max(0.0, sv - self.heater_pv[ch]) if on else 0.0
             self.reg[A.D_HEATER_OUT + ch] = int(min(100, gap * 3)) if on else 0
-        self.reg[A.D_TC_COMM] = 0b111
+        comm = 0b111
+        for i in range(3):
+            if self.faults.get(f"tc{i + 1}_comm"):
+                comm &= ~(1 << i)
+        self.reg[A.D_TC_COMM] = comm
         self.reg[A.D_HEATER_ALARM] = 0
         for i in range(8):
             s = self.conv.mfc.get(i + 1)

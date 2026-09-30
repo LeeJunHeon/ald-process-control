@@ -101,6 +101,18 @@ PRM_PLC_DEFAULTS = {
     D_PRM_VALVE_MIN_MS: 200,
 }
 
+# 위 기본값을 설정 키(공학 단위)로 — 이 PRM 들은 원시값 = 공학 단위(ms · s)다.
+# ★ 설정에 값이 없을 때 PC 가 쓰는 기본값은 모두 여기서 가져온다(레시피 시간 계산 · 검증 경고 ·
+#   PLC 쓰기가 서로 다른 기본값을 쓰면 '경고는 없는데 PLC 는 늘린다'가 된다).
+PRM_DEFAULTS = {
+    "pc_wdt_ms": PRM_PLC_DEFAULTS[D_PRM_PC_WDT_MS],
+    "pump_timeout_s": PRM_PLC_DEFAULTS[D_PRM_PUMP_TIMEOUT],
+    "vent_timeout_s": PRM_PLC_DEFAULTS[D_PRM_VENT_TIMEOUT],
+    "mfc_stable_s": PRM_PLC_DEFAULTS[D_PRM_MFC_STABLE],
+    "mfc_timeout_s": PRM_PLC_DEFAULTS[D_PRM_MFC_TIMEOUT],
+    "valve_min_ms": PRM_PLC_DEFAULTS[D_PRM_VALVE_MIN_MS],
+}
+
 # ===================== PLC 내부 영역 (읽기 전용) =====================
 # PLC 가 스스로 쓰는 영역이라 PC 는 읽기만 한다. 한 번에 읽으려고 연속 구간으로 묶었다.
 #   D04012~13  실제로 반영된 수동 밸브 (32비트)
@@ -163,6 +175,12 @@ D_RCP_GROUP_BASE = 3100             # 그룹 n: D03100 + (n-1)*4
 RCP_GROUP_STRIDE = 4
 RCP_GROUP_MAX = 5
 #   +0 시작 블록 / +1 끝 블록 / +2 반복 횟수 / +3 예비
+
+# ★ 래더(XGK)의 비교 명령은 부호 있는 16비트다. 표의 한 워드 값(그룹 시작·끝·반복, 블록 첫·끝
+#   스텝, 개수)은 32768 이상이면 음수로 읽혀 '반복 < 1' → 레시피 오류(SEQ_RCP_ERR)가 된다.
+#   그래서 한 워드 칸의 최대는 32767 이고, 그룹 반복 한계도 이 값이다.
+RCP_WORD_MAX = 0x7FFF
+RCP_GROUP_REPEAT_MAX = RCP_WORD_MAX
 
 # 합계 대상 범위: D02000 ~ D03119 중 D02003(합계 자신)을 뺀 모든 워드
 RCP_SUM_BASE = 2000

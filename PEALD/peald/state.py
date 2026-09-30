@@ -253,6 +253,9 @@ class State:
                 "power": None if power_req is None else bool((power_req >> i) & 1),
                 "alarm": bool((s[A.D_HEATER_ALARM] >> i) & 1),
                 "comm_ok": station_ok,
+                # 전원 켜기를 막는 이유(화면 히터 표·수동 창이 그대로 보인다). 끄기는 언제나 된다.
+                "power_block": "" if station_ok else
+                "온도조절기 통신이 없어 PLC 과온 감시가 동작하지 않습니다 — 전원을 켤 수 없습니다",
             })
         out["heaters"] = heaters
         out["tc_comm"] = tc

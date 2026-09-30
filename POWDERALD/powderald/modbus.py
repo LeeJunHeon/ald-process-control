@@ -52,6 +52,9 @@ class ModbusClient:
         self._lock = asyncio.Lock()
         # 참이면 모든 쓰기를 막는다(PLC 링크가 장비 ID 판정으로 정한다)
         self.write_guard = None
+        # 소켓을 버린 이유(시간 초과 등). 줄 서 있던 뒤 요청의 오류에 붙인다 —
+        # 안 붙이면 끊김 로그가 '연결되어 있지 않습니다'만 남아 원인(응답 시간 초과)을 잃는다.
+        self.drop_reason = ""
 
     # ===================== 연결 =====================
     @property
@@ -63,6 +66,7 @@ class ModbusClient:
         self._reader, self._writer = await asyncio.wait_for(
             asyncio.open_connection(self.host, self.port), timeout=self.timeout)
         self._tid = 0
+        self.drop_reason = ""
 
     def close_sync(self):
         """예외를 던지지 않는 정리. 재연결 경로에서 부른다."""
@@ -88,14 +92,22 @@ class ModbusClient:
         self._tid = (self._tid + 1) & 0xFFFF
         return self._tid
 
+    def _not_connected(self) -> ModbusError:
+        why = self.drop_reason
+        return ModbusError("연결되어 있지 않습니다" + (f" (앞 요청: {why})" if why else ""))
+
+    def _drop(self, why: str):
+        self.drop_reason = why
+        self.close_sync()
+
     async def _request(self, pdu: bytes) -> bytes:
         """요청 한 번. 응답 PDU(기능 코드 포함)를 돌려준다."""
         if not self.connected:
-            raise ModbusError("연결되어 있지 않습니다")
+            raise self._not_connected()
         async with self._lock:
             # ★ 잠금을 기다리는 사이 앞 요청이 시간 초과로 소켓을 버렸을 수 있다 — 다시 본다
             if self._reader is None or self._writer is None or self._writer.is_closing():
-                raise ModbusError("연결되어 있지 않습니다")
+                raise self._not_connected()
             tid = self._next_tid()
             frame = struct.pack(">HHHB", tid, 0, len(pdu) + 1, self.unit_id) + pdu
             try:
@@ -111,7 +123,7 @@ class ModbusClient:
             except (asyncio.TimeoutError, TimeoutError) as e:
                 # ★ 여기서 소켓을 버린다. 늦게 도착할 응답이 다음 요청과 섞이면
                 #   엉뚱한 주소의 값을 읽게 된다 — 재연결이 훨씬 안전하다.
-                self.close_sync()
+                self._drop("응답 시간 초과")
                 raise ModbusTimeout("응답 시간 초과") from e
             except (OSError, ConnectionError) as e:
                 raise ModbusTimeout(f"소켓 오류: {e}") from e
@@ -119,7 +131,7 @@ class ModbusClient:
             if proto != 0:
                 raise ModbusError(f"프로토콜 식별자가 0이 아닙니다: {proto}")
             if rtid != tid:
-                self.close_sync()
+                self._drop("트랜잭션 번호 불일치")
                 raise ModbusTimeout(f"트랜잭션 번호 불일치 (보냄 {tid} / 받음 {rtid})")
             if unit != self.unit_id:
                 raise ModbusError(f"유닛 번호 불일치 ({unit})")

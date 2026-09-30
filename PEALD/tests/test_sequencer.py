@@ -258,7 +258,9 @@ def test_stop_after_cycle(cfg):
     assert sim.reg[A.D_STATE] == A.STATE_STOPPING or sim.stop_req
     done = run(sim, ms=500, step_ms=10)
     assert done and sim.end_reason == "사이클 후 정지"
-    assert sim.cycle == 0
+    # 래더와 같게 — 끝에서 위치를 지우지 않는다(다음 시작 때만 지움). 사이클 후 정지는 블록 끝으로
+    # 가지 않으므로 D00021 ≤ 블록 수, 시퀀서는 6(완료)
+    assert sim.cycle == 1 and sim.reg[A.D_SEQ_BLOCK] == 1 and sim.reg[A.D_SEQ_STATE] == 6
 
 
 def test_abort(cfg):

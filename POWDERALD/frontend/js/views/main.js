@@ -218,7 +218,10 @@
       cl.innerHTML = (!run && bad.length)
         ? bad.slice(0, 3).map(function (c) {
             return core.chip(c.label + ': ' + c.detail, c.key === 'base' ? 'warn' : 'stop');
-          }).join('') + (bad.length > 3 ? core.chip('외 ' + (bad.length - 3) + '건', 'stop') : '')
+          }).join('') + (bad.length > 3 ? core.chip('외 ' + (bad.length - 3) + '건', 'stop') : '') +
+          // O3 허가·발생기가 빠졌으면 수동 창의 O3 라인 켜기로 바로 간다(설정값은 거기서 확인)
+          (bad.some(function (c) { return c.action === 'o3_on'; })
+            ? ' <button class="btn sm" data-mnopen="o3">O3 라인 켜기</button>' : '')
         : '';
     }
 
@@ -325,7 +328,7 @@
       var st = d.querySelector('[data-hst="' + def.ch + '"]');
       if (!st) return;
       if (!conn) { st.innerHTML = fmt.DASH; return; }
-      if (!h.comm_ok) st.innerHTML = core.chip('통신 끊김', 'stop');
+      if (!h.comm_ok) st.innerHTML = core.chip('통신 끊김', 'stop', h.power_block || '');
       else if (h.alarm) st.innerHTML = core.chip('조절기 알람', 'stop');
       else if (def.max_c == null) st.innerHTML = core.chip('한계 미정', 'warn', '과온 한계가 없어 PLC 소프트 과온 감시가 꺼집니다 — PC 가 설정·전원 켜기를 막습니다');
       else st.innerHTML = core.chip('정상', 'ok');

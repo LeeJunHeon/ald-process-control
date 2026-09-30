@@ -497,7 +497,10 @@ async def test_one_lost_response_heartbeat_gap_and_no_prm_writes_in_process(sim)
         s._process_end("시험 종료", aborted=True)
         assert await wait_until(lambda: s.reg[A.D_PRM_VALVE_MIN_MS] == want_vmin, 4), \
             "대기 중 PRM 불일치를 맞추지 않았다"
-        assert await wait_until(lambda: any("다시 썼습니다" in m for _l, m in events), 2)
+        # 공정 중 미뤄 둔 쓰기는 그렇게 알린다('PLC 가 다시 시작됐을 수 있다'가 아니라)
+        assert await wait_until(
+            lambda: any("공정 중 미뤄 둔 PLC 파라미터를 썼습니다" in m for _l, m in events), 2), events
+        assert not any("다시 시작됐거나" in m for _l, m in events)
     finally:
         await lk.stop()
         await px.stop()

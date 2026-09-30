@@ -126,6 +126,7 @@ class PlcLink:
         self._fix_task = None               # 대기 중 PRM 되읽기 불일치 자동 복구
         self._last_drop_at = 0.0
         self._prm_note = ""                 # 같은 PRM 경고를 되풀이하지 않게
+        self._prm_deferred = False          # 공정 중이라 쓰기를 미뤄 뒀다
         # 대기 중 PRM 이 설정과 다르면(예: PLC 재시작으로 기본값) 다시 쓴다. 시험이 PRM 을 일부러
         # 바꿔 볼 때는 끈다.
         self.prm_autofix = True
@@ -388,6 +389,7 @@ class PlcLink:
             self._prm_note = ""
             return 0
         if self._plc_running():
+            self._prm_deferred = True
             self.prm_mismatch = [f"{n}: 설정 {v} / PLC {self.prm_readback.get(a)} (공정 중 — 끝나면 맞춤)"
                                  for a, n, v in diff]
             self._warn_once("run:" + ",".join(str(a) for a, _n, _v in diff), "warn",
@@ -434,10 +436,15 @@ class PlcLink:
             async with self._cmd_lock:
                 if not self.write_ok:
                     return
+                deferred = self._prm_deferred
                 n = await self._sync_params("되읽기 불일치")
             if n:
-                self.on_event("warn", f"PLC 파라미터가 설정과 달라 다시 썼습니다 ({n}개) — "
-                              "PLC 가 다시 시작됐거나 다른 곳에서 바뀌었을 수 있습니다")
+                self._prm_deferred = False
+                if deferred:
+                    self.on_event("info", f"공정 중 미뤄 둔 PLC 파라미터를 썼습니다 ({n}개)")
+                else:
+                    self.on_event("warn", f"PLC 파라미터가 설정과 달라 다시 썼습니다 ({n}개) — "
+                                  "PLC 가 다시 시작됐거나 다른 곳에서 바뀌었을 수 있습니다")
         except (ModbusTimeout, ModbusError, OSError) as e:
             log.debug("PRM 복구 실패: %s", e)
 
@@ -787,13 +794,14 @@ def param_words(cfg: dict, conv) -> dict:
     from .convert import heater_raw
     p = cfg.get("params") or {}
     n = _num
+    D = A.PRM_DEFAULTS          # ★ PLC P00 기본값과 같은 표 한 곳(레시피 시간 계산·검증도 이것)
     out = {
-        A.D_PRM_PC_WDT_MS: ("PC 하트비트 판정", n(p, "pc_wdt_ms", 3000)),
-        A.D_PRM_PUMP_TIMEOUT: ("베이스 도달 제한", n(p, "pump_timeout_s", 600)),
-        A.D_PRM_VENT_TIMEOUT: ("대기압 도달 제한", n(p, "vent_timeout_s", 300)),
-        A.D_PRM_MFC_STABLE: ("MFC 안정 판정", n(p, "mfc_stable_s", 3)),
-        A.D_PRM_MFC_TIMEOUT: ("MFC 안정 제한", n(p, "mfc_timeout_s", 60)),
-        A.D_PRM_VALVE_MIN_MS: ("밸브 최소 열림", n(p, "valve_min_ms", 200)),
+        A.D_PRM_PC_WDT_MS: ("PC 하트비트 판정", n(p, "pc_wdt_ms", D["pc_wdt_ms"])),
+        A.D_PRM_PUMP_TIMEOUT: ("베이스 도달 제한", n(p, "pump_timeout_s", D["pump_timeout_s"])),
+        A.D_PRM_VENT_TIMEOUT: ("대기압 도달 제한", n(p, "vent_timeout_s", D["vent_timeout_s"])),
+        A.D_PRM_MFC_STABLE: ("MFC 안정 판정", n(p, "mfc_stable_s", D["mfc_stable_s"])),
+        A.D_PRM_MFC_TIMEOUT: ("MFC 안정 제한", n(p, "mfc_timeout_s", D["mfc_timeout_s"])),
+        A.D_PRM_VALVE_MIN_MS: ("밸브 최소 열림", n(p, "valve_min_ms", D["valve_min_ms"])),
         # ★ 베이스 압력은 역함수로 원시값을 만든다(환산이 단조 증가여야 하는 이유).
         A.D_PRM_BASE_PRESS: ("베이스 압력", conv.cvg.to_raw(p.get("base_press_torr"))),
     }

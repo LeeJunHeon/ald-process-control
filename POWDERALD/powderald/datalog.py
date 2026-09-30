@@ -17,6 +17,7 @@ import time
 from . import addresses as A
 from . import device as DEV
 from . import logger
+from . import logview
 from . import paths
 from . import storage
 
@@ -57,6 +58,7 @@ class DataLog:
         self.meta_path = ""
         self.meta = None
         self.end_result = ""
+        self._result_fn = None      # 끝을 볼 때 결과가 아직 없으면 닫을 때 다시 묻는다
 
     @property
     def active(self) -> bool:
@@ -89,6 +91,7 @@ class DataLog:
                          "estimated_ms": total_ms,
                          "started": time.strftime("%Y-%m-%d %H:%M:%S")}
             storage.atomic_write_json(self.meta_path, self.meta)
+            logview.set_writing(self.name)
             logger.write("info", f"데이터 로그 시작: {os.path.basename(self.path)}")
         except Exception as e:  # noqa: BLE001
             # ★ 기록을 못 해도 공정은 돌아야 한다.
@@ -108,6 +111,8 @@ class DataLog:
         elif running and self.fp:
             self.stop_at = 0.0          # 공정 중이면 종료 표시를 지운다
         elif not running and self.fp:
+            if not self.stop_at:
+                self._result_fn = result_fn
             self.note_end(result_fn() if (result_fn and not self.stop_at) else None)
         self._was_running = running
 
@@ -127,9 +132,11 @@ class DataLog:
             logger.write("info", f"데이터 로그 종료: {os.path.basename(self.path)} "
                                  f"({self._rows}줄)")
             self._write_end_meta()
+            logview.set_writing(None)
         self.fp = None
         self.writer = None
         self.stop_at = 0.0
+        self._result_fn = None
 
     def _write_end_meta(self):
         """짝 .recipe.json 에 끝난 시각·결과·줄 수·걸린 시간을 덧붙인다(원자적 저장).
@@ -138,6 +145,12 @@ class DataLog:
             return
         try:
             meta = dict(self.meta)
+            if not self.end_result and self._result_fn and self.stop_at:
+                # 끝을 볼 때 결과가 아직 없었다(즉시 중단 결과 대기 등) — 지금 다시 묻는다
+                try:
+                    self.end_result = self._result_fn() or ""
+                except Exception:  # noqa: BLE001
+                    pass
             meta.update({
                 "ended": time.strftime("%Y-%m-%d %H:%M:%S"),
                 "result": self.end_result or "기록 중단(프로그램 종료 등)",

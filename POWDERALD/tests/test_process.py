@@ -4,6 +4,7 @@
 운전자가 누른 것과 PLC 가 받은 것이 어긋나면 현장에서 가장 위험하다.
 """
 import os
+import copy
 import asyncio
 
 import pytest
@@ -775,6 +776,21 @@ async def _start(lk, sim, cfg, name, rec=None):
     assert await wait_until(lambda: lk.status[A.D_STATE] in (A.STATE_READY, A.STATE_RUN), 5)
 
 
+async def _seen_running(timeout=5.0):
+    """★ 샘플링 루프가 '공정 중'을 한 번은 보게 한다. 중단이 첫 tick 보다 먼저 끝나면
+    종료 감지가 공정 중을 본 적이 없어 끝을 기록하지 않는다(시험 경쟁). 데이터 로그도 같이."""
+    from powderald import loops
+    end = asyncio.get_event_loop().time() + timeout
+    while asyncio.get_event_loop().time() < end:
+        state.refresh()
+        state.runner.tick(lambda lvl, msg: None)
+        loops._datalog_tick()
+        if state.runner._was_running:
+            return True
+        await asyncio.sleep(0.05)
+    return False
+
+
 async def _run_to_end(timeout=30.0):
     """샘플링 루프가 하는 것(알람 갱신 → 종료 감지 → 데이터 로그)을 끝날 때까지 돌린다."""
     from powderald import loops
@@ -812,6 +828,7 @@ async def test_aborted_process_is_never_normal(wired, how, want):
     lk, sim, cfg = wired
     await _start(lk, sim, cfg, f"중단{how}")
     await asyncio.sleep(0.3)
+    assert await _seen_running()
     if how == "pc_hb":
         lk.prm_autofix = False                     # 일부러 바꾼 PRM 을 링크가 되돌리지 않게
         sim.write(A.D_PRM_PC_WDT_MS, [300])
@@ -835,6 +852,7 @@ async def test_operator_abort_result(wired):
     lk, sim, cfg = wired
     await _start(lk, sim, cfg, "운전자중단")
     await asyncio.sleep(0.3)
+    assert await _seen_running()
     await C.handle_command({"cmd": "process_abort"})
     seen, name = await _run_to_end()
     assert state.runner.last_result == "중단 (운전자 중단)"
@@ -843,34 +861,56 @@ async def test_operator_abort_result(wired):
 
 @pytest.mark.parametrize("how", ["stop_after_cycle", "normal"])
 async def test_normal_end_results(wired, how):
-    """사이클 후 정지·정상 끝 → 시퀀서 상태 6(완료) → '정상 종료'."""
+    """둘 다 시퀀서 6(완료)이지만 래더에서 정상 완료는 D00021 > 블록 수, 사이클 후 정지는
+    D00021 ≤ 블록 수 — '정상 종료' 와 '사이클 후 정지 (블록 b · 사이클 c/R)' 로 나눈다."""
     lk, sim, cfg = wired
     rec = long_recipe("정상" + how) if how == "stop_after_cycle" else short_recipe("정상" + how)
     await _start(lk, sim, cfg, "정상" + how, rec)
+    assert await _seen_running()
     if how == "stop_after_cycle":
         await asyncio.sleep(0.3)
-        r, _ = await lk.send_command(A.CMD_STOP_AFTER_CYCLE)
-        assert r == A.RESULT_OK
+        await C.handle_command({"cmd": "process_stop_after_cycle"})
     seen, name = await _run_to_end()
-    assert state.runner.last_result == "정상 종료", seen
-    assert _meta_and_list(name) == ("정상 종료", "정상 종료")
+    res = state.runner.last_result
+    if how == "normal":
+        assert res == "정상 종료", seen
+    else:
+        assert res.startswith("사이클 후 정지 (블록 1 · 사이클 ") and res.endswith("/500)"), res
+    assert _meta_and_list(name) == (res, res)
+    # 마지막 위치는 공정 중에 본 값 — 끝난 뒤의 '블록 N+1' 이나 0 이 아니다
+    assert "마지막 위치 블록 1 · 스텝 " in seen[0], seen
 
 
 def test_end_result_rules():
-    """'정상 종료'는 시퀀서 6 일 때만. 끝 상태를 모르면 '끝 확인 안 됨'."""
+    """시퀀서 6 + D00021 > 블록 수 → 정상 종료, ≤ 블록 수 → 사이클 후 정지.
+    안전 정지(장비 상태 6)가 운전자 중단보다 앞서고, 끝 상태를 모르면 '끝 확인 안 됨'."""
     runner = ProcessRunner(state)
     state.alarms.clear_all()
+    rec = short_recipe("규칙")
+    rec["blocks"].append(copy.deepcopy(rec["blocks"][0]))
+    rec["blocks"][1]["repeat"] = 7
+    runner.run = {"name": "규칙", "recipe": rec, "table": {"block_count": 2}}
     s = [0] * A.STATUS_COUNT
     s[A.D_STATE], s[A.D_SEQ_STATE] = A.STATE_IDLE, 6
+    s[A.D_SEQ_BLOCK] = 3
     assert runner.end_result(s) == "정상 종료"
+    s[A.D_SEQ_BLOCK], s[A.D_SEQ_BLOCK_PASS] = 2, 4
+    assert runner.end_result(s) == "사이클 후 정지 (블록 2 · 사이클 4/7)"
     s[A.D_SEQ_STATE] = 8
     assert runner.end_result(s) == "중단 (PLC 중단)"
     s[A.D_SEQ_STATE] = 4                         # 예전 시뮬레이터처럼 '6 + 4' 가 읽혀도
     assert runner.end_result(s) == "중단 (끝 확인 안 됨)"
-    s[A.D_STATE] = A.STATE_SAFE_STOP
-    assert runner.end_result(s).startswith("중단 (안전 정지")
-    runner.note_abort()
+    runner.abort_begin()
+    runner.abort_result(True)                    # 처리됨(0) — 운전자 중단
+    s[A.D_SEQ_STATE] = 8
     assert runner.end_result(s) == "중단 (운전자 중단)"
+    s[A.D_STATE] = A.STATE_SAFE_STOP             # 안전 정지 사유가 앞선다
+    assert runner.end_result(s).startswith("중단 (안전 정지")
+    runner2 = ProcessRunner(state)
+    runner2.abort_begin()
+    runner2.abort_result(False)                  # 거절·통신 오류면 적지 않는다
+    s[A.D_STATE] = A.STATE_IDLE
+    assert runner2.end_result(s) == "중단 (PLC 중단)"
 
 
 def test_simulator_aborts_sequencer_in_same_scan(cfg):

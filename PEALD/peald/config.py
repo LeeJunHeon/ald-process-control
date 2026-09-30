@@ -17,6 +17,7 @@ import copy
 import json
 
 from . import paths
+from . import addresses as A
 from . import device as DEV
 from .convert import Converters
 
@@ -224,7 +225,7 @@ def validate(cfg: dict) -> list:
         except (TypeError, ValueError):
             p.append(("warn", f"plc.{key} 값이 올바르지 않습니다"))
     try:
-        wdt = int((cfg.get("params") or {}).get("pc_wdt_ms") or 3000)
+        wdt = int((cfg.get("params") or {}).get("pc_wdt_ms") or A.PRM_DEFAULTS["pc_wdt_ms"])
         # ★ 응답 하나를 잃었을 때의 최악 공백 = 응답 제한 + 하트비트 주기 + 재연결 여유(500 ms).
         #   이것이 PC 하트비트 판정보다 짧지 않으면 PLC 가 PC 끊김으로 공정을 세울 수 있다.
         worst = int(plc.get("timeout_ms")) + int(plc.get("heartbeat_ms")) + 500

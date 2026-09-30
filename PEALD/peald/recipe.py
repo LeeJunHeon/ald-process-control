@@ -13,12 +13,14 @@ recipe.py — 레시피 형식 · 검증 · PLC 표 변환 · 시간 계산 (순
   blocks[] name, repeat, mfc_sccm[장비 MFC 개수], (PEALD) pcv_pct, rf_w / (Powder) o3
            steps[] name, time_ms, valves[밸브 이름], pause_ok, (PEALD) rf
   groups[] from_block, to_block, repeat        ← 블록 번호는 1부터
+           (옛 파일의 from / to 는 불러올 때 from_block / to_block 으로 바꿔 읽는다 — upgrade())
 
 PLC 시퀀서 동작(래더 확정 사양)은 README 를 참고할 것. 이 파일의 시간 계산은 그 동작을
 그대로 따라간다 — 실효 스텝 시간, 블록 준비, 블록·그룹 반복.
 """
 
 import json
+import math
 import time
 import zlib
 
@@ -32,7 +34,9 @@ STEP_MAX = A.RCP_STEP_MAX               # 100
 BLOCK_MAX = A.RCP_BLOCK_MAX             # 10
 GROUP_MAX = A.RCP_GROUP_MAX             # 5
 BLOCK_REPEAT_MAX = 1_000_000
-GROUP_REPEAT_MAX = 65_535
+# ★ 그룹 반복은 PLC 표의 한 워드인데 래더가 부호 있는 16비트로 비교한다 — 32768 이상은 음수로
+#   읽혀 그 그룹을 불러오는 순간 레시피 오류로 증착이 중간에 선다. 한계는 표 정의 옆 상수 하나다.
+GROUP_REPEAT_MAX = A.RCP_GROUP_REPEAT_MAX     # 32767
 LONG_STEP_MS = 60_000                   # 이 값을 넘으면 100 ms 타이머
 
 
@@ -73,6 +77,153 @@ def empty_step(name: str = "새 스텝") -> dict:
     return s
 
 
+# ===================== 옛 형식 · 값 형식 =====================
+def upgrade(recipe):
+    """옛 키를 새 키로 바꾼 사본. 반복 그룹의 from / to → from_block / to_block.
+    ★ 저장은 새 키로만 한다 — 옛 키가 남아 있으면 화면·PLC 표가 서로 다른 칸을 읽는다."""
+    if not isinstance(recipe, dict):
+        return recipe
+    out = dict(recipe)
+    gs = recipe.get("groups")
+    if isinstance(gs, list):
+        new = []
+        for g in gs:
+            if isinstance(g, dict):
+                g = dict(g)
+                if "from_block" not in g and "from" in g:
+                    g["from_block"] = g["from"]
+                if "to_block" not in g and "to" in g:
+                    g["to_block"] = g["to"]
+                g.pop("from", None)
+                g.pop("to", None)
+            new.append(g)
+        out["groups"] = new
+    return out
+
+
+_NUM_ABS_MAX = 2 ** 53           # 이보다 큰 수는 실수로 옮길 때 값이 달라진다 — 형식 오류로 본다
+
+
+def _is_num(v) -> bool:
+    if isinstance(v, bool):
+        return False
+    if isinstance(v, int):
+        return abs(v) <= _NUM_ABS_MAX
+    return isinstance(v, float) and math.isfinite(v) and abs(v) <= _NUM_ABS_MAX
+
+
+def _is_int(v) -> bool:
+    """정수만. 2.0 처럼 소수부가 없는 실수는 받고, 2.5 · 150.7 은 받지 않는다(조용히 자르지 않는다)."""
+    return _is_num(v) and (isinstance(v, int) or v.is_integer())
+
+
+def shape_errors(recipe) -> list:
+    """모든 필드의 형식(정수 · 실수 · 불 · 문자열 · 목록 · 사전). 틀린 것마다 오류 항목 하나.
+    ★ 형식이 틀린 레시피로 계산하면 예외가 나거나(문자열 숫자) 값이 조용히 잘린다(소수 반복) —
+      계산 전에 여기서 걸러 검증 오류로 돌려준다."""
+    errs = []
+
+    def bad(msg, block=None, step=None, field=None):
+        errs.append({"msg": msg, "block": block, "step": step, "field": field})
+
+    if not isinstance(recipe, dict):
+        bad("레시피 형식이 올바르지 않습니다 (사전이 아님)")
+        return errs
+
+    def num(obj, key, label, block=None, step=None, field=None, integer=False, required=False):
+        if key not in obj:
+            if required:
+                bad(f"{label} 값이 없습니다", block, step, field)
+            return
+        v = obj[key]
+        if v is None:
+            bad(f"{label} 값이 비어 있습니다", block, step, field)
+        elif isinstance(v, (int, float)) and not isinstance(v, bool) and not _is_num(v):
+            bad(f"{label} 값이 너무 크거나 올바르지 않습니다 (현재 {_show(v)})", block, step, field)
+        elif integer and not _is_int(v):
+            bad(f"{label}은(는) 정수여야 합니다 (현재 {_show(v)})", block, step, field)
+        elif not integer and not _is_num(v):
+            bad(f"{label}은(는) 숫자여야 합니다 (현재 {_show(v)})", block, step, field)
+
+    def flag(obj, key, label, block=None, step=None, field=None):
+        if key in obj and not isinstance(obj[key], bool):
+            bad(f"{label}은(는) 참/거짓이어야 합니다 (현재 {_show(obj[key])})", block, step, field)
+
+    def text(obj, key, label, block=None, step=None, field=None):
+        if key in obj and not isinstance(obj[key], str):
+            bad(f"{label}은(는) 문자열이어야 합니다 (현재 {_show(obj[key])})", block, step, field)
+
+    for key in ("format", "name", "memo", "created", "modified"):
+        text(recipe, key, f"'{key}'", field=key)
+
+    blocks = recipe.get("blocks")
+    if not isinstance(blocks, list):
+        bad("'blocks'는 목록이어야 합니다", field="blocks")
+        blocks = []
+    for bi, b in enumerate(blocks, start=1):
+        if not isinstance(b, dict):
+            bad("블록 형식이 올바르지 않습니다 (사전이 아님)", block=bi)
+            continue
+        text(b, "name", "블록 이름", bi, field="name")
+        num(b, "repeat", "블록 반복", bi, field="repeat", integer=True, required=True)
+        mfc = b.get("mfc_sccm", [])
+        if not isinstance(mfc, list):
+            bad("'mfc_sccm'은 목록이어야 합니다", bi, field="mfc1")
+        else:
+            if len(mfc) > DEV.MFC_COUNT:
+                bad(f"MFC 설정이 이 장비의 MFC 개수({DEV.MFC_COUNT})보다 많습니다 ({len(mfc)}개)",
+                    bi, field="mfc1")
+            for mi, v in enumerate(mfc[:DEV.MFC_COUNT]):
+                num({"v": v}, "v", f"MFC{mi + 1} 설정", bi, field=f"mfc{mi + 1}")
+        if DEV.HAS_PCV:
+            num(b, "pcv_pct", "PCV 목표", bi, field="pcv")
+        if DEV.HAS_RF:
+            num(b, "rf_w", "RF 전력", bi, field="rf")
+        if DEV.HAS_O3:
+            num(b, "o3", "O3 설정", bi, field="o3")
+        steps = b.get("steps", [])
+        if not isinstance(steps, list):
+            bad("'steps'는 목록이어야 합니다", bi, field="steps")
+            continue
+        for si, st in enumerate(steps, start=1):
+            if not isinstance(st, dict):
+                bad("스텝 형식이 올바르지 않습니다 (사전이 아님)", bi, si)
+                continue
+            text(st, "name", "스텝 이름", bi, si, "name")
+            num(st, "time_ms", "스텝 시간", bi, si, "time", integer=True, required=True)
+            vs = st.get("valves", [])
+            if not isinstance(vs, list) or not all(isinstance(x, str) for x in vs):
+                bad("밸브는 이름(문자열) 목록이어야 합니다", bi, si, "valves")
+            flag(st, "pause_ok", "정지 허용", bi, si, "pause_ok")
+            if DEV.HAS_RF:
+                flag(st, "rf", "RF", bi, si, "rf")
+
+    groups = recipe.get("groups", [])
+    if groups is None:
+        groups = []
+    if not isinstance(groups, list):
+        bad("'groups'는 목록이어야 합니다", field="groups")
+        groups = []
+    for gi, g in enumerate(groups, start=1):
+        where = f"group{gi}"
+        if not isinstance(g, dict):
+            bad(f"반복 그룹 {gi}: 형식이 올바르지 않습니다 (사전이 아님)", field=where)
+            continue
+        num(g, "from_block", f"반복 그룹 {gi} 시작 블록", field=where, integer=True, required=True)
+        num(g, "to_block", f"반복 그룹 {gi} 끝 블록", field=where, integer=True, required=True)
+        num(g, "repeat", f"반복 그룹 {gi} 반복", field=where, integer=True, required=True)
+    return errs
+
+
+def _show(v) -> str:
+    """오류 문장에 넣을 값 — 짧게, 형식이 드러나게."""
+    try:
+        t = json.dumps(v, ensure_ascii=False)
+    except (TypeError, ValueError):
+        t = repr(v)
+    return t if len(t) <= 30 else t[:29] + "…"
+
+
 # ===================== 레시피 번호 =====================
 def normalize(recipe: dict) -> str:
     """번호 계산용 정규형. ★ 메모·시각은 뺀다 — 실행에 영향이 없는데 번호가 바뀌면
@@ -106,8 +257,18 @@ def normalize(recipe: dict) -> str:
 
 
 def recipe_number(recipe: dict) -> int:
-    """CRC32 하위 16비트. 0 은 '레시피 없음'과 헷갈리므로 1 로 올린다."""
-    n = zlib.crc32(normalize(recipe).encode("utf-8")) & 0xFFFF
+    """CRC32 하위 16비트. 0 은 '레시피 없음'과 헷갈리므로 1 로 올린다.
+    형식이 틀린 레시피(조작된 파일 등)도 목록에 번호를 보일 수 있게 예외를 내지 않는다."""
+    recipe = upgrade(recipe)
+    text = None
+    if not shape_errors(recipe):
+        try:
+            text = normalize(recipe)
+        except (TypeError, ValueError, AttributeError, OverflowError):
+            text = None
+    if text is None:
+        text = json.dumps(recipe, ensure_ascii=False, sort_keys=True, default=str)
+    n = zlib.crc32(text.encode("utf-8")) & 0xFFFF
     return n or 1
 
 
@@ -155,21 +316,24 @@ def block_ms(block: dict, valve_min_ms: int, prep_ms: int) -> int:
     return int(prep_ms + sum(first) + (repeat - 1) * sum(rep))
 
 
-def _prm(cfg: dict):
-    """시간 계산에 쓰는 PLC 파라미터 (공학 단위).
+def prm_value(cfg: dict, key: str) -> int:
+    """PLC 파라미터 하나(공학 단위 정수). 설정에 없으면 PLC P00 기본값과 같은 표
+    (addresses.PRM_DEFAULTS)에서 — 시간 계산·검증 경고·PLC 쓰기가 같은 값을 쓴다.
     ★ 0 은 뜻이 있는 값이다(최소 열림 없음·대기 없음) — 기본값으로 바꾸지 않는다."""
-    p = cfg.get("params") or {}
+    p = (cfg or {}).get("params") or {}
+    default = A.PRM_DEFAULTS[key]
+    v = p.get(key)
+    if v is None or v == "":
+        v = default
+    try:
+        return int(v)
+    except (TypeError, ValueError, OverflowError):
+        return int(default)
 
-    def num(key, default):
-        v = p.get(key)
-        if v is None or v == "":
-            v = default
-        try:
-            return int(v)
-        except (TypeError, ValueError):
-            return int(default)
 
-    return num("valve_min_ms", 200), num("mfc_stable_s", 3) * 1000
+def _prm(cfg: dict):
+    """시간 계산에 쓰는 PLC 파라미터 (최소 열림 ms, 블록 준비 ms)."""
+    return prm_value(cfg, "valve_min_ms"), prm_value(cfg, "mfc_stable_s") * 1000
 
 
 def _group_of(recipe: dict, block_no: int):
@@ -203,7 +367,8 @@ def total_ms(cfg: dict, recipe: dict) -> int:
 def remaining_ms(cfg: dict, recipe: dict, pos: dict) -> int:
     """PLC 가 알려 준 현재 위치에서 남은 시간.
 
-    pos: block(1부터) · step(표 전체 기준 번호) · cycle · group_pass · step_elapsed_ms · paused
+    pos: block(1부터) · step(표 전체 기준 번호) · cycle · group_pass · step_elapsed_ms · paused ·
+         stop_after_cycle(사이클 후 정지 예약 — 이번 사이클이 끝나면 공정이 끝난다)
     ★ PLC 는 스텝 '끝'에서 멈춘다 — 일시정지 중이면 멈춘 스텝은 이미 끝났으므로 빼고,
       재개 뒤 첫 스텝은 직전 출력이 전부 닫힌 것으로 센다(최소 열림 적용)."""
     vmin, prep = _prm(cfg)
@@ -225,6 +390,16 @@ def remaining_ms(cfg: dict, recipe: dict, pos: dict) -> int:
     cur = first if cycle == 1 else rep
 
     repeat = max(1, int(block.get("repeat") or 1))
+    if pos.get("stop_after_cycle"):
+        # 이번 사이클의 남은 스텝만 — 다음 사이클·블록·그룹은 돌지 않는다
+        if pos.get("paused"):
+            if idx + 1 >= len(steps):
+                return 0
+            sets = [_valve_set(s) for s in steps]
+            nxt = effective_step_ms(steps[idx + 1].get("time_ms"), bool(sets[idx + 1]), vmin)
+            return int(nxt + sum(cur[idx + 2:]))
+        elapsed = int(pos.get("step_elapsed_ms") or 0)
+        return int(max(0, cur[idx] - elapsed) + sum(cur[idx + 1:]))
     if pos.get("paused"):
         sets = [_valve_set(s) for s in steps]
         if idx + 1 < len(steps):
@@ -249,7 +424,7 @@ def remaining_ms(cfg: dict, recipe: dict, pos: dict) -> int:
 
 def _blocks_after(cfg: dict, recipe: dict, block_no: int, group_pass: int) -> int:
     """block_no 를 마친 뒤 남은 블록들의 시간.
-    ★ 반복 횟수가 크면(그룹 65535회) 하나씩 세는 것은 불가능하다 — 구간 합으로 계산한다."""
+    ★ 반복 횟수가 크면(그룹 32767회) 하나씩 세는 것은 불가능하다 — 구간 합으로 계산한다."""
     vmin, prep = _prm(cfg)
     blocks = recipe.get("blocks") or []
     per = [block_ms(b, vmin, prep) for b in blocks]
@@ -279,8 +454,12 @@ def _blocks_after(cfg: dict, recipe: dict, block_no: int, group_pass: int) -> in
 
 
 def summarize(cfg: dict, recipe: dict) -> dict:
-    """화면이 그대로 쓰는 요약."""
+    """화면이 그대로 쓰는 요약. 형식이 틀린 레시피는 계산하지 않고 빈 요약."""
     vmin, prep = _prm(cfg)
+    recipe = upgrade(recipe)
+    if shape_errors(recipe):
+        return {"number": None, "step_count": 0, "block_count": 0, "group_count": 0,
+                "total_ms": 0, "prep_ms": prep, "blocks": []}
     blocks = recipe.get("blocks") or []
     out_blocks = []
     for i, b in enumerate(blocks, start=1):
@@ -325,6 +504,12 @@ def validate(cfg: dict, recipe: dict) -> dict:
     if not isinstance(recipe, dict):
         _err(out, "레시피 형식이 올바르지 않습니다")
         return out
+    recipe = upgrade(recipe)
+    # ★ 형식(정수·실수·불·문자열·목록)부터 — 틀리면 계산하지 않고 그 목록을 오류로 돌려준다
+    shape = shape_errors(recipe)
+    if shape:
+        out["errors"].extend(shape)
+        return out
 
     fmt = recipe.get("format")
     if fmt != DEV.RECIPE_FORMAT:
@@ -333,7 +518,6 @@ def validate(cfg: dict, recipe: dict) -> dict:
     if not (recipe.get("name") or "").strip():
         _err(out, "레시피 이름이 비어 있습니다", field="name")
 
-    prm = cfg.get("params") or {}
     conv_limits = _limits(cfg)
     blocks = recipe.get("blocks") or []
 
@@ -344,7 +528,7 @@ def validate(cfg: dict, recipe: dict) -> dict:
     if not (1 <= total_steps <= STEP_MAX):
         _err(out, f"전체 스텝 개수는 1~{STEP_MAX} 이어야 합니다 (현재 {total_steps})")
 
-    vmin = int(prm.get("valve_min_ms") or 0)
+    vmin = prm_value(cfg, "valve_min_ms")
 
     for bi, b in enumerate(blocks, start=1):
         steps = b.get("steps") or []
@@ -360,7 +544,13 @@ def validate(cfg: dict, recipe: dict) -> dict:
         for mi in range(DEV.MFC_COUNT):
             v = float(mfc[mi]) if mi < len(mfc) and mfc[mi] is not None else 0.0
             fs = conv_limits["mfc_full"][mi]
-            if v < 0 or (fs is not None and v > fs):
+            if fs is None and v > 0:
+                # ★ 풀스케일이 없으면 PLC 표에 0 으로 들어간다 — 그 가스 없이 돈다(블록 준비는
+                #   MFC1 만 본다). 조용히 0 으로 바꾸지 않고 막는다.
+                _err(out, f"MFC{mi + 1} 풀스케일이 설정되지 않아 {v:g} sccm 을 보낼 수 없습니다 — "
+                          f"설정에서 풀스케일을 넣거나 0 으로 두세요",
+                     block=bi, field=f"mfc{mi + 1}")
+            elif v < 0 or (fs is not None and v > fs):
                 _err(out, f"MFC{mi + 1} 설정이 범위를 벗어납니다 "
                           f"(0~{_g(fs)} sccm, 현재 {v:g})",
                      block=bi, field=f"mfc{mi + 1}")

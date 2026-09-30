@@ -76,24 +76,32 @@ def list_recipes() -> list:
         data = read_json(os.path.join(paths.RECIPES_DIR, f))
         if not isinstance(data, dict) or data.get("format") != DEV.RECIPE_FORMAT:
             continue
+        # ★ 조작·손상된 파일(형식이 틀린 값)도 목록을 깨지 않게 — 값은 문자열로만 넘긴다
+        blocks = data.get("blocks")
         out.append({
             "name": f[:-5],
-            "memo": data.get("memo", ""),
-            "modified": data.get("modified", ""),
+            "memo": _text(data.get("memo", "")),
+            "modified": _text(data.get("modified", "")),
             "number": recipe_number(data),
-            "block_count": len(data.get("blocks") or []),
+            "block_count": len(blocks) if isinstance(blocks, list) else 0,
         })
     return out
 
 
+def _text(v) -> str:
+    return v if isinstance(v, str) else ""
+
+
 def load(name: str):
-    """이름으로 읽는다. 형식이 다르면 None(열지 않는다)."""
+    """이름으로 읽는다. 형식이 다르면 None(열지 않는다).
+    옛 키(반복 그룹 from / to)는 from_block / to_block 으로 바꿔 읽는다."""
+    from .recipe import upgrade
     if not valid_name(name):
         return None
     data = read_json(path_of(name))
     if not isinstance(data, dict) or data.get("format") != DEV.RECIPE_FORMAT:
         return None
-    return data
+    return upgrade(data)
 
 
 def save(name: str, recipe: dict) -> bool:

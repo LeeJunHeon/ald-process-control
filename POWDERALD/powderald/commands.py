@@ -86,8 +86,36 @@ async def handle_command(data: dict, ws=None):
         await push_notice(f"알 수 없는 명령입니다: {cmd}", "warn", ws)
         return
     if code == A.CMD_ABORT and state.runner:
-        state.runner.note_abort()
-    await _send_plc(code, ws)
+        await _abort(ws)
+        return
+    result = await _send_plc(code, ws)
+    if code == A.CMD_STOP_AFTER_CYCLE and result == A.RESULT_OK and state.runner:
+        state.runner.note_stop_after_cycle()
+
+
+async def _abort(ws):
+    """즉시 중단. ★ '운전자 중단'은 PLC 결과가 0(처리됨)이고 보낼 때 공정 중이었을 때만 적는다 —
+    이미 끝났거나 안전 정지된 뒤에 누른 중단이 끝 기록(정상 종료·안전 정지 사유)을 덮지 않게."""
+    runner, link = state.runner, state.link
+
+    async def sender():
+        # 상태 영역은 최대 한 주기 늦다 — 보내기 직전에 장비 상태를 새로 읽는다
+        try:
+            cur = (await link.client.read_holding(A.D_STATE, 1))[0]
+        except Exception:  # noqa: BLE001
+            cur = link.status[A.D_STATE]
+        if cur not in RUNNING_STATES:
+            return {"refused": True, "text": "진행 중인 공정이 없습니다 (이미 끝났습니다)"}
+        runner.abort_begin()
+        done = False
+        try:
+            result, text = await link.send_command(A.CMD_ABORT)
+            done = result == A.RESULT_OK
+        finally:
+            runner.abort_result(done)
+        return {"result": result, "text": text}
+
+    await _send_plc(A.CMD_ABORT, ws, sender=sender)
 
 
 # ===================== PLC 명령 =====================
@@ -234,7 +262,7 @@ def _running() -> bool:
 # ===================== 레시피 =====================
 async def _cmd_recipe_validate(d, ws):
     """편집할 때마다 불린다 — 계산·검증은 서버 한 곳에서만 한다."""
-    rec = d.get("recipe") or {}
+    rec = R.upgrade(d.get("recipe") or {})
     res = R.validate(state.cfg, rec)
     await manager.send_to(ws, {
         "type": "recipe_check", "check": res,
@@ -257,8 +285,13 @@ async def _cmd_recipe_load(d, ws):
 
 
 async def _cmd_recipe_save(d, ws):
-    name = (d.get("name") or "").strip()
-    rec = d.get("recipe") or {}
+    name = d.get("name") if isinstance(d.get("name"), str) else ""
+    name = name.strip()
+    # 저장은 새 키로만 — 옛 키(반복 그룹 from / to)는 여기서 바꾼다
+    rec = R.upgrade(d.get("recipe") or {})
+    if not isinstance(rec, dict):
+        await push_notice("레시피 형식이 올바르지 않습니다", "warn", ws)
+        return
     if not storage.valid_name(name):
         await push_notice("레시피 이름에 쓸 수 없는 문자가 있습니다", "warn", ws)
         return
@@ -560,6 +593,18 @@ async def _cmd_manual_mfc(d, ws):
                     sender=sender)
 
 
+def _tc_comm_ok(h) -> bool:
+    """그 채널 온도조절기 국번의 통신 정상 비트(D00054)."""
+    link = state.link
+    if not (link and link.connected):
+        return False
+    station = int(h.get("station") or ((int(h["ch"]) - 1) // 4 + 1))
+    return A.bit(link.status[A.D_TC_COMM], station - 1)
+
+
+TC_NO_COMM_TEXT = "온도조절기 통신이 없어 PLC 과온 감시가 동작하지 않습니다 — 전원을 켤 수 없습니다"
+
+
 def _ot_latched() -> bool:
     link = state.link
     return bool(link and link.connected and A.bit(link.status[A.D_ALARM0], A.ALM0_OT))
@@ -575,6 +620,7 @@ async def _cmd_manual_heater(d, ws):
     sv_changes = {}
     pw_changes = {}
     named = []
+    no_comm_sv = []
     for h in state.cfg.get("heaters") or []:
         ch = h["ch"]
         key = str(ch)
@@ -594,6 +640,8 @@ async def _cmd_manual_heater(d, ws):
                 return
             sv_changes[ch] = heater_raw(fv)
             named.append(f"CH{ch}={fv:g}℃")
+            if not _tc_comm_ok(h):
+                no_comm_sv.append(f"CH{ch}")
         if key in power or ch in power:
             on = bool(power.get(key, power.get(ch)))
             bit = 1 << (ch - 1)
@@ -604,6 +652,11 @@ async def _cmd_manual_heater(d, ws):
                 #   감시 없는 히터를 켜지 않도록 PC 가 막는다.
                 await push_notice(f"CH{ch} 는 과온 한계가 정해지지 않아 켤 수 없습니다 — "
                                   f"설정에서 max_c 를 넣으세요", "warn", ws)
+                return
+            if on and not _tc_comm_ok(h):
+                # ★ PLC 과온 감시(현재값 > 한계)는 온도조절기 통신으로 읽은 현재값이 있어야 동작한다.
+                #   통신이 없는 채널은 하드웨어 과온 스위치 말고 보호가 없다.
+                await push_notice(f"CH{ch}: {TC_NO_COMM_TEXT}", "warn", ws)
                 return
             if on and _ot_latched():
                 await push_notice("과온 알람이 래치돼 있어 히터를 켤 수 없습니다 — "
@@ -631,8 +684,13 @@ async def _cmd_manual_heater(d, ws):
         box.update(r)
         return r
 
-    await _send_plc(A.CMD_HEATER_APPLY, ws, what="히터 적용 (" + " ".join(named) + ")",
-                    sender=sender)
+    res = await _send_plc(A.CMD_HEATER_APPLY, ws, what="히터 적용 (" + " ".join(named) + ")",
+                          sender=sender)
+    if res == A.RESULT_OK and no_comm_sv:
+        why = (f"{' · '.join(no_comm_sv)} 설정 온도는 PLC 에 기록했지만 온도조절기 통신이 없어 "
+               f"온도조절기에 전달되지 않았습니다")
+        await push_notice(why, "warn", ws)
+        await push_log(why, "warn")
     if box.get("reverted"):
         await push_log("히터 적용이 거절돼 D01010·D01012~ 를 이전 값으로 되돌렸습니다", "warn")
 
@@ -738,7 +796,15 @@ async def _cmd_manual_o3(d, ws):
         except (TypeError, ValueError):
             v = 0.0
         if v <= 0:
-            await push_notice("O3 설정을 먼저 넣으세요 (0 이면 PLC 가 발생기를 막습니다)",
+            await push_notice("O3 설정을 먼저 넣으세요 (0 이면 발생기가 켜져도 O3 가 나오지 않습니다)",
+                              "warn", ws)
+            return
+        # ★ 래더: O3 한계(PRM_O3_MAX)가 0 이면 O3 허가(인터락 b9)가 나지 않아 발생기가 켜지지 않는다.
+        #   설정값이 아니라 PLC 에서 되읽은 값을 본다.
+        back = state.link.prm_readback.get(A.D_PRM_O3_MAX) if state.link else None
+        if not back:
+            await push_notice("PLC 의 O3 한계(PRM_O3_MAX)가 0 이라 O3 허가가 나지 않습니다 — "
+                              "설정의 params.o3_max 를 넣고 PLC 파라미터가 맞춰졌는지 확인하세요",
                               "warn", ws)
             return
         _cancel_o3_timer()

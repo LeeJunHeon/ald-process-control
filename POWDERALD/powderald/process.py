@@ -51,7 +51,11 @@ class ProcessRunner:
         self.ended_at = 0.0
         self.last_result = ""
         self._was_running = False
-        self._abort_sent = False
+        self._abort_sent = False        # 즉시 중단이 처리됨(결과 0)이고 보낼 때 공정 중이었다
+        self._abort_pending = False     # 즉시 중단을 보내는 중(결과를 아직 모른다)
+        self._end_deferred = None       # 그동안 본 종료 — 결과가 오면 기록한다
+        self._stop_reserved = False     # 사이클 후 정지 예약(명령 4 처리됨)
+        self._last_pos = None           # 공정 중 마지막으로 본 (블록, 스텝, 사이클)
         self._cancel = False
 
     # ===================== 시작 조건 =====================
@@ -106,6 +110,14 @@ class ProcessRunner:
             out.append({"key": "o3", "label": "O3 허가", "ok": ok,
                         "detail": "준비됨" if ok else "O3 라인을 먼저 켜세요",
                         "action": None if ok else "o3_on"})
+            # ★ 래더의 공정 시작 조건은 O3 허가(바이패스 펌프·IV-B·5 s·알람 없음·O3 한계 > 0)만 보고
+            #   발생기 요청은 보지 않는다 — 발생기만 꺼진 채 시작하면 O3 없이 돈다. O3 를 쓰는
+            #   레시피면 발생기 출력(보조 출력 b9)을 시작 조건에 넣는다.
+            if _uses_o3(self.recipe):
+                gen = A.bit(s[A.D_AUX_OUT], A.AUX_O3_GEN)
+                out.append({"key": "o3_gen", "label": "O3 발생기 켜짐", "ok": gen,
+                            "detail": "켜짐" if gen else "레시피가 O3 를 씁니다 — [O3 라인 켜기]로 발생기를 켜세요",
+                            "action": None if gen else "o3_on"})
 
         res = st.recipe_check or {}
         out.append({"key": "recipe", "label": "레시피 검증",
@@ -162,7 +174,9 @@ class ProcessRunner:
         self.recipe = data
         self.recipe_name = name
         self.state.recipe_check = R.validate(self.state.cfg, data)
-        self.table = R.to_plc_words(self.state.cfg, self.state.conv, data)
+        # 형식이 틀린 레시피는 표를 만들지 않는다(검증 오류로 시작·올리기가 막힌다)
+        self.table = (None if R.shape_errors(data)
+                      else R.to_plc_words(self.state.cfg, self.state.conv, data))
         return True, ""
 
     def estimate(self) -> dict:
@@ -263,6 +277,10 @@ class ProcessRunner:
         st.manual_unlock_until = 0.0
         self._cancel = False
         self._abort_sent = False
+        self._abort_pending = False
+        self._end_deferred = None
+        self._stop_reserved = False
+        self._last_pos = None
         self.last_result = ""
 
         # --- 스냅샷 ---
@@ -318,11 +336,20 @@ class ProcessRunner:
         if mism:
             await push_log(f"공정 시작 취소 — {mism}", "err")
             return False, mism
+        # ★ 스냅샷은 명령 1 을 보내기 직전에 세운다 — 샘플링 루프가 결과보다 먼저 '공정 중'을 보면
+        #   데이터 로그가 앞 공정의 이름·레시피로 열린다. 거절되면 되돌린다.
+        prev_run = self.run
+        self.run = snap
         no = st.link._cmd_no
-        result, text = await st.link.send_command(A.CMD_PROCESS_START)
+        try:
+            result, text = await st.link.send_command(A.CMD_PROCESS_START)
+        except BaseException:
+            self.run = prev_run
+            raise
         logger.command("공정 시작", no, text, "local")
+        if result != A.RESULT_OK:
+            self.run = prev_run
         if result == A.RESULT_OK:
-            self.run = snap
             self.started_at = time.time()
             # ★ '공정 중'으로 본 적이 있다는 표시(_was_running)는 여기서 세우지 않는다.
             #   PLC 상태는 100 ms 주기로 읽어 오므로, 명령이 처리된 직후에도 아직 '대기'로
@@ -335,7 +362,7 @@ class ProcessRunner:
             miss = [c["label"] for c in self.start_checks() if not c["ok"]]
             detail = f"{text} — 빠진 조건: {' · '.join(miss) if miss else '인터락 확인'}"
         elif result == A.RESULT_RECIPE:
-            detail = f"{text} — PLC 표 검사 불합격 (합계·개수 확인)"
+            detail = f"{text} — {await self._recipe_refusal(tbl)}"
         await push_log(f"공정 시작 거절 — {detail}", "err")
         return False, detail
 
@@ -352,6 +379,23 @@ class ProcessRunner:
             return (f"PLC 레시피 표가 올린 것과 다릅니다 (합계 {head[0]:#06x}/{tbl['checksum']:#06x}, "
                     f"통과 {head[1]}, 번호 {no}/{tbl['number']}) — 시작하지 않았습니다")
         return ""
+
+    async def _recipe_refusal(self, tbl) -> str:
+        """시작 결과 3(표 검사 실패)의 원인 — 알람0 b13 과 D00028/D00029 로 나눈다.
+        표 머리(개수·합계)가 틀리면 PLC 의 1 s 검사가 불합격(D00029 = 0)이거나 합계가 다르고,
+        머리는 맞는데 첫 블록·그룹·스텝 항목이 틀리면 시작 때 적재에서 거절된다."""
+        link = self.state.link
+        try:
+            head = await link.client.read_holding(A.D_RECIPE_SUM_PLC, 2)
+            a0 = (await link.client.read_holding(A.D_ALARM0, 1))[0]
+        except Exception as e:  # noqa: BLE001
+            return f"PLC 표 검사 불합격 (원인을 읽지 못했습니다: {logger.clean(e, 80)})"
+        alarm = " · 알람 '레시피 표 검증 실패'" if A.bit(a0, A.ALM0_RECIPE) else ""
+        if head[1] != 1 or head[0] != (tbl["checksum"] & 0xFFFF):
+            return (f"PLC 표 머리(개수 · 합계) 검사 불합격 — 합계 PLC {head[0]:#06x} / "
+                    f"올린 것 {tbl['checksum']:#06x}, 통과 {head[1]}{alarm}")
+        return (f"PLC 가 첫 블록 · 그룹 · 스텝 항목을 받지 않았습니다(표 머리는 통과){alarm} — "
+                f"블록 첫/끝 스텝 · 그룹 범위 · 반복 값을 확인하세요")
 
     def _wait_broken(self):
         """대기 중 그만둬야 하는 사유. 없으면 빈 문자열."""
@@ -385,38 +429,91 @@ class ProcessRunner:
             self._was_running = True
             if not self.started_at:
                 self.started_at = time.time()
+            # ★ 마지막 위치는 공정 중에 본 값으로 — 끝난 뒤의 상태 영역은 래더에서 정상 완료면
+            #   '블록 N+1' 이 되고, 다른 끝에서도 다음 시작 전까지 남은 값일 뿐이다.
+            if s[A.D_SEQ_BLOCK]:
+                self._last_pos = (s[A.D_SEQ_BLOCK], s[A.D_SEQ_STEP],
+                                  A.dword(s[A.D_SEQ_BLOCK_PASS], s[A.D_SEQ_BLOCK_PASS + 1]))
             return
         if self._was_running:
             self._was_running = False
             self.ended_at = time.time()
-            took = self.ended_at - (self.started_at or self.ended_at)
-            where = (f"블록 {s[A.D_SEQ_BLOCK]} · 스텝 {s[A.D_SEQ_STEP]} · "
-                     f"사이클 {A.dword(s[A.D_SEQ_BLOCK_PASS], s[A.D_SEQ_BLOCK_PASS + 1])}")
-            self.last_result = self.end_result(s)
-            push_log_sync("ok" if self.last_result == "정상 종료" else "warn",
-                          f"공정 {self.last_result} — {self.active_name or ''} · "
-                          f"걸린 시간 {_hms(int(took * 1000))} · 마지막 위치 {where}")
-            self.started_at = 0.0
-            self._abort_sent = False
+            end = (list(s), self.ended_at, push_log_sync)
+            if self._abort_pending:
+                # 즉시 중단 결과를 아직 모른다 — 결과가 오면(abort_result) 기록한다
+                self._end_deferred = end
+                return
+            self._finish(*end)
+
+    def _finish(self, s, ended_at, push_log_sync):
+        took = ended_at - (self.started_at or ended_at)
+        self.last_result = self.end_result(s)
+        push_log_sync("ok" if self.last_result == "정상 종료" else "warn",
+                      f"공정 {self.last_result} — {self.active_name or ''} · "
+                      f"걸린 시간 {_hms(int(took * 1000))} · 마지막 위치 {self.where_text()}")
+        self.started_at = 0.0
+        self._abort_sent = False
+        self._stop_reserved = False
+        self._end_deferred = None
+
+    def where_text(self) -> str:
+        if not self._last_pos:
+            return "(공정 중 위치를 보지 못함)"
+        b, st, c = self._last_pos
+        return f"블록 {b} · 스텝 {st} · 사이클 {c}"
+
+    def _block_count(self) -> int:
+        tbl = self.active_table or {}
+        if tbl.get("block_count"):
+            return int(tbl["block_count"])
+        rec = self.active_recipe or {}
+        return len(rec.get("blocks") or [])
 
     def end_result(self, s) -> str:
-        """끝났을 때의 결과. ★ '정상 종료'는 시퀀서 상태 6(완료)일 때만이다 —
-        그 밖은 모두 '중단'이고 사유를 붙인다(이벤트 로그·데이터 로그 메타·목록이 이 값을 쓴다)."""
+        """끝났을 때의 결과(이벤트 로그·데이터 로그 메타·목록이 이 값을 쓴다).
+
+        래더: 정상 완료는 SEQ_BLOCK 을 블록 수 + 1 로 올린 뒤 끝낸다(D00021 > 블록 수).
+        사이클 후 정지는 블록 끝으로 가지 않고 끝낸다(D00021 ≤ 블록 수). 둘 다 시퀀서 6.
+        ★ 안전 정지(장비 상태 6)가 운전자 중단보다 앞선다 — 중단을 누른 순간 비상정지가 났다면
+          원인은 비상정지다."""
         seq, st = s[A.D_SEQ_STATE], s[A.D_STATE]
-        if self._abort_sent:
-            return "중단 (운전자 중단)"
-        if seq == 6:
-            return "정상 종료"
         if st == A.STATE_SAFE_STOP:
             crit = [a["name"] for a in self.state.alarms.list() if a["crit"]]
             return "중단 (안전 정지 — " + (" · ".join(crit) if crit else "중대 알람 이름 없음") + ")"
+        if seq == 6:
+            nb = self._block_count()
+            blk = s[A.D_SEQ_BLOCK]
+            if not nb or blk > nb:
+                return "정상 종료"
+            cyc = A.dword(s[A.D_SEQ_BLOCK_PASS], s[A.D_SEQ_BLOCK_PASS + 1])
+            if self._last_pos and self._last_pos[0] == blk:
+                cyc = self._last_pos[2] or cyc
+            blocks = (self.active_recipe or {}).get("blocks") or []
+            rep = (f"/{int(blocks[blk - 1].get('repeat') or 1)}"
+                   if 1 <= blk <= len(blocks) else "")
+            return f"사이클 후 정지 (블록 {blk} · 사이클 {cyc}{rep})"
+        if self._abort_sent:
+            return "중단 (운전자 중단)"
         if seq == 8:
             return "중단 (PLC 중단)"
         return "중단 (끝 확인 안 됨)"
 
-    def note_abort(self):
-        """즉시 중단 명령을 보냈다는 표시(종료 사유 구분용)."""
-        self._abort_sent = True
+    # ---- 즉시 중단 · 사이클 후 정지 (명령 결과를 보고 표시한다) ----
+    def abort_begin(self):
+        """즉시 중단을 보내기 직전(보낼 때 공정 중인 것을 확인한 뒤)."""
+        self._abort_pending = True
+
+    def abort_result(self, done: bool):
+        """즉시 중단 결과. 처리됨(0)일 때만 '운전자 중단'으로 적는다 — 거절·통신 오류면 적지 않는다."""
+        self._abort_pending = False
+        if done:
+            self._abort_sent = True
+        if self._end_deferred:
+            self._finish(*self._end_deferred)
+
+    def note_stop_after_cycle(self):
+        """사이클 후 정지가 처리됨 — 남은 시간은 이번 사이클만(일시정지 중 예약 포함)."""
+        self._stop_reserved = True
 
     def progress(self) -> dict:
         """화면이 그대로 쓰는 진행 정보."""
@@ -444,6 +541,7 @@ class ProcessRunner:
             "paused": code == A.STATE_PAUSE,
             "prep": s[A.D_SEQ_STATE] == 3,
             "last_result": self.last_result,
+            "stop_reserved": running and (code == A.STATE_STOPPING or self._stop_reserved),
             "elapsed_s": int(time.time() - self.started_at) if self.started_at else 0,
         }
         if not running:
@@ -458,7 +556,8 @@ class ProcessRunner:
         if rec and running:
             pos = {"block": s[A.D_SEQ_BLOCK], "step": s[A.D_SEQ_STEP], "cycle": cycle,
                    "group_pass": s[A.D_SEQ_GROUP_PASS], "step_elapsed_ms": step_ms,
-                   "paused": out["paused"]}
+                   "paused": out["paused"],
+                   "stop_after_cycle": code == A.STATE_STOPPING or self._stop_reserved}
             out["remaining_ms"] = R.remaining_ms(st.cfg, rec, pos)
             out["total_ms"] = R.total_ms(st.cfg, rec)
             out["eta"] = time.strftime("%H:%M:%S",
@@ -510,6 +609,19 @@ class ProcessRunner:
 
 
 # ===================== 작은 도우미 =====================
+def _uses_o3(recipe) -> bool:
+    """O3 설정이 0 보다 큰 블록이 있는가(Powder)."""
+    if not (DEV.HAS_O3 and isinstance(recipe, dict)):
+        return False
+    for b in recipe.get("blocks") or []:
+        try:
+            if isinstance(b, dict) and float(b.get("o3") or 0) > 0:
+                return True
+        except (TypeError, ValueError):
+            continue
+    return False
+
+
 def _torr(v) -> str:
     if v is None:
         return "—"
