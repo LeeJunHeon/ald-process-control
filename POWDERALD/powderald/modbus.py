@@ -32,6 +32,10 @@ class ModbusError(Exception):
     """프로토콜 오류(예외 응답·프레임 불일치). 연결 자체는 살아 있을 수 있다."""
 
 
+class WriteBlocked(ModbusError):
+    """쓰기가 막혀 있다(다른 장비의 PLC·장비 ID 확인 전). 링크의 마지막 방어선."""
+
+
 class ModbusTimeout(Exception):
     """응답 시간 초과. 재연결 대상이다."""
 
@@ -46,6 +50,8 @@ class ModbusClient:
         self._writer = None
         self._tid = 0
         self._lock = asyncio.Lock()
+        # 참이면 모든 쓰기를 막는다(PLC 링크가 장비 ID 판정으로 정한다)
+        self.write_guard = None
 
     # ===================== 연결 =====================
     @property
@@ -140,8 +146,13 @@ class ModbusClient:
             left -= n
         return out
 
+    def _check_write(self):
+        if self.write_guard is not None and self.write_guard():
+            raise WriteBlocked("쓰기 차단 — 장비 ID 가 맞지 않거나 아직 확인하지 않았습니다")
+
     async def write_single(self, addr: int, value: int) -> None:
         """FC06."""
+        self._check_write()
         v = int(value) & 0xFFFF
         pdu = struct.pack(">BHH", FC_WRITE_SINGLE, int(addr), v)
         body = await self._request(pdu)
@@ -152,6 +163,7 @@ class ModbusClient:
 
     async def write_multiple(self, addr: int, values) -> None:
         """FC16. 120 개씩 나눠 쓴다(레시피 표 1120 워드가 여기로 간다)."""
+        self._check_write()
         vals = [int(v) & 0xFFFF for v in values]
         if not vals:
             return

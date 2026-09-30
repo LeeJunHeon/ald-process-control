@@ -118,6 +118,15 @@
   var STATE_LEVEL = { 0: 'off', 1: 'off', 2: 'ok', 3: 'ok', 4: 'warn', 5: 'warn', 6: 'stop' };
 
   function applyHeader(s, t) {
+    var band = bind('idBand');
+    if (band) {
+      var plc0 = t.plc || {};
+      band.hidden = plc0.id_state !== 'wrong';
+      if (plc0.id_state === 'wrong') {
+        band.textContent = '다른 장비의 PLC 입니다 — 주소를 확인하세요 · 모든 조작을 막았습니다 (읽은 ID ' +
+          idText(plc0.device_id) + ' / 이 장비 ' + idText(plc0.expected_id) + ')';
+      }
+    }
     var pill = bind('stateChip');
     if (pill) {
       if (!t.plc || !t.plc.connected) {
@@ -159,6 +168,13 @@
       plc.connected && plc.rtt_ms != null ? '응답 ' + plc.rtt_ms + ' ms' : '',
       t.scan_max_ms != null ? '최대 스캔 ' + t.scan_max_ms + ' ms' : ''
     ].filter(Boolean).join(' · '));
+  }
+
+  function idText(v) {
+    if (v == null) return fmt.DASH;
+    var n = Number(v) & 0xFFFF;
+    var c = function (x) { return x > 32 && x < 127 ? String.fromCharCode(x) : '?'; };
+    return '0x' + n.toString(16).toUpperCase().padStart(4, '0') + " '" + c(n >> 8) + c(n & 0xFF) + "'";
   }
 
   /* ===================== 토스트 ===================== */
@@ -315,7 +331,12 @@
         if (lastState.live) mod.update(lastState.live);
       } catch (e) { console.error('late render ' + name, e); }
     },
-    canOperate: function () { return !!(lastState && (lastState.access || {}).local); },
+    // ★ 다른 장비의 PLC 에 붙어 있으면 이 PC 에서도 조작하지 못한다
+    canOperate: function () {
+      if (!(lastState && (lastState.access || {}).local)) return false;
+      return (((lastState.live || {}).plc || {}).id_state) !== 'wrong';
+    },
+    idText: idText,
     plcOk: function () {
       var t = (lastState || {}).live || {};
       return !!(t.plc && t.plc.connected);

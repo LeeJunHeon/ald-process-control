@@ -23,6 +23,9 @@ DEFAULT_PORT = 8101                 # 웹(화면) 포트
 DEFAULT_SIM_PORT = 15101            # 내장 시뮬레이터 포트
 DEFAULT_SIDE = "left"               # 기본 창 위치
 
+# 장비 ID — PLC 가 D00019 에 매 스캔 쓰는 값('PW'). PC 가 연결 직후 이것부터 확인한다.
+DEVICE_ID = 0x5057
+
 MUTEX_NAME = "VANAM.POWDERALD.Control"
 APP_USER_MODEL_ID = "VANAM.POWDERALD.Control"
 EXE_NAME = "POWDERALD_Control"

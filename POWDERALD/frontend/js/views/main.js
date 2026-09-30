@@ -369,13 +369,16 @@
   function updateLocks(s, t, conn) {
     var local = core.canOperate();
     var msg = '';
-    if (!local) msg = '🔒 원격 접속은 보기 전용입니다';
+    var wrong = ((t.plc || {}).id_state === 'wrong');
+    if (wrong) msg = '🔒 다른 장비의 PLC 입니다 — 주소를 확인하세요';
+    else if (!core.canOperate()) msg = '🔒 원격 접속은 보기 전용입니다';
     else if (!conn) msg = '🔒 PLC 연결이 끊겨 명령을 보낼 수 없습니다';
 
     // ★ 공정 단추는 updateProcess 가 상태별로 따로 판단한다 — 여기서 덮어쓰지 않는다.
     Array.prototype.forEach.call(d.querySelectorAll('.cmdbar [data-cmd]'), function (b) {
       var c = b.dataset.cmd;
-      if (c === 'exit') { b.disabled = !local; return; }
+      // 종료는 다른 장비의 PLC 여도 된다(이 PC 에서만)
+      if (c === 'exit') { b.disabled = !((core.state || {}).access || {}).local; return; }
       b.disabled = !local || !conn;
     });
     core.setText('lockMsg', msg);

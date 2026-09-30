@@ -92,7 +92,7 @@ async def _send_plc(code: int, ws, args: dict = None, what: str = "", sender=Non
 
     ok, why = precheck(code)
     if not ok:
-        await push_notice(f"{name}: {why}", "warn", ws)
+        await push_notice(f"{name}: {why}", "warn" if "다른 장비" not in why else "err", ws)
         logger.write("warn", f"명령 {name} 사전 거절 — {why}")
         return None
 
@@ -147,6 +147,8 @@ def precheck(code: int):
     link = state.link
     if not (link and link.connected):
         return False, "PLC 에 연결되어 있지 않습니다"
+    if getattr(link, "id_state", "") == "wrong":
+        return False, "다른 장비의 PLC 입니다 — 주소를 확인하세요 (모든 조작을 막았습니다)"
     s = link.status
     st = s[A.D_STATE]
     ilk = s[A.D_INTERLOCK]

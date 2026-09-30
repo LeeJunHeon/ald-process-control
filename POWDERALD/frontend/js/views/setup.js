@@ -99,6 +99,7 @@
       panel('PLC 연결', '<span class="chip warn">바꾸면 다시 시작해야 반영</span>',
         tbl(row('plc.simulate') + row('plc.host') + row('plc.port') + row('plc.unit_id') +
             row('plc.timeout_ms', 'ms') + row('plc.poll_ms', 'ms') + row('plc.heartbeat_ms', 'ms') +
+            '<tr><td class="l">장비 ID (D00019)</td><td class="mono" data-bind="idCell">—</td></tr>' +
             '<tr><td class="l">원격 접속 조작 금지 (access.local_only)</td><td class="mono">' +
             ((c.access || {}).local_only === false ? 'false' : 'true') + ' <span class="dim">읽기 전용</span></td></tr>') +
         (plc.simulate ? '<div class="hint warn" style="margin-top:6px">시뮬레이터 모드 — 실장비로 바꾸면 저장 전에 한 번 더 확인합니다.</div>' : '')) +
@@ -173,6 +174,16 @@
     core.setText('dgRtt', conn && t.plc.rtt_ms != null ? t.plc.rtt_ms + ' ms' : fmt.DASH);
     core.setText('dgScan', conn && t.scan_max_ms != null ? t.scan_max_ms + ' ms' : fmt.DASH);
     core.setText('dgHb', !conn ? fmt.DASH : (t.plc.hb_ok ? '정상' : '멈춤'));
+    var ic = core.bind('idCell');
+    if (ic) {
+      var p = t.plc || {};
+      ic.innerHTML = p.config_error ? core.chip('주소 없음 — 연결 안 함', 'stop', p.config_error)
+        : !conn ? fmt.DASH
+          : p.id_state === 'ok' ? core.chip(core.idText(p.device_id) + ' 일치', 'ok')
+            : p.id_state === 'unset' ? core.chip('0 — PLC 에 ID 가 아직 없음', 'warn', '동작은 막지 않습니다')
+              : p.id_state === 'wrong' ? core.chip(core.idText(p.device_id) + ' 다른 장비', 'stop')
+                : fmt.DASH;
+    }
     var body = core.bind('prmBody');
     var rows = (t.plc || {}).prm || [];
     if (body && rows.length) {
@@ -359,6 +370,10 @@
       }).join('') + '</ul>';
     }
     if (m.restart) h += '<div class="hint warn">PLC 연결 설정은 프로그램을 다시 시작해야 반영됩니다.</div>';
+    if (m.host_changed) {
+      h += '<div class="hint warn">PLC 주소가 바뀝니다 — 다시 시작하면 연결 때 장비 ID 를 확인합니다 ' +
+        '(이 장비 ' + core.esc(m.device_id) + '). 다른 장비의 PLC 면 아무것도 쓰지 않습니다.</div>';
+    }
     if (m.sim_to_real) {
       h += '<div class="cg-sec stop">⚠ 시뮬레이터 → 실장비 전환</div><div class="hint warn">다시 시작하면 ' +
         '실제 PLC 에 연결해 파라미터를 씁니다. 주소·포트가 이 장비의 PLC 인지 확인하세요.</div>';

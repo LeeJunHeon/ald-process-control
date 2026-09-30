@@ -24,7 +24,7 @@ DEFAULTS = {
     "server": {"host": "127.0.0.1", "port": DEV.DEFAULT_PORT},
     "window": {"side": DEV.DEFAULT_SIDE},
     "plc": {
-        "host": "192.168.10.11", "port": 502, "unit_id": 1,
+        "host": "", "port": 502, "unit_id": 1,     # ★ 주소 기본값은 없다(다른 장비에 붙지 않게)
         "timeout_ms": 1000, "poll_ms": 100, "heartbeat_ms": 500,
         "simulate": True, "sim_port": DEV.DEFAULT_SIM_PORT, "sim_speed": 5,
     },
@@ -149,8 +149,9 @@ def validate(cfg: dict) -> list:
         p.append(("warn", "window.side 는 left 또는 right 여야 합니다"))
 
     plc = cfg.get("plc") or {}
-    if not plc.get("simulate") and not plc.get("host"):
-        p.append(("err", "plc.host 가 비어 있습니다 (시뮬레이터가 아니면 주소가 필요합니다)"))
+    if not plc.get("simulate") and not str(plc.get("host") or "").strip():
+        p.append(("err", "plc.host 가 비어 있습니다 — 시뮬레이터가 아니면 이 장비 PLC 주소가 필요합니다 "
+                         "(비어 있으면 연결하지 않습니다)"))
     for key, lo, hi in (("poll_ms", 20, 5000), ("heartbeat_ms", 100, 5000),
                         ("timeout_ms", 100, 10000)):
         try:

@@ -25,6 +25,9 @@ D_INPUT0 = 8
 D_INPUT1 = 9
 D_VALVE_OUT = 10                    # 공정 밸브 실제 출력
 D_AUX_OUT = 14                      # 보조 출력 실제
+D_DEVICE_ID = 19                    # 장비 ID (PLC 가 매 스캔 쓴다 — PEALD 0x5045 'PE' / Powder 0x5057 'PW')
+                                    # ★ 두 PLC 는 주소표가 같다. 주소를 잘못 넣으면 명령이 다른 장비로 간다 —
+                                    #   PC 는 연결 직후 이 값을 먼저 확인하고, 맞지 않으면 아무것도 쓰지 않는다.
 
 D_SEQ_STATE = 20                    # 시퀀서 상태 (아래 SEQ_*)
 D_SEQ_BLOCK = 21                    # 블록 (1부터)

@@ -23,6 +23,9 @@ DEFAULT_PORT = 8201                 # 웹(화면) 포트
 DEFAULT_SIM_PORT = 15201            # 내장 시뮬레이터 포트
 DEFAULT_SIDE = "right"              # 기본 창 위치
 
+# 장비 ID — PLC 가 D00019 에 매 스캔 쓰는 값('PE'). PC 가 연결 직후 이것부터 확인한다.
+DEVICE_ID = 0x5045
+
 MUTEX_NAME = "VANAM.PEALD.Control"          # 단일 실행 뮤텍스
 APP_USER_MODEL_ID = "VANAM.PEALD.Control"   # 작업표시줄에서 두 프로그램을 따로 묶는다
 EXE_NAME = "PEALD_Control"

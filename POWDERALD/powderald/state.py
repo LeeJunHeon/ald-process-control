@@ -171,6 +171,11 @@ class State:
                 "addr": link.addr_text if link else "",
                 "prm_mismatch": list(link.prm_mismatch) if link else [],
                 "prm": self.prm_table() if conn else [],
+                # 장비 ID — wrong 이면 화면 머리에 빨간 띠 + 모든 조작 잠금
+                "id_state": getattr(link, "id_state", "") if conn else "",
+                "device_id": getattr(link, "device_id", None) if conn else None,
+                "expected_id": DEV.DEVICE_ID,
+                "config_error": getattr(link, "config_error", "") if link else "",
             },
             "alarms": self.alarms.list(),
             "alarm_new": bool(conn and link.status[A.D_ALARM_NEW]),

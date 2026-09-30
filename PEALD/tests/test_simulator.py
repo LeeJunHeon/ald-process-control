@@ -454,3 +454,88 @@ async def test_scenarios_never_write_pc_area(link):
     s.base_pressure = 760.0
     await asyncio.sleep(0.3)
     assert pc_area(s) == before, "PLC 가 PC 영역을 바꿨다"
+
+
+
+# ===================== v0.4.1 출력 단계 (래더 P60) =====================
+async def pumped_permit(lk, s):
+    await lk.send_command(A.CMD_PUMP_START)
+    assert await wait_until(lambda: A.bit(s.reg[A.D_INTERLOCK], A.ILK_VALVE_OK), 20)
+
+
+async def test_valve_output_needs_valve_permit(link):
+    lk, s, _cfg = link
+    await at_vacuum(lk, s)
+    await manual(lk, 0x0004)
+    await asyncio.sleep(0.2)
+    assert s.man_valve == 0x0004 and s.reg[A.D_VALVE_OUT] == 0, "허가 없이 밸브가 나갔다"
+    await pumped_permit(lk, s)
+    assert await wait_until(lambda: s.reg[A.D_VALVE_OUT] == 0x0004, 2)
+    s.set_fault("emo", True)                      # 펌프가 멈추고 허가가 빠진다
+    assert await wait_until(lambda: s.reg[A.D_VALVE_OUT] == 0, 2)
+
+
+async def test_both_request_zeroes_all_valves(link):
+    """전구체+반응물 동시 요청이면 다른 밸브까지 모든 출력 0 + 알람0 b15."""
+    lk, s, _cfg = link
+    await pumped_permit(lk, s)
+    other = next(v["bit"] for v in DEV.VALVES if v["bit"] not in
+                 DEV.PRECURSOR_VALVE_BITS + DEV.REACTANT_VALVE_BITS and not v.get("auto"))
+    pre, rea = 1 << DEV.PRECURSOR_VALVE_BITS[0], 1 << DEV.REACTANT_VALVE_BITS[0]
+    seen = []
+    await manual(lk, pre | rea | (1 << other))
+
+    def watch():
+        seen.append(s.reg[A.D_VALVE_OUT])
+        return (s.reg[A.D_ALARM0] >> A.ALM0_BOTH_OPEN) & 1
+
+    assert await wait_until(watch, 3, step=0.01)
+    assert all(v == 0 for v in seen), f"동시 요청인데 밸브가 나갔다: {[hex(v) for v in seen if v]}"
+
+
+async def test_pump_start_clears_vent_request(link):
+    """펌핑 시작은 벤트 요청을 지운다 — VV 가 바로 닫히고 IV-E 가 열린다."""
+    lk, s, _cfg = link
+    await pumped_permit(lk, s)
+    await lk.send_command(A.CMD_VENT)
+    assert await wait_until(lambda: A.bit(s.reg[A.D_AUX_OUT], A.AUX_VV), 4)
+    r, _ = await lk.send_command(A.CMD_PUMP_START)
+    assert r == A.RESULT_OK
+    assert not s.vent_req
+    assert await wait_until(lambda: not A.bit(s.reg[A.D_AUX_OUT], A.AUX_VV), 0.5), "VV 가 닫히지 않았다"
+    assert await wait_until(lambda: A.bit(s.reg[A.D_AUX_OUT], A.AUX_IVE), 3), "IV-E 가 열리지 않았다"
+
+
+@pytest.mark.skipif(not DEV.HAS_O3, reason="O3 가 있는 장비만")
+async def test_pv_b_follows_generator_and_pv_r(link):
+    """발생기 운전 중 PV-R 요청이 없으면 PV-B 열림(허가 없어도), PV-R 을 요청하면 PV-B 닫힘."""
+    lk, s, _cfg = link
+    await at_vacuum(lk, s)                      # 대기압이면 PLC 가 PV-R 요청을 바로 지운다
+    s.write(A.D_PRM_O3_MAX, [16000])
+    pvb = 1 << DEV.valve_bit("PV-B")
+    pvr = 1 << DEV.valve_bit("PV-R")
+    lo_aux = (1 << A.AUX_BYPASS_PUMP) | (1 << A.AUX_IVB) | (1 << A.AUX_O3_GEN)
+    await lk.send_command(A.CMD_MANUAL_APPLY, {A.D_MANUAL_VALVE: [0, 0, 0, 0], A.D_MANUAL_AUX: lo_aux,
+                                               A.D_O3_SV: 1000})
+    assert await wait_until(lambda: s.o3_gen_on, 10), "발생기가 켜지지 않았다"
+    assert not A.bit(s.reg[A.D_INTERLOCK], A.ILK_VALVE_OK)
+    assert await wait_until(lambda: s.reg[A.D_VALVE_OUT] & pvb, 1), "PV-B 가 열리지 않았다"
+    await lk.send_command(A.CMD_MANUAL_APPLY, {A.D_MANUAL_VALVE: [pvr, 0, 0, 0], A.D_MANUAL_AUX: lo_aux,
+                                               A.D_O3_SV: 1000})
+    assert await wait_until(lambda: not (s.reg[A.D_VALVE_OUT] & pvb), 1), "PV-R 요청인데 PV-B 가 열려 있다"
+
+
+@pytest.mark.skipif(not DEV.HAS_RF, reason="RF 가 있는 장비만")
+async def test_rf_output_needs_rf_permit(link):
+    lk, s, _cfg = link
+    s.write(A.D_PRM_RF_MAX, [16000])
+    await lk.send_command(A.CMD_MANUAL_APPLY, {A.D_MANUAL_AUX: 1 << A.AUX_RF, A.D_RF_SV: 1000})
+    await asyncio.sleep(0.2)
+    assert s.man_aux & (1 << A.AUX_RF)
+    assert not A.bit(s.reg[A.D_INTERLOCK], A.ILK_RF_OK)
+    assert not A.bit(s.reg[A.D_AUX_OUT], A.AUX_RF), "RF 허가 없이 RF 가 켜졌다"
+
+
+async def test_simulator_publishes_device_id(link):
+    _lk, s, _cfg = link
+    assert await wait_until(lambda: s.reg[A.D_DEVICE_ID] == DEV.DEVICE_ID, 1)

@@ -199,8 +199,42 @@ async def test_manual_apply_reports_lost_bits_at_atmosphere(link):
     assert res["lost_valve"] == 0x0002
 
 
+class _FakeClient:
+    """읽을 때마다 정해 둔 값을 돌려주는 가짜 Modbus 클라이언트(시간 운에 기대지 않는 시험용)."""
+
+    def __init__(self, areas):
+        self.areas = areas
+        self.write_guard = None
+
+    async def read_holding(self, addr, count):
+        return list(self.areas[addr])[:count]
+
+
+async def test_periodic_compare_reason_rereads_status(cfg):
+    """★ 반영 비트가 준 것을 발견한 시점의 상태가 옛 값(안전 정지 요구 전)이어도 사유를 맞게 댄다 —
+    발견한 자리에서 상태 영역을 한 번 더 읽기 때문이다(PLC 는 같은 스캔에 둘 다 바꾼다)."""
+    from powderald.convert import Converters
+    from powderald.plclink import PlcLink
+    events = []
+    lk = PlcLink(cfg, Converters(cfg), on_event=lambda lvl, msg: events.append(msg))
+    stale = [0] * A.STATUS_COUNT
+    stale[A.D_DEVICE_ID] = DEV.DEVICE_ID
+    fresh = list(stale)
+    fresh[A.D_INTERLOCK] = 1 << A.ILK_SAFE_STOP_REQ
+    lk.status = stale                           # 마지막 주기 읽기 — 아직 안전 정지 요구 없음
+    applied = [0] * A.APPLIED_COUNT             # PLC 가 이미 PV-2 반영을 지웠다
+    lk.client = _FakeClient({A.APPLIED_BASE: applied, A.STATUS_BASE: fresh})
+    lk.id_state = "ok"
+    lk.write_ok = True
+    lk._seen = (0x0002, 0, lk._cmd_seq)
+    await lk._read_display()
+    msg = next(m for m in events if "수동 요청을 지웠습니다" in m)
+    assert "PV-2" in msg and "안전 정지 요구" in msg, msg
+    assert "사유 확인 필요" not in msg
+
+
 async def test_periodic_compare_logs_plc_clear(sim):
-    """명령이 없었는데 반영 비트가 줄면 이름과 사유를 남긴다."""
+    """통합: 명령이 없었는데 반영 비트가 줄면 이름과 사유를 남긴다."""
     s, _port, _cfg = sim
     s.base_pressure = 1.0
     events = []
@@ -288,3 +322,105 @@ def test_periods_follow_config(cfg):
     cfg["plc"]["heartbeat_ms"] = 400
     lk = PlcLink(cfg, Converters(cfg))
     assert lk.poll_s == pytest.approx(0.25) and lk.heartbeat_s == pytest.approx(0.4)
+
+
+
+# ===================== v0.4.1 장비 ID =====================
+async def test_device_id_ok(link):
+    lk, _s, _cfg = link
+    assert lk.id_state == "ok" and lk.write_ok and lk.device_id == DEV.DEVICE_ID
+
+
+async def test_device_id_zero_warns_but_allows(sim):
+    s, _port, _cfg = sim
+    s.device_id = 0
+    assert await wait_until(lambda: s.reg[A.D_DEVICE_ID] == 0, 1)
+    events = []
+    lk = await new_link(sim, events)
+    try:
+        assert lk.id_state == "unset" and lk.write_ok
+        assert any("ID 가 0" in m for _l, m in events)
+        assert s.reg[A.D_PRM_PC_WDT_MS] == _cfg["params"]["pc_wdt_ms"], "0 이면 동작은 막지 않는다"
+        r, _ = await lk.send_command(A.CMD_ALARM_ACK)
+        assert r == A.RESULT_OK
+    finally:
+        await lk.stop()
+
+
+def _spy_writes(s):
+    writes = []
+    orig = s.write
+
+    def spy(addr, values):
+        writes.append((addr, list(values)))
+        return orig(addr, values)
+    s.write = spy
+    return writes
+
+
+async def test_wrong_device_id_blocks_every_write(sim):
+    """다른 장비의 ID 면 PRM·하트비트·명령이 한 번도 나가지 않는다(연결은 유지)."""
+    s, _port, cfg = sim
+    other = 0x5057 if DEV.DEVICE_ID != 0x5057 else 0x5045
+    s.device_id = other
+    assert await wait_until(lambda: s.reg[A.D_DEVICE_ID] == other, 1)
+    s.write(A.D_PRM_PC_WDT_MS, [1234])            # 시험 전 값(바뀌면 안 된다)
+    writes = _spy_writes(s)
+    events = []
+    lk = await new_link(sim, events)
+    try:
+        assert lk.connected and lk.id_state == "wrong" and not lk.write_ok
+        await asyncio.sleep(1.2)                  # 하트비트 주기 두 번 이상
+        r, text = await lk.send_command(A.CMD_ALARM_ACK)
+        assert r is None and "다른 장비" in text
+        res = await lk.manual_apply(lambda cur: ({**cur, "valve": 1}, ""))
+        assert res["result"] is None
+        ok, why = await lk.upload_recipe([0] * A.RCP_AREA_COUNT, 0)
+        assert not ok
+        assert (await lk.mfc_apply({1: 5}))[0] is None
+        assert (await lk.heater_apply(lambda p, sv: (1, sv, "")))["result"] is None
+        assert await lk.rewrite_params()
+        assert writes == [], f"다른 장비의 PLC 에 썼다: {writes[:3]}"
+        assert s.reg[A.D_PRM_PC_WDT_MS] == 1234
+        assert any("다른 장비의 PLC" in m for _l, m in events)
+        assert lk.status[A.D_DEVICE_ID] == other, "상태 읽기는 계속된다"
+    finally:
+        await lk.stop()
+
+
+async def test_id_change_stops_writes_immediately(link):
+    lk, s, _cfg = link
+    assert lk.write_ok
+    s.device_id = 0x1234
+    assert await wait_until(lambda: not lk.write_ok and lk.id_state == "wrong", 1)
+    writes = _spy_writes(s)
+    await asyncio.sleep(1.0)
+    r, _ = await lk.send_command(A.CMD_ALARM_ACK)
+    assert r is None and writes == []
+    # 맞는 ID 로 돌아오면 다시 연결해 처음부터(파라미터 포함) 한다
+    s.device_id = DEV.DEVICE_ID
+    assert await wait_until(lambda: lk.connected and lk.write_ok and lk.id_state == "ok", 6)
+
+
+async def test_missing_host_does_not_connect(cfg):
+    from powderald.convert import Converters
+    from powderald.plclink import PlcLink
+    from powderald import config as C
+    cfg["plc"]["simulate"] = False
+    cfg["plc"]["host"] = ""
+    events = []
+    lk = PlcLink(cfg, Converters(cfg), on_event=lambda lvl, msg: events.append((lvl, msg)))
+    lk.start()
+    try:
+        await asyncio.sleep(0.5)
+        assert not lk.connected and lk.config_error
+        assert any(lvl == "err" and "plc.host" in m for lvl, m in events)
+    finally:
+        await lk.stop()
+    assert any("plc.host" in m for lv, m in C.validate(cfg) if lv == "err")
+
+
+def test_default_host_is_empty():
+    """코드 기본값에 주소가 없다 — 설정에서 빠지면 다른 장비에 붙지 않고 오류가 된다."""
+    from powderald import config as C
+    assert C.DEFAULTS["plc"]["host"] == ""

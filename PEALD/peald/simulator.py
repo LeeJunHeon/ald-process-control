@@ -44,6 +44,8 @@ PULSE_RISE_TORR = 0.02          # 펄스 스텝에서 잠깐 오르는 폭
 FLOW_TORR_PER_SLM = 0.06        # 흐름(MFC 합)이 만드는 공정 압력 상승
 MFC_DEV_ABORT_S = 10.0          # 공정 중 MFC1 편차가 이만큼 계속되면 중단
 HEATER_SOFT_OT_CH = 6           # 소프트 과온 감시 채널 (CH1~6)
+PV_R_BIT = 5                    # PV-R (PEALD 반응물 매니폴드 / Powder O3 → 챔버)
+PV_B_BIT = 9                    # Powder: PV-B O3 우회 → 바이패스 펌프 (PLC 자동)
 
 # 시뮬레이터 조작판에서 켤 수 있는 이상 입력
 FAULTS = [
@@ -113,6 +115,7 @@ class PlcSim:
     def __init__(self, cfg: dict, speed: float = 5.0):
         self.cfg = cfg
         self.speed = max(1.0, float(speed or 1.0))
+        self.device_id = DEV.DEVICE_ID      # D00019 — 시험에서 다른 장비·0 을 흉내 낼 때 바꾼다
         self.conv = Converters(cfg)
         self.reg = _Regs([0] * REG_COUNT)
         self.faults = {f["key"]: False for f in FAULTS}
@@ -324,6 +327,9 @@ class PlcSim:
                 return A.RESULT_INTERLOCK
             self.pump_req = True
             self.exh_req = True
+            # 래더: 펌핑 시작은 벤트 요청을 지운다 → VV 가 바로 닫히고 IV-E 가 열린다
+            self.vent_req = False
+            self.vv_on = False
             self.pump_started = time.monotonic()
             return A.RESULT_OK
         if code == A.CMD_PUMP_STOP:
@@ -731,8 +737,8 @@ class PlcSim:
         rise = flow_slm * FLOW_TORR_PER_SLM if (ive_open and pump_run) else 0.0
         self.pressure = max(1.0e-4, min(ATM_TORR, self.base_pressure + rise + self.pulse))
 
-        # 공정 중에는 시퀀서가 밸브를 쥔다. 아니면 수동 반영(D04012).
-        # 전구체와 반응물이 함께 요청되면 어느 쪽이든 둘 다 막는다.
+        # ---- 출력 단계 (래더 P60) ----
+        # 밸브 요청 = (시퀀서 동작 중이면 시퀀서 마스크, 아니면 D04012) AND 밸브 마스크
         if self.running:
             req = self.seq_valves & DEV.MANUAL_VALVE_MASK
         else:
@@ -740,22 +746,33 @@ class PlcSim:
         pre = any((req >> b) & 1 for b in DEV.PRECURSOR_VALVE_BITS)
         rea = any((req >> b) & 1 for b in DEV.REACTANT_VALVE_BITS)
         self.both_req = pre and rea
+        ilk = self.reg[A.D_INTERLOCK]
         if self.both_req:
+            # 전구체와 반응물이 함께 요청되면 동시 요청 — 모든 밸브 출력 0 + 알람0 b15
             self._latch0(A.ALM0_BOTH_OPEN)
-            for b in DEV.PRECURSOR_VALVE_BITS + DEV.REACTANT_VALVE_BITS:
-                req &= ~(1 << b)
-        self.valve_out = req
+            out = 0
+        elif not (ilk >> A.ILK_VALVE_OK) & 1:
+            # 공정 밸브 허가(인터락 b4)가 없으면 모든 밸브 출력 0
+            # (펌프 정지·IV-E 닫힘·안전 정지 요구·챔버 대기압) — 화면에는 '대기'
+            out = 0
+        else:
+            out = req
 
         # 수동 보조 반영 (명령 12 대상 비트만)
         aux_req = self.man_aux & DEV.AUX_CMD_MASK
 
         # 장비 전용
         if DEV.HAS_RF:
-            # 공정 중에는 플래그 b1 스텝을 실행하는 동안만 RF 를 켠다
+            # RF = ((동작 중 AND RF 스텝) OR (멈춤 AND D04050 b8)) AND RF 허가(인터락 b8)
             want_rf = self.rf_step if self.running else bool(aux_req & (1 << A.AUX_RF))
             self.rf_on = want_rf and self._rf_ok()
         if DEV.HAS_O3:
             self._o3_logic(aux_req, now)
+            # 발생기 출력이 켜져 있고 밸브 요청에 PV-R(b5)이 없으면 PV-B(b9)를 연다.
+            # ★ 허가 판단 뒤에 더하므로 공정 밸브 허가가 없어도 열린다(O3 를 바이패스로 뺀다).
+            if self.o3_gen_on and not (req & (1 << PV_R_BIT)):
+                out |= 1 << PV_B_BIT
+        self.valve_out = out
 
         # MFC: AO 설정을 1 s 정도로 따라간다
         for i in range(8):
@@ -1049,6 +1066,7 @@ class PlcSim:
 
     # ---------- 상태 영역에 반영 ----------
     def _publish(self):
+        self.reg[A.D_DEVICE_ID] = self.device_id & 0xFFFF
         self.reg[A.D_VALVE_OUT] = self.valve_out
         self.reg[A.D_AUX_OUT] = self.aux_out
         self.reg[A.D_CVG_RAW] = self.conv.cvg.to_raw(self.pressure)

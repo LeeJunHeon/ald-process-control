@@ -40,6 +40,22 @@ APPLY_SETTLE_S = 0.1            # 명령 12 결과 뒤 반영 영역을 다시 �
 PLC_HB_STALL_S = 2.0            # PLC 하트비트가 이만큼 안 바뀌면 멈춘 것으로 본다
 RECONNECT_DELAYS = (1.0, 2.0, 5.0)
 
+BLOCKED_TEXT = "다른 장비의 PLC 입니다 — 주소를 확인하세요 (쓰기 차단)"
+
+
+class IdRecovered(Exception):
+    """다른 장비 ID 였다가 맞는 ID 로 돌아왔다 — 다시 연결해 처음부터(파라미터 쓰기 포함) 한다."""
+
+
+def id_text(v) -> str:
+    """장비 ID 를 0x5045 'PE' 처럼."""
+    if v is None:
+        return "—"
+    v = int(v) & 0xFFFF
+    hi, lo = v >> 8, v & 0xFF
+    tag = "".join(chr(c) if 32 < c < 127 else "?" for c in (hi, lo))
+    return f"0x{v:04X} '{tag}'"
+
 PRM_READ_BASE = A.D_PRM_PC_WDT_MS
 PRM_READ_COUNT = A.D_PRM_O3_MAX - A.D_PRM_PC_WDT_MS + 1     # D01100 ~ D01124
 HEATER_REGS = A.D_HEATER_SV + 12 - A.D_HEATER_POWER         # D01010 ~ D01023
@@ -60,7 +76,11 @@ class PlcLink:
         self.on_event = on_event or (lambda level, msg: None)
 
         self.simulate = bool(plc.get("simulate", False))
-        host = "127.0.0.1" if self.simulate else (plc.get("host") or "127.0.0.1")
+        # ★ 주소 기본값은 없다. 비어 있으면 연결하지 않는다 — 기본값이 다른 장비의 주소면
+        #   설정 한 줄이 빠졌을 때 그 장비에 붙어 명령을 보낸다.
+        host = "127.0.0.1" if self.simulate else str(plc.get("host") or "").strip()
+        self.config_error = "" if host else \
+            "plc.host 가 비어 있습니다 — PLC 에 연결하지 않습니다 (설정에서 이 장비 PLC 주소를 넣으세요)"
         port = int(plc.get("sim_port") or DEV.DEFAULT_SIM_PORT) if self.simulate \
             else int(plc.get("port") or 502)
         self.client = ModbusClient(host, port, int(plc.get("unit_id") or 1),
@@ -71,6 +91,11 @@ class PlcLink:
         self.heartbeat_s = self._period(plc.get("heartbeat_ms"), HEARTBEAT_S)
 
         self.connected = False
+        # 장비 ID (D00019). ★ 확인 전·다른 장비면 아무것도 쓰지 않는다(하트비트 포함).
+        self.device_id = None
+        self.id_state = ""                      # ok / unset(0) / wrong / ""(아직)
+        self.write_ok = False
+        self.client.write_guard = lambda: not self.write_ok
         self.status = [0] * A.STATUS_COUNT      # 마지막으로 읽은 상태 영역
         self.applied = [0] * A.APPLIED_COUNT    # PLC 가 실제로 반영한 값 (읽기 전용 영역)
         self.display = [0] * A.DISPLAY_COUNT    # 실제 출력 중인 설정값
@@ -117,6 +142,11 @@ class PlcLink:
 
     # ===================== 메인 루프 =====================
     async def _run(self):
+        if self.config_error:
+            self.on_event("err", self.config_error)
+            while not self._stop:
+                await asyncio.sleep(1.0)
+            return
         attempt = 0
         while not self._stop:
             try:
@@ -134,6 +164,10 @@ class PlcLink:
                 self.connected = True
                 self.on_event("ok", f"PLC 연결됨 ({self.addr_text})")
                 await self._serve()
+            except IdRecovered:
+                self.connected = False
+                self.write_ok = False
+                self.on_event("ok", "장비 ID 가 맞게 바뀌었습니다 — 다시 연결해 파라미터를 씁니다")
             except (ModbusTimeout, ModbusError, OSError) as e:
                 self._drop(f"PLC 통신 끊김: {e}")
             except asyncio.CancelledError:
@@ -149,6 +183,7 @@ class PlcLink:
         else:
             log.debug("%s", msg)
         self.connected = False
+        self.write_ok = False
         self.status = [0] * A.STATUS_COUNT
         self.display = [0] * A.DISPLAY_COUNT
         self.cmd_regs = []
@@ -161,7 +196,8 @@ class PlcLink:
             now = time.monotonic()
             if now >= next_hb:
                 next_hb = now + self.heartbeat_s
-                await self._write_heartbeat()
+                if self.write_ok:           # ★ 다른 장비의 PLC 면 하트비트도 쓰지 않는다
+                    await self._write_heartbeat()
             if now >= next_poll:
                 next_poll = now + self.poll_s
                 await self._read_status()
@@ -175,24 +211,66 @@ class PlcLink:
 
     # ===================== 연결 직후 =====================
     async def _on_connect(self):
-        """① 다음 명령 번호를 이어 가고
+        """⓪ 가장 먼저 상태 영역을 읽어 장비 ID 를 확인한다 — 확인 전에는 아무것도 쓰지 않는다
+           ① 다음 명령 번호를 이어 가고
            ② params 를 원시값으로 바꿔 PRM 영역에 쓰고 되읽어 확인하고
            ③ PLC 반영 영역(D04012~)을 읽어 '지금 수동 요청'의 기준으로 삼고
            ④ 과온 알람이 래치돼 있으면 히터 전원 요청(D01010)을 0 으로 맞춘다."""
+        self.write_ok = False
+        self.status = await self.client.read_holding(A.STATUS_BASE, A.STATUS_COUNT)
+        self._check_id(self.status, first=True)
         regs = await self.client.read_holding(A.CMD_READ_BASE, A.CMD_READ_COUNT)
         self.cmd_regs = list(regs)
         # ★ 명령 번호를 이어 가야 한다. 0부터 다시 시작하면 PLC 가 "이미 처리한 번호"로
         #   보고 무시하거나, 옛 명령을 다시 실행한 것처럼 보일 수 있다.
         self._cmd_no = (regs[A.D_CMD_NO - A.CMD_READ_BASE] + 1) & 0xFFFF
-        await self._write_params()
+        if self.write_ok:
+            await self._write_params()
+        else:
+            self._store_prm_readback(await self.client.read_holding(PRM_READ_BASE, PRM_READ_COUNT))
         self._set_applied(await self.client.read_holding(A.APPLIED_BASE, A.APPLIED_COUNT))
         self._seen = None
         self.status = await self.client.read_holding(A.STATUS_BASE, A.STATUS_COUNT)
         self._ot_prev = A.bit(self.status[A.D_ALARM0], A.ALM0_OT)
-        if self._ot_prev and self.cmd_reg(A.D_HEATER_POWER):
+        if self.write_ok and self._ot_prev and self.cmd_reg(A.D_HEATER_POWER):
             await self.client.write_single(A.D_HEATER_POWER, 0)
             self._set_cmd_reg(A.D_HEATER_POWER, 0)
             self.on_event("warn", "과온 알람이 래치돼 있어 히터 전원 요청을 모두 껐습니다")
+
+    def _check_id(self, regs, first: bool = False):
+        """장비 ID 판정. 다른 장비면 쓰기를 모두 막는다(연결은 유지 — 상태는 보여 준다)."""
+        did = regs[A.D_DEVICE_ID] if len(regs) > A.D_DEVICE_ID else 0
+        prev = self.id_state
+        self.device_id = did
+        if did == DEV.DEVICE_ID:
+            if prev == "wrong" and not first:
+                raise IdRecovered()
+            self.id_state = "ok"
+            self.write_ok = True
+        elif did == 0:
+            # 아직 ID 렁을 넣지 않은 PLC — 경고만 하고 막지 않는다
+            if prev == "wrong" and not first:
+                raise IdRecovered()
+            self.id_state = "unset"
+            self.write_ok = True
+            if first:
+                self.on_event("warn", f"PLC 장비 ID 가 0 입니다 (래더에 ID 가 아직 없음) — "
+                                      f"이 장비 ID {id_text(DEV.DEVICE_ID)} 를 확인하지 못했습니다")
+        else:
+            self.write_ok = False
+            self.id_state = "wrong"
+            if first or prev != "wrong":
+                self.on_event("err", f"다른 장비의 PLC 입니다 — 주소를 확인하세요 "
+                                     f"(읽은 ID {id_text(did)} / 이 장비 {id_text(DEV.DEVICE_ID)}, "
+                                     f"{self.addr_text}) — 쓰기를 모두 막았습니다")
+
+    def blocked_reason(self) -> str:
+        """쓰기를 못 하는 이유(없으면 '')."""
+        if not self.connected:
+            return "PLC 에 연결되어 있지 않습니다"
+        if not self.write_ok:
+            return BLOCKED_TEXT if self.id_state == "wrong" else "장비 ID 확인 전입니다"
+        return ""
 
     async def _write_params(self):
         """공학 단위 params 를 원시값으로 바꿔 PRM 영역에 쓰고 되읽어 확인한다."""
@@ -221,8 +299,8 @@ class PlcLink:
 
     async def rewrite_params(self):
         """설정을 저장한 뒤 PRM 을 다시 쓰고 되읽는다(명령 잠금 안에서)."""
-        if not self.connected:
-            return None
+        if self.blocked_reason():
+            return [self.blocked_reason()]
         async with self._cmd_lock:
             await self._write_params()
         return list(self.prm_mismatch)
@@ -238,6 +316,7 @@ class PlcLink:
         regs = await self.client.read_holding(A.STATUS_BASE, A.STATUS_COUNT)
         self.rtt_ms = int((time.monotonic() - t0) * 1000)
         self.status = regs
+        self._check_id(regs)                # ★ 매 읽기마다 — ID 가 바뀌면 즉시 쓰기를 멈춘다
         hb = regs[A.D_PLC_HB]
         now = time.monotonic()
         if hb != self._plc_hb_val:
@@ -252,6 +331,8 @@ class PlcLink:
     async def _heater_trip(self):
         """과온 알람이 새로 켜졌다 — PLC 는 전원 묶음을 스스로 0 으로 둔다.
         PC 요청(D01010)도 0 으로 맞춰, 리셋 뒤 다음 명령 13 이 꺼진 채널을 되살리지 않게 한다."""
+        if not self.write_ok:
+            return
         try:
             async with self._cmd_lock:
                 await self.client.write_single(A.D_HEATER_POWER, 0)
@@ -271,6 +352,9 @@ class PlcLink:
             lost_v = self._seen[0] & ~v
             lost_a = self._seen[1] & ~a
             if lost_v or lost_a:
+                # ★ 사유는 그 자리에서 상태 영역을 한 번 더 읽어 판단한다. 마지막 주기 읽기(최대
+                #   100 ms 전)는 PLC 가 반영을 지운 것과 같은 스캔의 안전 정지 요구를 아직 못 봤을 수 있다.
+                await self._read_status()
                 self.on_event("warn", "PLC 가 수동 요청을 지웠습니다 — "
                               + describe_bits(lost_v, lost_a)
                               + f" ({self.clear_reason(bool(lost_v))})")
@@ -332,8 +416,8 @@ class PlcLink:
         ★ 헤더(개수·합계)를 마지막에 쓰는 이유: PLC 는 1 s 마다 헤더를 보고 표를 검사한다.
           헤더를 먼저 쓰면 아직 안 올라온 본문으로 검사해 '불합격'이 뜬다.
         반환: (성공, 설명)"""
-        if not self.connected:
-            return False, "PLC 에 연결되어 있지 않습니다"
+        if self.blocked_reason():
+            return False, self.blocked_reason()
         body_from = A.D_RCP_STEP_BASE - A.RCP_SUM_BASE
         try:
             async with self._cmd_lock:
@@ -390,8 +474,8 @@ class PlcLink:
 
         mutate(cur: dict) -> (new: dict, 거절 사유 str). 사유가 있으면 보내지 않는다.
         반환 {result, text, sent, lost_valve, lost_aux}. result None 은 못 보냈거나 응답 없음."""
-        if not self.connected:
-            return {"result": None, "text": "PLC 에 연결되어 있지 않습니다"}
+        if self.blocked_reason():
+            return {"result": None, "text": self.blocked_reason()}
         async with self._cmd_lock:
             try:
                 self._set_applied(await self.client.read_holding(A.APPLIED_BASE, A.APPLIED_COUNT))
@@ -432,8 +516,8 @@ class PlcLink:
     async def mfc_apply(self, changes: dict):
         """명령 14. MFC AO 현재값(D04121~)에 이번 변경만 얹어 MFC 개수만큼 전부 쓴다.
         changes: {MFC 번호: 원시값}. 반환 (결과, 설명)."""
-        if not self.connected:
-            return None, "PLC 에 연결되어 있지 않습니다"
+        if self.blocked_reason():
+            return None, self.blocked_reason()
         async with self._cmd_lock:
             try:
                 self._set_applied(await self.client.read_holding(A.APPLIED_BASE, A.APPLIED_COUNT))
@@ -450,8 +534,8 @@ class PlcLink:
         """명령 13. 잠금 안에서 D01010·D01012~23 을 새로 읽고 mutate(전원, 목표[12]) 로
         바꾼 값을 쓴 뒤 보낸다. PLC 가 거절하면 방금 쓴 값을 이전 값으로 되돌려 쓴다.
         반환 {result, text, reverted, power, sv}."""
-        if not self.connected:
-            return {"result": None, "text": "PLC 에 연결되어 있지 않습니다"}
+        if self.blocked_reason():
+            return {"result": None, "text": self.blocked_reason()}
         async with self._cmd_lock:
             try:
                 regs = await self.client.read_holding(A.D_HEATER_POWER, HEATER_REGS)
@@ -486,8 +570,8 @@ class PlcLink:
         """인자 → 명령 코드 → 명령 번호 순서로 쓰고 D00002 가 그 번호가 될 때까지 기다린다.
 
         반환: (결과코드 또는 None, 설명). None 은 응답 없음(시간 초과)."""
-        if not self.connected:
-            return None, "PLC 에 연결되어 있지 않습니다"
+        if self.blocked_reason():
+            return None, self.blocked_reason()
         async with self._cmd_lock:
             return await self._send_locked(code, args)
 

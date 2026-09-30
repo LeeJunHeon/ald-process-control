@@ -277,7 +277,10 @@ def prepare(cfg: dict, edits: dict) -> dict:
 
     sim_to_real = bool((cfg.get("plc") or {}).get("simulate")) and \
         not bool((new_cfg.get("plc") or {}).get("simulate"))
+    host_changed = get_value(cfg, "plc.host") != get_value(new_cfg, "plc.host")
     return {"ok": not errors, "errors": errors, "warnings": warnings, "diff": diff,
+            "host_changed": host_changed,
+            "device_id": f"0x{DEV.DEVICE_ID:04X}",
             "prm": prm, "restart": any(r["restart"] for r in diff),
             "sim_to_real": sim_to_real, "raw": raw, "new_cfg": new_cfg,
             "path_name": os.path.basename(path_out),

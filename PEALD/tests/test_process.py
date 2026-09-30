@@ -66,6 +66,13 @@ async def at_vacuum(lk, sim):
     assert await wait_until(lambda: not A.bit(lk.status[A.D_INPUT0], A.IN0_ATM), 3)
 
 
+async def valve_permit(lk, sim):
+    """펌핑해 공정 밸브 허가(인터락 b4)를 받는다 — 허가가 없으면 PLC 가 밸브를 내보내지 않는다."""
+    await lk.send_command(A.CMD_PUMP_START)
+    assert await wait_until(lambda: A.bit(lk.status[A.D_INTERLOCK], A.ILK_VALVE_OK), 20), \
+        "공정 밸브 허가가 나오지 않았다"
+
+
 def heater_channels(cfg, n=2):
     """과온 한계가 있고 명령 13 으로 전원을 다루는 사용 채널."""
     return [h["ch"] for h in (cfg.get("heaters") or [])
@@ -337,7 +344,7 @@ async def test_valve_not_revived_after_emo(wired):
     """PV-2 열기 → 비상정지 → 해제·리셋·펌핑 → PV-3 만 열기 → PV-2 는 되살아나지 않는다."""
     lk, sim, _cfg = wired
     a, b = DEV.RECIPE_VALVES[1], DEV.RECIPE_VALVES[2]
-    await at_vacuum(lk, sim)
+    await valve_permit(lk, sim)
     state.manual_unlock_until = 9e9
     await C.handle_command({"cmd": "manual_valve", "tag": a, "on": True})
     assert await wait_until(lambda: A.bit(sim.reg[A.D_VALVE_OUT], DEV.valve_bit(a)), 2)
@@ -346,7 +353,7 @@ async def test_valve_not_revived_after_emo(wired):
     sim.set_fault("emo", False)
     await lk.send_command(A.CMD_ALARM_RESET)
     assert await wait_until(lambda: not A.bit(lk.status[A.D_INTERLOCK], A.ILK_SAFE_STOP_REQ), 3)
-    await lk.send_command(A.CMD_PUMP_START)
+    await valve_permit(lk, sim)
     await C.handle_command({"cmd": "manual_valve", "tag": b, "on": True})
     want = 1 << DEV.valve_bit(b)
     assert await wait_until(lambda: sim.reg[A.D_VALVE_OUT] == want, 2), \
@@ -726,3 +733,21 @@ async def _log(msg, level="info"):
 
 async def _notice(msg, level="info", ws=None):
     pass
+
+
+
+# ===================== v0.4.1 출력 단계 · 대기 표시 =====================
+async def test_manual_valve_waits_without_permit(wired):
+    """공정 밸브 허가가 없으면(펌프 정지) 요청은 반영되지만 출력은 0 — 화면에는 '대기'."""
+    lk, sim, _cfg = wired
+    await at_vacuum(lk, sim)
+    state.manual_unlock_until = 9e9
+    tag = DEV.RECIPE_VALVES[2]
+    await C.handle_command({"cmd": "manual_valve", "tag": tag, "on": True})
+    assert await wait_until(lambda: state.manual_state()["valve_request"] != 0, 2)
+    await asyncio.sleep(0.2)
+    assert sim.reg[A.D_VALVE_OUT] == 0, "허가 없이 밸브가 나갔다"
+    assert tag in state.manual_state()["pending"], "대기 표시가 없다"
+    await valve_permit(lk, sim)
+    assert await wait_until(lambda: A.bit(sim.reg[A.D_VALVE_OUT], DEV.valve_bit(tag)), 2)
+    assert await wait_until(lambda: tag not in state.manual_state()["pending"], 2)
