@@ -768,9 +768,13 @@ class PlcSim:
             self.rf_on = want_rf and self._rf_ok()
         if DEV.HAS_O3:
             self._o3_logic(aux_req, now)
-            # 발생기 출력이 켜져 있고 밸브 요청에 PV-R(b5)이 없으면 PV-B(b9)를 연다.
-            # ★ 허가 판단 뒤에 더하므로 공정 밸브 허가가 없어도 열린다(O3 를 바이패스로 뺀다).
-            if self.o3_gen_on and not (req & (1 << PV_R_BIT)):
+            # 래더 P60 순서 그대로:
+            #   렁 28 — 공정 밸브 허가(인터락 b4)가 없거나 동시 요청이면 밸브 요청 = 0 (위 out)
+            #   렁 35 — '걸러진' 요청에서 PV-R(b5) 만 다시 본다 (VLV_TMP2 = 요청 AND h0020)
+            #   렁 40 — 발생기 출력 AND VLV_TMP2 = 0 이면 요청 OR h0200 → PV-B(b9) 열림
+            # ★ 그래서 PV-R 을 요청했어도 허가가 없거나 동시 요청이면 PV-B 가 열린다
+            #   (발생기가 도는 동안 O3 를 바이패스로 뺀다). 허가 판단 뒤에 더하므로 허가 없이도 열린다.
+            if self.o3_gen_on and not (out & (1 << PV_R_BIT)):
                 out |= 1 << PV_B_BIT
         self.valve_out = out
 

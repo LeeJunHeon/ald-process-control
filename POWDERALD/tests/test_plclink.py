@@ -424,3 +424,84 @@ def test_default_host_is_empty():
     """코드 기본값에 주소가 없다 — 설정에서 빠지면 다른 장비에 붙지 않고 오류가 된다."""
     from powderald import config as C
     assert C.DEFAULTS["plc"]["host"] == ""
+
+
+
+# ===================== v0.4.3 장비 ID 알림 · 장비 ID 필수 =====================
+def _count(events, text):
+    return sum(1 for _l, m in events if text in m)
+
+
+async def test_id_ok_to_zero_warns_once(sim):
+    s, _port, _cfg = sim
+    events = []
+    lk = await new_link(sim, events)
+    try:
+        assert lk.id_state == "ok"
+        s.device_id = 0
+        assert await wait_until(lambda: lk.id_state == "unset", 2)
+        await asyncio.sleep(0.8)                 # 같은 상태가 여러 번 읽혀도
+        assert _count(events, "0 으로 바뀌었습니다") == 1, events
+        assert lk.write_ok, "require_device_id 가 꺼져 있으면 막지 않는다"
+    finally:
+        await lk.stop()
+
+
+async def test_id_zero_to_ok_logs_once(sim):
+    s, _port, _cfg = sim
+    s.device_id = 0
+    assert await wait_until(lambda: s.reg[A.D_DEVICE_ID] == 0, 1)
+    events = []
+    lk = await new_link(sim, events)
+    try:
+        assert lk.id_state == "unset"
+        s.device_id = DEV.DEVICE_ID
+        assert await wait_until(lambda: lk.id_state == "ok", 2)
+        await asyncio.sleep(0.8)
+        assert _count(events, "PLC 장비 ID 확인됨") == 1, events
+        assert any(l == "ok" and "PLC 장비 ID 확인됨" in m for l, m in events)
+    finally:
+        await lk.stop()
+
+
+async def test_require_device_id_blocks_zero(sim):
+    """장비 ID 필수이고 ID 가 0 이면 missing — 쓰기 0건(하트비트 포함), 연결은 유지."""
+    s, _port, cfg = sim
+    cfg["plc"]["require_device_id"] = True
+    s.device_id = 0
+    assert await wait_until(lambda: s.reg[A.D_DEVICE_ID] == 0, 1)
+    writes = _spy_writes(s)
+    events = []
+    lk = await new_link(sim, events)
+    try:
+        assert lk.connected and lk.id_state == "missing" and not lk.write_ok
+        await asyncio.sleep(1.2)
+        r, text = await lk.send_command(A.CMD_ALARM_ACK)
+        assert r is None and "장비 ID 가 없습니다" in text
+        assert writes == [], f"ID 없는 PLC 에 썼다: {writes[:3]}"
+        assert any("장비 ID 가 없습니다(0)" in m for _l, m in events)
+        assert any(l == "warn" and "장비 ID 가 없어 읽기만 합니다" in m for l, m in events), \
+            "막힌 상태에서 초록 'PLC 연결됨' 이 나오면 안 된다"
+        assert not any(l == "ok" and m.startswith("PLC 연결됨") for l, m in events)
+    finally:
+        await lk.stop()
+
+
+async def test_missing_to_ok_reconnects_and_writes_params(sim):
+    s, _port, cfg = sim
+    cfg["plc"]["require_device_id"] = True
+    s.device_id = 0
+    assert await wait_until(lambda: s.reg[A.D_DEVICE_ID] == 0, 1)
+    s.write(A.D_PRM_PC_WDT_MS, [1234])
+    events = []
+    lk = await new_link(sim, events)
+    try:
+        assert lk.id_state == "missing"
+        assert s.reg[A.D_PRM_PC_WDT_MS] == 1234
+        s.device_id = DEV.DEVICE_ID
+        assert await wait_until(lambda: lk.connected and lk.write_ok and lk.id_state == "ok", 6)
+        assert await wait_until(lambda: s.reg[A.D_PRM_PC_WDT_MS] == cfg["params"]["pc_wdt_ms"], 2), \
+            "다시 연결해 파라미터부터 써야 한다"
+        assert any("PLC 장비 ID 확인됨" in m for _l, m in events)
+    finally:
+        await lk.stop()

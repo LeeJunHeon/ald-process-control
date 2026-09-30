@@ -191,6 +191,7 @@
           : p.id_state === 'ok' ? core.chip(core.idText(p.device_id) + ' 일치', 'ok')
             : p.id_state === 'unset' ? core.chip('0 — PLC 에 ID 가 아직 없음', 'warn', '동작은 막지 않습니다')
               : p.id_state === 'wrong' ? core.chip(core.idText(p.device_id) + ' 다른 장비', 'stop')
+                : p.id_state === 'missing' ? core.chip('0 — ID 필수라 막음', 'stop', '장비 ID 필수(plc.require_device_id) 가 켜져 있습니다')
                 : fmt.DASH;
     }
     var body = core.bind('prmBody');

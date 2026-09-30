@@ -884,3 +884,33 @@ def test_simulator_aborts_sequencer_in_same_scan(cfg):
     sim.tick()
     assert sim.reg[A.D_STATE] == A.STATE_SAFE_STOP
     assert sim.reg[A.D_SEQ_STATE] == 8, "안전 정지 스캔에 시퀀서가 멈추지 않았다"
+
+
+
+# ===================== v0.4.3 공정 시작 조건 — 장비 ID =====================
+@pytest.mark.parametrize("st", ["wrong", "missing"])
+async def test_start_refused_with_device_id_message(wired, monkeypatch, st):
+    from powderald.plclink import ID_BLOCK_TEXT
+    lk, sim, cfg = wired
+    rec = short_recipe("아이디시험")
+    assert storage.save("아이디시험", rec)
+    assert state.runner.select("아이디시험")[0]
+    state.recipe_check = R.validate(cfg, rec)
+    monkeypatch.setattr(lk, "id_state", st)
+    monkeypatch.setattr(lk, "write_ok", False)
+    checks = state.runner.start_checks()
+    assert [c["key"] for c in checks] == ["plc", "device_id"], "막혔으면 장비 ID 항목에서 끝난다"
+    assert not checks[1]["ok"] and "이 장비" in checks[1]["detail"]
+    ok, msg = await state.runner.start(_log, _notice)
+    assert not ok and msg == ID_BLOCK_TEXT[st]
+    assert C.precheck(A.CMD_PUMP_START) == (False, ID_BLOCK_TEXT[st])
+
+
+def test_start_checks_no_address_text(monkeypatch):
+    import types
+    from powderald.process import NO_ADDR_TEXT
+    runner = ProcessRunner(state)
+    monkeypatch.setattr(state, "link", types.SimpleNamespace(
+        connected=False, config_error="plc.host 가 비어 있습니다", addr_text="주소 없음", plc_hb_ok=False))
+    checks = runner.start_checks()
+    assert checks[0]["detail"] == NO_ADDR_TEXT

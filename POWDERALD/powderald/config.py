@@ -27,6 +27,8 @@ DEFAULTS = {
         "host": "", "port": 502, "unit_id": 1,     # ★ 주소 기본값은 없다(다른 장비에 붙지 않게)
         "timeout_ms": 1000, "poll_ms": 100, "heartbeat_ms": 500,
         "simulate": True, "sim_port": DEV.DEFAULT_SIM_PORT, "sim_speed": 5,
+        # 장비 ID 필수 — 켜면 ID 0 인 PLC 도 막는다(두 PLC 에 ID 렁을 넣은 뒤 켠다)
+        "require_device_id": False,
     },
     "analog": {"raw_max": 16000, "confirmed": False},
     "pressure": {},

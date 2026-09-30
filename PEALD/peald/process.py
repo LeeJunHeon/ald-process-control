@@ -27,6 +27,7 @@ BASE_WAIT = "base_wait"
 STARTING = "starting"
 
 RUNNING_STATES = (A.STATE_READY, A.STATE_RUN, A.STATE_PAUSE, A.STATE_STOPPING)
+NO_ADDR_TEXT = "PLC 주소가 없어 연결하지 않았습니다 — 설정 탭에서 이 장비 PLC 주소를 넣으세요"
 
 
 class ProcessRunner:
@@ -57,10 +58,19 @@ class ProcessRunner:
         out = []
 
         conn = bool(link and link.connected)
+        cfg_err = getattr(link, "config_error", "") if link else ""
         out.append({"key": "plc", "label": "PLC 연결 · 하트비트", "ok": conn and link.plc_hb_ok,
-                    "detail": (link.addr_text if link else "") +
-                              ("" if conn else " — 연결 안 됨")})
+                    "detail": NO_ADDR_TEXT if cfg_err else
+                    (link.addr_text if link else "") + ("" if conn else " — 연결 안 됨")})
         if not conn:
+            return out
+        # 장비 ID — 막혔으면(다른 장비·ID 없음) 연결 안 됨 때처럼 여기서 끝낸다
+        from .plclink import id_text
+        blocked = link.id_block_text() if hasattr(link, "id_block_text") else ""
+        out.append({"key": "device_id", "label": "장비 ID", "ok": not blocked,
+                    "detail": f"읽은 ID {id_text(getattr(link, 'device_id', None))} / "
+                              f"이 장비 {id_text(DEV.DEVICE_ID)}" + (f" — {blocked}" if blocked else "")})
+        if blocked:
             return out
 
         s = link.status
@@ -168,6 +178,9 @@ class ProcessRunner:
         check = R.validate(st.cfg, self.recipe)
         if check["errors"]:
             return False, f"레시피 검증 오류 {len(check['errors'])}건 — 먼저 고치세요"
+        blocked = st.link.id_block_text() if (st.link and hasattr(st.link, "id_block_text")) else ""
+        if blocked:
+            return False, blocked
         ok, blocking, _ = self.can_start()
         if not ok:
             return False, "시작 조건 미달 — " + " · ".join(c["label"] for c in blocking)

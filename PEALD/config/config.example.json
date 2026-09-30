@@ -12,6 +12,7 @@
     "poll_ms": 100,
     "heartbeat_ms": 500,
     "simulate": true,
+    "require_device_id": false,
     "sim_port": 15201,
     "sim_speed": 5
   },

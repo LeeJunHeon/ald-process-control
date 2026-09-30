@@ -506,23 +506,67 @@ async def test_pump_start_clears_vent_request(link):
     assert await wait_until(lambda: A.bit(s.reg[A.D_AUX_OUT], A.AUX_IVE), 3), "IV-E 가 열리지 않았다"
 
 
-@pytest.mark.skipif(not DEV.HAS_O3, reason="O3 가 있는 장비만")
-async def test_pv_b_follows_generator_and_pv_r(link):
-    """발생기 운전 중 PV-R 요청이 없으면 PV-B 열림(허가 없어도), PV-R 을 요청하면 PV-B 닫힘."""
-    lk, s, _cfg = link
-    await at_vacuum(lk, s)                      # 대기압이면 PLC 가 PV-R 요청을 바로 지운다
+def _o3_sim(cfg, permit=False):
+    """발생기가 켜진 Powder 시뮬레이터(소켓 없이 tick 을 직접 돌린다).
+    permit=True 면 펌핑해 공정 밸브 허가(인터락 b4)까지 받는다."""
+    import time as _t
+    from peald.simulator import PlcSim, AO_O3
+    s = PlcSim(cfg, 1)
     s.write(A.D_PRM_O3_MAX, [16000])
+    s.write(A.D_PRM_BASE_PRESS, [16000])      # 진공 판정은 이 시험과 무관 — 걸리지 않게
+    s.base_pressure = 1.0                      # 대기압이면 PLC 가 밸브 요청을 지운다
+    s.man_aux = (1 << A.AUX_BYPASS_PUMP) | (1 << A.AUX_IVB) | (1 << A.AUX_O3_GEN)
+    s.ao[AO_O3] = 1000
+    if permit:
+        s.pump_req = s.exh_req = True
+    end = _t.monotonic() + 6
+    while _t.monotonic() < end:
+        s.pc_hb_at = _t.monotonic()            # PC 하트비트는 살아 있는 것으로
+        s.tick()
+        if s.o3_ok_since is not None:
+            s.o3_ok_since -= 10                # 바이패스 5 s 대기를 건너뛴다
+        if s.o3_gen_on and (not permit or A.bit(s.reg[A.D_INTERLOCK], A.ILK_VALVE_OK)):
+            return s
+        _t.sleep(0.01)
+    raise AssertionError("발생기·허가 준비가 되지 않았다")
+
+
+def _tick(s, n=3):
+    import time as _t
+    for _ in range(n):
+        s.pc_hb_at = _t.monotonic()
+        _t.sleep(0.005)
+        s.tick()
+
+
+@pytest.mark.skipif(not DEV.HAS_O3, reason="O3 가 있는 장비만")
+def test_pv_b_follows_generator_and_pv_r(cfg):
+    """래더 P60 — '허가·동시 요청으로 걸러진 뒤의' 요청에 PV-R 이 없으면 PV-B 를 연다."""
     pvb = 1 << DEV.valve_bit("PV-B")
     pvr = 1 << DEV.valve_bit("PV-R")
-    lo_aux = (1 << A.AUX_BYPASS_PUMP) | (1 << A.AUX_IVB) | (1 << A.AUX_O3_GEN)
-    await lk.send_command(A.CMD_MANUAL_APPLY, {A.D_MANUAL_VALVE: [0, 0, 0, 0], A.D_MANUAL_AUX: lo_aux,
-                                               A.D_O3_SV: 1000})
-    assert await wait_until(lambda: s.o3_gen_on, 10), "발생기가 켜지지 않았다"
+    pv1 = 1 << DEV.valve_bit("PV-1")
+    # (가) 발생기 켬 + PV-R 요청 + 공정 밸브 허가 없음 → PV-R 은 걸러지고 PV-B 열림
+    s = _o3_sim(cfg)
     assert not A.bit(s.reg[A.D_INTERLOCK], A.ILK_VALVE_OK)
-    assert await wait_until(lambda: s.reg[A.D_VALVE_OUT] & pvb, 1), "PV-B 가 열리지 않았다"
-    await lk.send_command(A.CMD_MANUAL_APPLY, {A.D_MANUAL_VALVE: [pvr, 0, 0, 0], A.D_MANUAL_AUX: lo_aux,
-                                               A.D_O3_SV: 1000})
-    assert await wait_until(lambda: not (s.reg[A.D_VALVE_OUT] & pvb), 1), "PV-R 요청인데 PV-B 가 열려 있다"
+    s.man_valve = pvr
+    _tick(s)
+    assert s.reg[A.D_VALVE_OUT] == pvb, f"(가) {s.reg[A.D_VALVE_OUT]:#06x}"
+    # (나) 발생기 켬 + PV-1·PV-R 동시 요청 → 모든 밸브 0 뒤 PV-B 열림 + 알람0 b15
+    s = _o3_sim(cfg, permit=True)
+    s.man_valve = pv1 | pvr
+    _tick(s, 1)
+    assert s.reg[A.D_VALVE_OUT] == pvb, f"(나) {s.reg[A.D_VALVE_OUT]:#06x}"
+    assert (s.reg[A.D_ALARM0] >> A.ALM0_BOTH_OPEN) & 1
+    # (다) 허가 있음 + PV-R → PV-R 출력, PV-B 닫힘
+    s = _o3_sim(cfg, permit=True)
+    s.man_valve = pvr
+    _tick(s)
+    assert s.reg[A.D_VALVE_OUT] == pvr, f"(다) {s.reg[A.D_VALVE_OUT]:#06x}"
+    # (라) 발생기 꺼짐 → PV-B 안 열림
+    s.man_aux = 0
+    s.man_valve = 0
+    _tick(s, 4)
+    assert not s.o3_gen_on and s.reg[A.D_VALVE_OUT] == 0, f"(라) {s.reg[A.D_VALVE_OUT]:#06x}"
 
 
 @pytest.mark.skipif(not DEV.HAS_RF, reason="RF 가 있는 장비만")

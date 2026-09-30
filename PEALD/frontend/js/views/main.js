@@ -368,8 +368,10 @@
   function updateLocks(s, t, conn) {
     var local = core.canOperate();
     var msg = '';
-    var wrong = ((t.plc || {}).id_state === 'wrong');
-    if (wrong) msg = '🔒 다른 장비의 PLC 입니다 — 주소를 확인하세요';
+    var p = t.plc || {};
+    if (p.config_error) msg = '🔒 PLC 주소가 없어 연결하지 않았습니다 — 설정 탭에서 이 장비 PLC 주소를 넣으세요';
+    else if (p.id_state === 'wrong') msg = '🔒 다른 장비의 PLC 입니다 — 주소를 확인하세요';
+    else if (p.id_state === 'missing') msg = '🔒 PLC 장비 ID 가 없습니다(0) — 이 장비 PLC 인지 확인할 수 없습니다';
     else if (!core.canOperate()) msg = '🔒 원격 접속은 보기 전용입니다';
     else if (!conn) msg = '🔒 PLC 연결이 끊겨 명령을 보낼 수 없습니다';
 

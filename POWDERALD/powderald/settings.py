@@ -118,6 +118,7 @@ _add("plc.timeout_ms", "int", "응답 제한 ms", restart=True)
 _add("plc.poll_ms", "int", "상태 읽기 주기 ms", restart=True)
 _add("plc.heartbeat_ms", "int", "하트비트 주기 ms", restart=True)
 _add("plc.simulate", "bool", "내장 시뮬레이터 사용", restart=True)
+_add("plc.require_device_id", "bool", "장비 ID 필수 (0 이면 막음)", restart=True)
 
 FIELDS = {f["path"]: f for f in _F}
 

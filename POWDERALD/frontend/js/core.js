@@ -121,12 +121,15 @@
     var band = bind('idBand');
     if (band) {
       var plc0 = t.plc || {};
-      band.hidden = plc0.id_state !== 'wrong';
+      band.hidden = !idBlocked(plc0);
       if (plc0.id_state === 'wrong') {
         band.textContent = '다른 장비의 PLC 입니다 — 주소를 확인하세요 · 모든 조작을 막았습니다 (읽은 ID ' +
           idText(plc0.device_id) + ' / 이 장비 ' + idText(plc0.expected_id) + ')';
+      } else if (plc0.id_state === 'missing') {
+        band.textContent = 'PLC 장비 ID 가 없습니다(0) — 이 장비 PLC 인지 확인할 수 없어 모든 조작을 막았습니다';
       }
     }
+    if (t.plc && t.plc.config_error) setText('plcAddr', 'PLC 주소 없음');
     var pill = bind('stateChip');
     if (pill) {
       if (!t.plc || !t.plc.connected) {
@@ -162,13 +165,16 @@
     var plc = t.plc || {};
     var dot = bind('sbDot');
     if (dot) dot.classList.toggle('off', !plc.connected);
-    setText('sbText', [
+    setText('sbText', plc.config_error ? 'PLC 주소 없음 — 연결하지 않았습니다' : [
       'PLC ' + (plc.addr || fmt.DASH) + (plc.connected ? ' 연결됨' : ' 연결 안 됨'),
       plc.connected ? (plc.hb_ok ? '하트비트 정상' : '하트비트 멈춤') : '',
       plc.connected && plc.rtt_ms != null ? '응답 ' + plc.rtt_ms + ' ms' : '',
       t.scan_max_ms != null ? '최대 스캔 ' + t.scan_max_ms + ' ms' : ''
     ].filter(Boolean).join(' · '));
   }
+
+  /** 장비 ID 때문에 쓰기가 막힌 상태 — 다른 장비(wrong) 또는 ID 필수인데 0(missing). */
+  function idBlocked(p) { return !!p && (p.id_state === 'wrong' || p.id_state === 'missing'); }
 
   function idText(v) {
     if (v == null) return fmt.DASH;
@@ -334,9 +340,10 @@
     // ★ 다른 장비의 PLC 에 붙어 있으면 이 PC 에서도 조작하지 못한다
     canOperate: function () {
       if (!(lastState && (lastState.access || {}).local)) return false;
-      return (((lastState.live || {}).plc || {}).id_state) !== 'wrong';
+      return !idBlocked((lastState.live || {}).plc);
     },
     idText: idText,
+    idBlocked: idBlocked,
     plcOk: function () {
       var t = (lastState || {}).live || {};
       return !!(t.plc && t.plc.connected);

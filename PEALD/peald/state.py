@@ -175,6 +175,7 @@ class State:
                 "id_state": getattr(link, "id_state", "") if conn else "",
                 "device_id": getattr(link, "device_id", None) if conn else None,
                 "expected_id": DEV.DEVICE_ID,
+                "require_device_id": bool(getattr(link, "require_id", False)) if link else False,
                 "hb_gap_ms": getattr(link, "hb_gap_ms", 0) if conn else None,
                 "hb_gap_max_ms": getattr(link, "hb_gap_max_ms", 0) if conn else None,
                 "config_error": getattr(link, "config_error", "") if link else "",

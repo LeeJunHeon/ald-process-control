@@ -43,6 +43,12 @@ RECONNECT_DELAYS = (1.0, 2.0, 5.0)
 GIL_SWITCH_S = 0.001            # 작업 스레드가 돌 때도 루프가 자주 돌게
 
 BLOCKED_TEXT = "다른 장비의 PLC 입니다 — 주소를 확인하세요 (쓰기 차단)"
+# 화면·사전 판정·공정 시작 거절에 쓰는 문구 (막힌 상태별)
+ID_BLOCK_TEXT = {
+    "wrong": "다른 장비의 PLC 입니다 — 주소를 확인하세요 (모든 조작을 막았습니다)",
+    "missing": "PLC 장비 ID 가 없습니다(0) — 이 장비 PLC 인지 확인할 수 없어 모든 조작을 막았습니다",
+}
+BLOCKED_STATES = ("wrong", "missing")
 
 
 class IdRecovered(Exception):
@@ -81,13 +87,15 @@ class PlcLink:
         # ★ 주소 기본값은 없다. 비어 있으면 연결하지 않는다 — 기본값이 다른 장비의 주소면
         #   설정 한 줄이 빠졌을 때 그 장비에 붙어 명령을 보낸다.
         host = "127.0.0.1" if self.simulate else str(plc.get("host") or "").strip()
+        self._host = host
         self.config_error = "" if host else \
             "plc.host 가 비어 있습니다 — PLC 에 연결하지 않습니다 (설정에서 이 장비 PLC 주소를 넣으세요)"
         port = int(plc.get("sim_port") or DEV.DEFAULT_SIM_PORT) if self.simulate \
             else int(plc.get("port") or 502)
         self.client = ModbusClient(host, port, int(plc.get("unit_id") or 1),
                                    int(plc.get("timeout_ms") or 1000))
-        self.addr_text = f"{host}:{port}"
+        # 주소가 없으면 화면 머리·상태줄이 ':502' 대신 '주소 없음' 을 보이게 한다
+        self.addr_text = f"{host}:{port}" if host else "주소 없음"
         # 설정의 주기를 실제로 쓴다(검증은 config.validate 가 한다)
         self.poll_s = self._period(plc.get("poll_ms"), POLL_S)
         self.heartbeat_s = self._period(plc.get("heartbeat_ms"), HEARTBEAT_S)
@@ -95,7 +103,9 @@ class PlcLink:
         self.connected = False
         # 장비 ID (D00019). ★ 확인 전·다른 장비면 아무것도 쓰지 않는다(하트비트 포함).
         self.device_id = None
-        self.id_state = ""                      # ok / unset(0) / wrong / ""(아직)
+        self.id_state = ""                      # ok / unset(0) / missing(0, 필수) / wrong / ""(아직)
+        # 장비 ID 필수 — 켜면 ID 0 도 '이 장비 PLC 인지 확인 못 함'으로 보고 막는다(다시 시작해야 반영)
+        self.require_id = bool(plc.get("require_device_id", False))
         self.write_ok = False
         self.client.write_guard = lambda: not self.write_ok
         self.status = [0] * A.STATUS_COUNT      # 마지막으로 읽은 상태 영역
@@ -171,12 +181,18 @@ class PlcLink:
             try:
                 await self._on_connect()
                 self.connected = True
-                self.on_event("ok", f"PLC 연결됨 ({self.addr_text})")
+                # ★ 막힌 상태(다른 장비·ID 없음)면 '괜찮아진 것'처럼 읽히지 않게 경고로 남긴다
+                if self.id_state == "wrong":
+                    self.on_event("warn", f"PLC 연결됨 ({self.addr_text}) — 장비 ID 가 맞지 않아 읽기만 합니다")
+                elif self.id_state == "missing":
+                    self.on_event("warn", f"PLC 연결됨 ({self.addr_text}) — 장비 ID 가 없어 읽기만 합니다")
+                else:
+                    self.on_event("ok", f"PLC 연결됨 ({self.addr_text})")
                 await self._serve()
             except IdRecovered:
                 self.connected = False
                 self.write_ok = False
-                self.on_event("ok", "장비 ID 가 맞게 바뀌었습니다 — 다시 연결해 파라미터를 씁니다")
+                self.on_event("ok", "장비 ID 가 허용되는 값으로 바뀌었습니다 — 다시 연결해 파라미터를 씁니다")
             except (ModbusTimeout, ModbusError, OSError) as e:
                 self._drop(f"PLC 통신 끊김: {e}")
             except asyncio.CancelledError:
@@ -281,33 +297,50 @@ class PlcLink:
         prev = self.id_state
         self.device_id = did
         if did == DEV.DEVICE_ID:
-            if prev == "wrong" and not first:
-                raise IdRecovered()
-            self.id_state = "ok"
-            self.write_ok = True
+            new = "ok"
         elif did == 0:
-            # 아직 ID 렁을 넣지 않은 PLC — 경고만 하고 막지 않는다
-            if prev == "wrong" and not first:
-                raise IdRecovered()
-            self.id_state = "unset"
-            self.write_ok = True
+            # 아직 ID 렁을 넣지 않은 PLC — 기본은 경고만, '장비 ID 필수'면 막는다
+            new = "missing" if self.require_id else "unset"
+        else:
+            new = "wrong"
+        # 막힘 → 허용은 모두 다시 연결해 처음부터(파라미터 쓰기 포함) 한다
+        if prev in BLOCKED_STATES and new not in BLOCKED_STATES and not first:
+            raise IdRecovered()
+        self.id_state = new
+        self.write_ok = new not in BLOCKED_STATES
+
+        # ★ 로그는 상태가 바뀌는 순간에만 한 번(매 상태 읽기마다 반복하지 않는다)
+        if new == "ok":
+            if prev in ("unset", "missing", "wrong"):
+                self.on_event("ok", f"PLC 장비 ID 확인됨 ({id_text(DEV.DEVICE_ID)})")
+        elif new == "unset":
             if first:
                 self.on_event("warn", f"PLC 장비 ID 가 0 입니다 (래더에 ID 가 아직 없음) — "
                                       f"이 장비 ID {id_text(DEV.DEVICE_ID)} 를 확인하지 못했습니다")
-        else:
-            self.write_ok = False
-            self.id_state = "wrong"
-            if first or prev != "wrong":
-                self.on_event("err", f"다른 장비의 PLC 입니다 — 주소를 확인하세요 "
-                                     f"(읽은 ID {id_text(did)} / 이 장비 {id_text(DEV.DEVICE_ID)}, "
-                                     f"{self.addr_text}) — 쓰기를 모두 막았습니다")
+            elif prev == "ok":
+                self.on_event("warn", "PLC 장비 ID 가 0 으로 바뀌었습니다 — PLC 프로그램이 바뀌었는지 확인하세요")
+        elif new == "missing":
+            if first or prev != "missing":
+                self.on_event("err", f"PLC 장비 ID 가 없습니다(0) — 장비 ID 필수(plc.require_device_id)라 "
+                                     f"이 장비 PLC({id_text(DEV.DEVICE_ID)})인지 확인할 수 없습니다 "
+                                     f"({self.addr_text}) — 쓰기를 모두 막았습니다")
+        elif first or prev != "wrong":
+            self.on_event("err", f"다른 장비의 PLC 입니다 — 주소를 확인하세요 "
+                                 f"(읽은 ID {id_text(did)} / 이 장비 {id_text(DEV.DEVICE_ID)}, "
+                                 f"{self.addr_text}) — 쓰기를 모두 막았습니다")
 
     def blocked_reason(self) -> str:
         """쓰기를 못 하는 이유(없으면 '')."""
         if not self.connected:
             return "PLC 에 연결되어 있지 않습니다"
         if not self.write_ok:
-            return BLOCKED_TEXT if self.id_state == "wrong" else "장비 ID 확인 전입니다"
+            return ID_BLOCK_TEXT.get(self.id_state, "장비 ID 확인 전입니다")
+        return ""
+
+    def id_block_text(self) -> str:
+        """장비 ID 때문에 막혔으면 그 문구(아니면 ''). 사전 판정·공정 시작 거절이 같이 쓴다."""
+        if self.connected and self.id_state in BLOCKED_STATES:
+            return ID_BLOCK_TEXT[self.id_state]
         return ""
 
     async def _write_params(self):
