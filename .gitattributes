@@ -5,3 +5,6 @@
 # 이진 파일은 건드리지 않는다.
 *.ico binary
 *.png binary
+
+# Windows 배치 파일은 CRLF 로 둔다 (LF 면 cmd 가 레이블·줄을 잘못 읽을 수 있다)
+*.bat text eol=crlf

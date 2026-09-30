@@ -79,6 +79,8 @@
   --series-4: #eda100;
   --series-5: #e87ba4;
   --series-6: #008300;
+  --band-a: rgba(120,130,150,.07);
+  --band-b: rgba(120,130,150,.15);
   --grid: #e6eaf0;
   --axis: #99a4b5;
 
@@ -132,6 +134,8 @@
   --series-4: #c98500;
   --series-5: #d55181;
   --series-6: #008300;
+  --band-a: rgba(160,170,190,.06);
+  --band-b: rgba(160,170,190,.13);
   --grid: #262f3c;
   --axis: #5d6879;
 

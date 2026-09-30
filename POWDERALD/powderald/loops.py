@@ -1,8 +1,9 @@
 """
 loops.py — 백그라운드 주기 태스크.
 
-  sample_loop  10 Hz  PLC 링크가 읽어 둔 값으로 알람 추적·트렌드 기록
+  sample_loop  10 Hz  PLC 링크가 읽어 둔 값으로 알람 추적·트렌드 기록(이력 1 Hz)
   live_loop     5 Hz  화면에 값 전송
+  event_loop    5 Hz  링크 이벤트 로그 · 관리자 잠금 만료 알림
 
 PLC 읽기 자체는 plclink.py 가 100 ms 주기로 따로 돈다. 여기서 읽지 않는 이유는
 소켓을 한 태스크만 가져야 하기 때문이다(요청이 섞이면 엉뚱한 응답을 읽는다).
@@ -17,7 +18,9 @@ import asyncio
 from . import logger
 from .state import state
 from .trend_buffer import trend
-from .connection import push_live, push_log
+from .trendlog import trendlog
+from .admin import admin
+from .connection import manager, push_live, push_log
 
 SAMPLE_HZ = 10
 LIVE_HZ = 5
@@ -36,7 +39,10 @@ async def sample_loop():
             if state.runner:
                 state.runner.tick(_log_sync)
             _datalog_tick()
-            trend.record(time.monotonic(), state.live())
+            live = state.live()
+            trend.record(time.monotonic(), live)
+            trendlog.record(live)
+            _admin_on_process_start(live)
         except Exception as e:  # noqa: BLE001
             logger.write("err", f"샘플링 루프 오류(계속 진행): {type(e).__name__}: {e}")
         await asyncio.sleep(period)
@@ -60,12 +66,33 @@ def on_link_event(level: str, msg: str):
     _pending_events.append((level, msg))
 
 
+_was_running = False
+_admin_lock_pending = []
+
+
+def _admin_on_process_start(live: dict):
+    """공정이 시작되면(멈춤 → 공정 중) 관리자 잠금을 다시 채운다."""
+    global _was_running
+    running = bool((live.get("process") or {}).get("running"))
+    if running and not _was_running:
+        _admin_lock_pending.extend(admin.lock_all("공정 시작"))
+    _was_running = running
+
+
 async def event_loop():
     while True:
         try:
             while _pending_events:
                 level, msg = _pending_events.pop(0)
                 await push_log(msg, level)
+            # 잠긴 연결(공정 시작·시간 만료)에 상태를 알린다
+            locked = _admin_lock_pending[:] + admin.expired()
+            del _admin_lock_pending[:]
+            for ws in locked:
+                if ws in manager.active:
+                    await manager.send_to(ws, admin.status(ws))
+                    await manager.send_to(ws, {"type": "notice", "level": "info",
+                                               "msg": "관리자 잠금 — 설정 편집이 다시 잠겼습니다"})
         except Exception as e:  # noqa: BLE001
             logger.write("err", f"이벤트 루프 오류(계속 진행): {e}")
         await asyncio.sleep(0.2)
@@ -79,7 +106,8 @@ def _datalog_tick():
     prog = runner.progress()
     dl.follow(bool(prog.get("running")),
               lambda: dl.start(runner.recipe_name, runner.recipe, runner.table,
-                               prog.get("total_ms") or 0))
+                               prog.get("total_ms") or 0),
+              lambda: runner.last_result)
     dl.tick((state.cfg.get("log") or {}).get("datalog_interval_s", 1))
 
 

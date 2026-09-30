@@ -90,6 +90,25 @@ class State:
         self.o3_off_at = 0.0            # O3 바이패스 라인을 닫을 시각 (서버 타이머)
         self.o3_off_task = None
 
+    # ===================== 설정 =====================
+    def install_config(self, cfg: dict, problems: list, source: str):
+        """설정을 적용한다(기동·설정 저장 공통). 환산을 다시 만들고 링크에도 넘긴다.
+        ★ PLC 연결 값(주소·포트·주기·시뮬레이터)은 다시 시작해야 반영된다."""
+        from .convert import Converters
+        self.cfg = cfg
+        self.config_source = source
+        self.conv = Converters(cfg)
+        logger.configure(cfg.get("log") or {})
+        keep = [n for n in self.startup_notices if n.get("kind") not in ("check", "unconfirmed")]
+        for lv, msg in problems:
+            keep.append({"level": lv, "msg": msg, "kind": "check"})
+        for name in self.conv.unconfirmed():
+            keep.append({"level": "warn", "msg": f"환산 미확정: {name}", "kind": "unconfirmed"})
+        self.startup_notices = keep
+        if self.link:
+            self.link.cfg = cfg
+            self.link.conv = self.conv
+
     # ===================== 로그 =====================
     def add_log(self, level: str, msg: str):
         self.logs.append({"ts": time.strftime("%H:%M:%S"), "level": level, "msg": msg})
@@ -325,6 +344,7 @@ class State:
                 return raw, "ms"
             return raw, "s"
 
+        from .plclink import prm_setting
         names = {addr: name for addr, (name, _v) in link._param_words().items()}
         rows = []
         for addr in sorted(link.prm_written):
@@ -332,6 +352,7 @@ class State:
             r = link.prm_readback.get(addr)
             ev, unit = eng(addr, r if r is not None else w)
             rows.append({"addr": f"D{addr:05d}", "name": names.get(addr, ""),
+                         "setting": prm_setting(self.cfg, addr),
                          "written": w, "readback": r, "eng": ev, "unit": unit,
                          "match": r == w})
         return rows
@@ -357,6 +378,8 @@ class State:
                 "mfc_count": DEV.MFC_COUNT, "format": DEV.RECIPE_FORMAT,
             },
             "plc_recipe": self.plc_recipe,
+            "config_fields": _config_fields(),
+            "trend_cols": _trend_cols(),
             "access": {"local": bool(access_local)},
             "live": self.live(),
         }
@@ -378,6 +401,9 @@ class State:
             "o3": cfg.get("o3") or {},
             "log": cfg.get("log") or {},
             "process": cfg.get("process") or {},
+            "mfc": cfg.get("mfc") or [],
+            "heaters": cfg.get("heaters") or [],
+            "access": cfg.get("access") or {},
         }
 
     def sim_faults(self):
@@ -387,6 +413,16 @@ class State:
         from .simulator import visible_faults
         return [{"key": f["key"], "name": f["name"], "on": bool(self.sim.faults.get(f["key"]))}
                 for f in visible_faults()]
+
+
+def _config_fields():
+    from .settings import _F
+    return _F
+
+
+def _trend_cols():
+    from .trendlog import columns_meta
+    return columns_meta()
 
 
 state = State()

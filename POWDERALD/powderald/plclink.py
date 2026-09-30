@@ -216,62 +216,16 @@ class PlcLink:
     def _store_prm_readback(self, got):
         self.prm_readback = {PRM_READ_BASE + i: int(v) for i, v in enumerate(got)}
 
-    @staticmethod
-    def _num(params: dict, key: str, default):
-        """설정값을 정수로. ★ 0 을 '없음'으로 보지 않는다 —
-        mfc_stable_s: 0(대기 없음)·valve_min_ms: 0(최소 열림 없음)은 뜻이 있는 값이라,
-        `or` 로 처리하면 운전자가 끈 기능이 조용히 되살아난다."""
-        v = params.get(key)
-        if v is None or v == "":
-            v = default
-        try:
-            return int(v)
-        except (TypeError, ValueError):
-            return int(default)
-
     def _param_words(self) -> dict:
-        """{주소: (이름, 원시값)}. 공학 단위 → 원시값 변환은 여기 한 곳에서만 한다."""
-        from .convert import heater_raw
-        p = self.cfg.get("params") or {}
-        conv = self.conv
-        n = self._num
-        out = {
-            A.D_PRM_PC_WDT_MS: ("PC 하트비트 판정", n(p, "pc_wdt_ms", 3000)),
-            A.D_PRM_PUMP_TIMEOUT: ("베이스 도달 제한", n(p, "pump_timeout_s", 600)),
-            A.D_PRM_VENT_TIMEOUT: ("대기압 도달 제한", n(p, "vent_timeout_s", 300)),
-            A.D_PRM_MFC_STABLE: ("MFC 안정 판정", n(p, "mfc_stable_s", 3)),
-            A.D_PRM_MFC_TIMEOUT: ("MFC 안정 제한", n(p, "mfc_timeout_s", 60)),
-            A.D_PRM_VALVE_MIN_MS: ("밸브 최소 열림", n(p, "valve_min_ms", 200)),
-            # ★ 베이스 압력은 역함수로 원시값을 만든다(환산이 단조 증가여야 하는 이유).
-            A.D_PRM_BASE_PRESS: ("베이스 압력", conv.cvg.to_raw(p.get("base_press_torr"))),
-        }
-        tol = p.get("mfc_tol_sccm")
-        m1 = conv.mfc.get(1)
-        out[A.D_PRM_MFC_TOL] = ("MFC1 허용 편차",
-                                m1.to_raw(tol) if (m1 and m1.full and tol is not None) else 0)
-        # 히터 과온 한계 — max_c 가 null 인 채널은 0 을 쓴다.
-        # ★ PLC 는 한계 0 인 채널의 '소프트 과온 감시'만 안 할 뿐 전원을 막지 않는다.
-        #   그래서 한계가 없는 채널은 PC 가 목표 온도·전원 켜기를 모두 거절한다.
-        for i, h in enumerate(self.cfg.get("heaters") or []):
-            if i >= 12:
-                break
-            mx = h.get("max_c")
-            out[A.D_PRM_HEATER_MAX + i] = (f"CH{i + 1} 과온 한계",
-                                           heater_raw(mx) if mx is not None else 0)
-        if DEV.HAS_RF:
-            rf = self.cfg.get("rf") or {}
-            out[A.D_PRM_RF_MAX] = ("RF 상한", conv.rf.to_raw(p.get("rf_max_w"))
-                                   if rf.get("max_w") else 0)
-            out[A.D_PRM_RF_REF_MAX] = ("반사 전력 한계", conv.rf.to_raw(p.get("rf_ref_max_w"))
-                                       if rf.get("max_w") else 0)
-            out[A.D_PRM_RF_REF_MS] = ("반사 초과 허용", n(p, "rf_ref_ms", 0))
-            out[A.D_PRM_RF_MAX_PRESS] = ("RF 허가 최대 압력",
-                                         conv.cvg.to_raw(p.get("rf_p_max_torr")))
-        if DEV.HAS_O3:
-            o3 = self.cfg.get("o3") or {}
-            out[A.D_PRM_O3_MAX] = ("O3 상한", conv.o3.to_raw(p.get("o3_max"))
-                                   if o3.get("full") else 0)
-        return out
+        return param_words(self.cfg, self.conv)
+
+    async def rewrite_params(self):
+        """설정을 저장한 뒤 PRM 을 다시 쓰고 되읽는다(명령 잠금 안에서)."""
+        if not self.connected:
+            return None
+        async with self._cmd_lock:
+            await self._write_params()
+        return list(self.prm_mismatch)
 
     # ===================== 주기 작업 =====================
     async def _write_heartbeat(self):
@@ -573,3 +527,88 @@ def describe_bits(valve: int, aux: int) -> str:
     names = [v["tag"] for v in DEV.VALVES if (valve >> v["bit"]) & 1]
     names += [a["tag"] for a in DEV.AUX if (aux >> a["bit"]) & 1]
     return " · ".join(names) if names else "—"
+
+
+def _num(params: dict, key: str, default):
+    """설정값을 정수로. ★ 0 을 '없음'으로 보지 않는다 —
+    mfc_stable_s: 0(대기 없음)·valve_min_ms: 0(최소 열림 없음)은 뜻이 있는 값이라,
+    `or` 로 처리하면 운전자가 끈 기능이 조용히 되살아난다."""
+    v = params.get(key)
+    if v is None or v == "":
+        v = default
+    try:
+        return int(v)
+    except (TypeError, ValueError):
+        return int(default)
+
+
+def param_words(cfg: dict, conv) -> dict:
+    """{주소: (이름, 원시값)}. 공학 단위 → 원시값 변환은 여기 한 곳에서만 한다."""
+    from .convert import heater_raw
+    p = cfg.get("params") or {}
+    n = _num
+    out = {
+        A.D_PRM_PC_WDT_MS: ("PC 하트비트 판정", n(p, "pc_wdt_ms", 3000)),
+        A.D_PRM_PUMP_TIMEOUT: ("베이스 도달 제한", n(p, "pump_timeout_s", 600)),
+        A.D_PRM_VENT_TIMEOUT: ("대기압 도달 제한", n(p, "vent_timeout_s", 300)),
+        A.D_PRM_MFC_STABLE: ("MFC 안정 판정", n(p, "mfc_stable_s", 3)),
+        A.D_PRM_MFC_TIMEOUT: ("MFC 안정 제한", n(p, "mfc_timeout_s", 60)),
+        A.D_PRM_VALVE_MIN_MS: ("밸브 최소 열림", n(p, "valve_min_ms", 200)),
+        # ★ 베이스 압력은 역함수로 원시값을 만든다(환산이 단조 증가여야 하는 이유).
+        A.D_PRM_BASE_PRESS: ("베이스 압력", conv.cvg.to_raw(p.get("base_press_torr"))),
+    }
+    tol = p.get("mfc_tol_sccm")
+    m1 = conv.mfc.get(1)
+    out[A.D_PRM_MFC_TOL] = ("MFC1 허용 편차",
+                            m1.to_raw(tol) if (m1 and m1.full and tol is not None) else 0)
+    # 히터 과온 한계 — max_c 가 null 인 채널은 0 을 쓴다.
+    # ★ PLC 는 한계 0 인 채널의 '소프트 과온 감시'만 안 할 뿐 전원을 막지 않는다.
+    #   그래서 한계가 없는 채널은 PC 가 목표 온도·전원 켜기를 모두 거절한다.
+    for i, h in enumerate(cfg.get("heaters") or []):
+        if i >= 12:
+            break
+        mx = h.get("max_c")
+        out[A.D_PRM_HEATER_MAX + i] = (f"CH{i + 1} 과온 한계",
+                                       heater_raw(mx) if mx is not None else 0)
+    if DEV.HAS_RF:
+        rf = cfg.get("rf") or {}
+        out[A.D_PRM_RF_MAX] = ("RF 상한", conv.rf.to_raw(p.get("rf_max_w"))
+                               if rf.get("max_w") else 0)
+        out[A.D_PRM_RF_REF_MAX] = ("반사 전력 한계", conv.rf.to_raw(p.get("rf_ref_max_w"))
+                                   if rf.get("max_w") else 0)
+        out[A.D_PRM_RF_REF_MS] = ("반사 초과 허용", n(p, "rf_ref_ms", 0))
+        out[A.D_PRM_RF_MAX_PRESS] = ("RF 허가 최대 압력",
+                                     conv.cvg.to_raw(p.get("rf_p_max_torr")))
+    if DEV.HAS_O3:
+        o3 = cfg.get("o3") or {}
+        out[A.D_PRM_O3_MAX] = ("O3 상한", conv.o3.to_raw(p.get("o3_max"))
+                               if o3.get("full") else 0)
+    return out
+
+
+
+# 설정 키 → PRM 주소 (설정 편집의 '원시값 병기'와 PRM 표의 '설정값'에 쓴다)
+PRM_KEYS = {
+    "pc_wdt_ms": A.D_PRM_PC_WDT_MS, "base_press_torr": A.D_PRM_BASE_PRESS,
+    "pump_timeout_s": A.D_PRM_PUMP_TIMEOUT, "vent_timeout_s": A.D_PRM_VENT_TIMEOUT,
+    "mfc_stable_s": A.D_PRM_MFC_STABLE, "mfc_tol_sccm": A.D_PRM_MFC_TOL,
+    "mfc_timeout_s": A.D_PRM_MFC_TIMEOUT, "valve_min_ms": A.D_PRM_VALVE_MIN_MS,
+}
+if DEV.HAS_RF:
+    PRM_KEYS.update({"rf_max_w": A.D_PRM_RF_MAX, "rf_ref_max_w": A.D_PRM_RF_REF_MAX,
+                     "rf_ref_ms": A.D_PRM_RF_REF_MS, "rf_p_max_torr": A.D_PRM_RF_MAX_PRESS})
+if DEV.HAS_O3:
+    PRM_KEYS["o3_max"] = A.D_PRM_O3_MAX
+
+
+def prm_setting(cfg: dict, addr: int):
+    """PRM 주소에 해당하는 설정값(공학 단위). 없으면 None."""
+    p = cfg.get("params") or {}
+    for k, a in PRM_KEYS.items():
+        if a == addr:
+            return p.get(k)
+    if A.D_PRM_HEATER_MAX <= addr < A.D_PRM_HEATER_MAX + 12:
+        hs = cfg.get("heaters") or []
+        i = addr - A.D_PRM_HEATER_MAX
+        return hs[i].get("max_c") if i < len(hs) else None
+    return None

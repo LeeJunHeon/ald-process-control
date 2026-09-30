@@ -37,6 +37,9 @@ class ConnectionManager:
         local = is_local(ws)
         self.active[ws] = {"local": local}
         await self._send(ws, state.snapshot(access_local=local))
+        if local:
+            from .admin import admin
+            await self._send(ws, admin.status(ws))
         if not local:
             host = getattr(getattr(ws, "client", None), "host", "?")
             logger.write("info", f"원격 접속(보기 전용): {host}")

@@ -21,6 +21,8 @@ from . import device as DEV
 from . import logger
 from . import recipe as R
 from . import storage
+from . import settings
+from .admin import admin
 from .state import state
 from .connection import manager, push_state, push_notice, push_log
 
@@ -766,6 +768,162 @@ async def o3_finish():
     return res
 
 
+# ===================== 관리자 PIN =====================
+# ★ 조작 명령은 handle_command 가 이미 루프백 연결만 받는다. 여기서도 한 번 더 본다 —
+#   관리자 잠금 해제는 설정 파일을 바꾸는 권한이라 이중으로 막는다.
+def _local(ws) -> bool:
+    return manager.is_local_ws(ws) if ws is not None else True
+
+
+async def _admin_reply(ws, ok: bool, msg: str):
+    await push_notice(msg, "ok" if ok else "warn", ws)
+    if ws is not None:
+        await manager.send_to(ws, admin.status(ws))
+
+
+async def _cmd_admin_status(d, ws):
+    await manager.send_to(ws, admin.status(ws))
+
+
+async def _cmd_admin_setup(d, ws):
+    ok, msg = admin.setup(ws, str(d.get("pin") or ""), str(d.get("pin2") or ""), _local(ws))
+    await _admin_reply(ws, ok, msg)
+
+
+async def _cmd_admin_unlock(d, ws):
+    ok, msg = admin.unlock(ws, str(d.get("pin") or ""), _local(ws))
+    await _admin_reply(ws, ok, msg)
+
+
+async def _cmd_admin_lock(d, ws):
+    admin.lock(ws, "잠금 누름")
+    await _admin_reply(ws, True, "관리자 잠금")
+
+
+async def _cmd_admin_change(d, ws):
+    ok, msg = admin.change(ws, str(d.get("old") or ""), str(d.get("new") or ""),
+                           str(d.get("new2") or ""), _local(ws))
+    await _admin_reply(ws, ok, msg)
+
+
+async def _need_admin(d, ws) -> bool:
+    if not _local(ws) or not admin.is_admin(ws, d.get("token")):
+        await push_notice("관리자 잠금 상태입니다 — PIN 으로 잠금을 해제하세요", "warn", ws)
+        if ws is not None:
+            await manager.send_to(ws, admin.status(ws))
+        return False
+    admin.touch(ws)
+    return True
+
+
+# ===================== 설정 편집 =====================
+def _save_blocked() -> str:
+    if _running():
+        return "시퀀서 동작 중(공정 준비·실행·일시정지·사이클 후 정지 예약)에는 설정을 저장할 수 없습니다"
+    if state.runner and state.runner.phase != "idle":
+        return "공정 시작 절차가 진행 중입니다 — 끝난 뒤에 저장하세요"
+    return ""
+
+
+async def _cmd_config_preview(d, ws):
+    """바뀌는 항목 표 · 검증 결과를 그 화면에만 돌려준다(저장하지 않는다)."""
+    if not await _need_admin(d, ws):
+        return
+    res = settings.prepare(state.cfg, d.get("edits") or {})
+    out = settings.public(res)
+    out["type"] = "config_preview"
+    out["blocked"] = _save_blocked()
+    await manager.send_to(ws, out)
+
+
+async def _cmd_config_save(d, ws):
+    if not await _need_admin(d, ws):
+        return
+    why = _save_blocked()
+    if why:
+        await push_notice(why, "warn", ws)
+        return
+    res = settings.prepare(state.cfg, d.get("edits") or {})
+    if not res["ok"]:
+        await push_notice(f"설정 검증 오류 {len(res['errors'])}건 — 저장하지 않았습니다", "warn", ws)
+        await manager.send_to(ws, {**settings.public(res), "type": "config_preview",
+                                   "blocked": ""})
+        return
+    if not res["diff"]:
+        await push_notice("바뀐 항목이 없습니다", "info", ws)
+        return
+    try:
+        bk = settings.write(res)
+    except Exception as e:  # noqa: BLE001
+        logger.write("err", f"설정 저장 실패: {type(e).__name__}: {e}")
+        await push_notice(f"설정을 저장하지 못했습니다 — {type(e).__name__}", "err", ws)
+        return
+    from . import config as config_mod
+    cfg, problems, source = config_mod.load(res["new_cfg"]["_path"])
+    state.install_config(cfg, problems, source)
+    await push_log(f"설정 저장 — {len(res['diff'])}개 항목"
+                   + (f" (백업 {bk})" if bk else " (config.json 새로 만듦)"), "ok")
+    if res["restart"]:
+        await push_log("PLC 연결 설정이 바뀌었습니다 — 프로그램을 다시 시작해야 반영됩니다", "warn")
+    link = state.link
+    if link and link.connected:
+        try:
+            mism = await link.rewrite_params()
+        except Exception as e:  # noqa: BLE001
+            mism = [f"PRM 다시 쓰기 실패: {e}"]
+        if mism:
+            await push_log("PRM 되읽기 불일치 — " + " · ".join(mism[:3]), "err")
+            await push_notice("PLC 파라미터 되읽기 불일치 — 설정 탭 PRM 표를 확인하세요", "err", ws)
+        else:
+            await push_log("PLC 파라미터를 다시 쓰고 되읽어 확인했습니다", "ok")
+    else:
+        await push_log("PLC 가 연결되어 있지 않아 파라미터는 다음 연결 때 씁니다", "warn")
+    await push_notice("설정을 저장했습니다", "ok", ws)
+    await manager.send_to(ws, {"type": "config_saved", "backup": bk,
+                               "restart": res["restart"]})
+    await push_state()
+
+
+# ===================== 트렌드 내보내기 · 폴더 열기 =====================
+async def _cmd_trend_export(d, ws):
+    from .trendlog import trendlog
+    try:
+        t0, t1 = float(d.get("t0")), float(d.get("t1"))
+    except (TypeError, ValueError):
+        await push_notice("내보낼 구간이 올바르지 않습니다", "warn", ws)
+        return
+    if t1 <= t0:
+        await push_notice("끝 시각이 시작 시각보다 앞입니다", "warn", ws)
+        return
+    try:
+        name = trendlog.export_csv(t0, t1)
+    except Exception as e:  # noqa: BLE001
+        logger.write("err", f"트렌드 내보내기 실패: {e}")
+        await push_notice(f"내보내지 못했습니다 — {type(e).__name__}", "err", ws)
+        return
+    await push_notice(f"저장했습니다: data/export/{name}", "ok", ws)
+    await manager.send_to(ws, {"type": "trend_exported", "name": name})
+
+
+OPEN_DIRS = {"export": "export", "datalog": "datalog", "backup": "config_backup"}
+
+
+async def _cmd_open_folder(d, ws):
+    """탐색기로 데이터 폴더를 연다 — 이 PC 화면에서만(원격은 handle_command 가 거절)."""
+    import os
+    import sys
+    from . import paths
+    sub = OPEN_DIRS.get(d.get("which") or "")
+    if not sub:
+        await push_notice("열 수 없는 폴더입니다", "warn", ws)
+        return
+    path = os.path.join(paths.DATA_DIR, sub)
+    os.makedirs(path, exist_ok=True)
+    if sys.platform == "win32":
+        os.startfile(path)      # noqa: S606 — 고정된 데이터 폴더만 연다
+    await push_notice(f"폴더를 열었습니다: data/{sub}", "info", ws)
+
+
 # ===================== 시뮬레이터 조작판 =====================
 async def _cmd_sim_fault(d, ws):
     if not state.sim:
@@ -819,4 +977,15 @@ _HANDLERS = {
     "manual_pcv": _cmd_manual_pcv,
     "manual_rf": _cmd_manual_rf,
     "manual_o3": _cmd_manual_o3,
+    # 관리자 · 설정
+    "admin_status": _cmd_admin_status,
+    "admin_setup": _cmd_admin_setup,
+    "admin_unlock": _cmd_admin_unlock,
+    "admin_lock": _cmd_admin_lock,
+    "admin_change": _cmd_admin_change,
+    "config_preview": _cmd_config_preview,
+    "config_save": _cmd_config_save,
+    # 이력
+    "trend_export": _cmd_trend_export,
+    "open_folder": _cmd_open_folder,
 }

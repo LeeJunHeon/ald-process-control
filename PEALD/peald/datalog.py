@@ -54,6 +54,9 @@ class DataLog:
         self._rows = 0
         self.error = ""
         self._was_running = False
+        self.meta_path = ""
+        self.meta = None
+        self.end_result = ""
 
     @property
     def active(self) -> bool:
@@ -79,13 +82,13 @@ class DataLog:
             self.stop_at = 0.0
             self._next = 0.0
             self._rows = 0
-            if recipe:
-                storage.atomic_write_json(
-                    os.path.join(paths.DATALOG_DIR, self.name + ".recipe.json"),
-                    {"recipe": recipe, "number": (table or {}).get("number"),
-                     "checksum": (table or {}).get("checksum"),
-                     "estimated_ms": total_ms,
-                     "started": time.strftime("%Y-%m-%d %H:%M:%S")})
+            self.end_result = ""
+            self.meta_path = os.path.join(paths.DATALOG_DIR, self.name + ".recipe.json")
+            self.meta = {"recipe": recipe, "number": (table or {}).get("number"),
+                         "checksum": (table or {}).get("checksum"),
+                         "estimated_ms": total_ms,
+                         "started": time.strftime("%Y-%m-%d %H:%M:%S")}
+            storage.atomic_write_json(self.meta_path, self.meta)
             logger.write("info", f"데이터 로그 시작: {os.path.basename(self.path)}")
         except Exception as e:  # noqa: BLE001
             # ★ 기록을 못 해도 공정은 돌아야 한다.
@@ -94,7 +97,7 @@ class DataLog:
             self.fp = None
             self.writer = None
 
-    def follow(self, running: bool, start_fn):
+    def follow(self, running: bool, start_fn, result_fn=None):
         """공정 상태를 따라 파일을 연다·닫는다.
 
         ★ 시작 가장자리(멈춤 → 공정 중)를 잡아 앞 파일을 바로 닫고 새 파일을 연다.
@@ -105,13 +108,15 @@ class DataLog:
         elif running and self.fp:
             self.stop_at = 0.0          # 공정 중이면 종료 표시를 지운다
         elif not running and self.fp:
-            self.note_end()
+            self.note_end(result_fn() if (result_fn and not self.stop_at) else None)
         self._was_running = running
 
-    def note_end(self):
+    def note_end(self, result=None):
         """종료를 본 시각. 여기서 바로 닫지 않고 조금 더 남긴다."""
         if self.fp and not self.stop_at:
             self.stop_at = time.monotonic()
+            if result:
+                self.end_result = result
 
     def close(self):
         if self.fp:
@@ -121,9 +126,28 @@ class DataLog:
                 pass
             logger.write("info", f"데이터 로그 종료: {os.path.basename(self.path)} "
                                  f"({self._rows}줄)")
+            self._write_end_meta()
         self.fp = None
         self.writer = None
         self.stop_at = 0.0
+
+    def _write_end_meta(self):
+        """짝 .recipe.json 에 끝난 시각·결과·줄 수·걸린 시간을 덧붙인다(원자적 저장).
+        ★ 실패해도 공정·화면에는 영향이 없다 — 보기 화면이 CSV 로 짐작한다."""
+        if not self.meta_path or self.meta is None:
+            return
+        try:
+            meta = dict(self.meta)
+            meta.update({
+                "ended": time.strftime("%Y-%m-%d %H:%M:%S"),
+                "result": self.end_result or "기록 중단(프로그램 종료 등)",
+                "rows": self._rows,
+                "took_s": round(time.monotonic() - self.started, 1),
+            })
+            storage.atomic_write_json(self.meta_path, meta)
+        except Exception as e:  # noqa: BLE001
+            logger.write("warn", f"데이터 로그 메타 기록 실패: {e}")
+        self.meta = None
 
     # ===================== 한 줄 =====================
     def tick(self, interval_s: float):

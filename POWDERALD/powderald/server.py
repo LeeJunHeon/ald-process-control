@@ -29,7 +29,6 @@ from . import version
 from . import commands
 from . import config as config_mod
 from . import device as DEV
-from .convert import Converters
 from .datalog import DataLog, cleanup as datalog_cleanup
 from .plclink import PlcLink
 from .process import ProcessRunner
@@ -38,16 +37,23 @@ from .state import state
 from .connection import manager
 from .commands import handle_command
 from .trend_buffer import trend
+from . import trendlog as trendlog_mod
+from . import logview
 
 log = logging.getLogger(__name__)
 
 _ASSET_FILES = ["css/tokens.css", "css/style.css", "js/fmt.js", "js/core.js", "js/app.js",
                 "js/views/main.js", "js/views/schematic.js", "js/views/trend.js",
-                "js/views/alarm.js", "js/views/setup.js", "js/views/recipe.js"]
+                "js/views/alarm.js", "js/views/setup.js", "js/views/recipe.js",
+                "js/views/manual.js", "js/views/datalog.js", "js/chart.js"]
 
 
-def create_app(config_path: str = "", single_instance: bool = True) -> FastAPI:
+def create_app(config_path: str = "", single_instance: bool = True,
+               start_io: bool = True) -> FastAPI:
     """설정을 읽어 앱을 만든다.
+
+    start_io=False 는 자체 점검(--selftest) 전용이다 — 시뮬레이터·PLC 링크·주기 태스크를
+    띄우지 않는다(점검이 실장비에 PRM 을 쓰는 일이 없게).
 
     single_instance=False 는 검증 하네스 전용이다. 이중 실행 방지는 뮤텍스를 쓰는데,
     실제 프로그램이 떠 있는 개발 PC 에서 테스트를 돌리면 테스트가 그 뮤텍스에 걸려
@@ -55,18 +61,15 @@ def create_app(config_path: str = "", single_instance: bool = True) -> FastAPI:
     """
     paths.ensure_dirs()
     cfg, problems, source = config_mod.load(config_path)
-    state.cfg = cfg
-    state.config_source = source
-    state.conv = Converters(cfg)
-    logger.configure(cfg.get("log") or {})
-
     state.startup_notices = []
+    state.install_config(cfg, problems, source)
     for lv, msg in problems:
         logger.write(lv, f"설정 확인 필요 — {msg}")
-        state.startup_notices.append({"level": lv, "msg": msg, "kind": "config"})
-    for name in state.conv.unconfirmed():
-        state.startup_notices.append(
-            {"level": "warn", "msg": f"환산 미확정: {name}", "kind": "unconfirmed"})
+    trendlog_mod.cleanup((cfg.get("log") or {}).get("trend_keep_days", 90))
+    low = trendlog_mod.disk_warning()
+    if low:
+        logger.write("warn", low)
+        state.startup_notices.append({"level": "warn", "msg": low, "kind": "config"})
 
     plc = cfg.get("plc") or {}
     simulate = bool(plc.get("simulate"))
@@ -104,6 +107,9 @@ def create_app(config_path: str = "", single_instance: bool = True) -> FastAPI:
         for lv, msg in logger.drain_early():
             state.startup_notices.append({"level": lv, "msg": msg, "kind": "config"})
 
+        if not start_io:
+            yield
+            return
         if sim_server:
             if await sim_server.start():
                 logger.write("info", f"내장 시뮬레이터 시작 (배속 {sim.speed:g})")
@@ -122,6 +128,9 @@ def create_app(config_path: str = "", single_instance: bool = True) -> FastAPI:
         finally:
             if state.datalog:
                 state.datalog.close()
+            with contextlib.suppress(Exception):
+                trendlog_mod.trendlog.flush()
+                trendlog_mod.trendlog.close()
             await loops.stop_all(tasks)
             with contextlib.suppress(Exception):
                 await link.stop()
@@ -177,6 +186,31 @@ def _routes(app: FastAPI):
         sec = max(10, min(int(sec or 120), 3600))
         return JSONResponse(trend.series(sec, time.monotonic()))
 
+    # ---- 이력 · 데이터 로그 (읽기 전용 — 원격 보기에서도 된다) ----
+    @app.get("/api/trend/history")
+    async def api_trend_history(t0: float, t1: float, cols: str = "", points: int = 2000):
+        cl = [c for c in cols.split(",") if c] or None
+        points = max(10, min(int(points or 2000), 2000))
+        return JSONResponse(trendlog_mod.trendlog.query(t0, t1, cl, points))
+
+    @app.get("/api/datalog/list")
+    async def api_datalog_list():
+        return JSONResponse({"items": logview.list_logs()})
+
+    @app.get("/api/datalog/chart")
+    async def api_datalog_chart(name: str):
+        res = logview.chart(name)
+        if res is None:
+            return JSONResponse({"error": "목록에 없는 파일입니다"}, status_code=404)
+        return JSONResponse(res)
+
+    @app.get("/api/datalog/rows")
+    async def api_datalog_rows(name: str, offset: int = 0):
+        res = logview.table(name, offset)
+        if res is None:
+            return JSONResponse({"error": "목록에 없는 파일입니다"}, status_code=404)
+        return JSONResponse(res)
+
     @app.websocket("/ws")
     async def ws_endpoint(ws: WebSocket):
         await manager.connect(ws)
@@ -193,6 +227,9 @@ def _routes(app: FastAPI):
             manager.disconnect(ws)
         except Exception:  # noqa: BLE001
             manager.disconnect(ws)
+        finally:
+            from .admin import admin
+            admin.forget(ws)
 
     for url, sub in (("/css", "css"), ("/js", "js")):
         d = os.path.join(paths.FRONTEND_DIR, sub)

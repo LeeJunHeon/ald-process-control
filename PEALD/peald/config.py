@@ -40,7 +40,7 @@ DEFAULTS = {
         "heater_ready": {"enabled": False, "band_c": 2.0, "stable_s": 60},
     },
     "log": {"level": "info", "keep_days": 90,
-            "datalog_interval_s": 1, "datalog_keep_days": 180},
+            "datalog_interval_s": 1, "datalog_keep_days": 180, "trend_keep_days": 90},
     "access": {"local_only": True},
 }
 
@@ -238,6 +238,17 @@ def validate(cfg: dict) -> list:
             p.append(("warn", "log.datalog_interval_s 는 0.2~60 s 가 알맞습니다"))
     except (TypeError, ValueError):
         p.append(("warn", "log.datalog_interval_s 값이 올바르지 않습니다"))
+    for key in ("keep_days", "datalog_keep_days", "trend_keep_days"):
+        try:
+            if int(lg.get(key)) < 0:
+                raise ValueError
+        except (TypeError, ValueError):
+            p.append(("err", f"log.{key} 는 0 이상의 정수여야 합니다 (0 = 지우지 않음)"))
+    try:
+        if not (1 <= int(plc.get("port")) <= 65535) or not (0 <= int(plc.get("unit_id")) <= 255):
+            raise ValueError
+    except (TypeError, ValueError):
+        p.append(("err", "plc.port(1~65535) 또는 plc.unit_id(0~255) 값이 올바르지 않습니다"))
 
     prm = cfg.get("params") or {}
     if prm.get("base_press_torr") is None:

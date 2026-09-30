@@ -7,15 +7,16 @@ PLC 가 서버, 이 프로그램이 클라이언트입니다.
 - 화면: pywebview 창 안의 HTML/CSS/JS (**외부 라이브러리 없음**, 오프라인 전제)
 - 화면 통신: WebSocket 하나 (`/ws`) — 상태의 주인은 서버입니다
 
-> **버전 0.3.1 (2단계 점검 수정)** — 수동 조작 · 레시피(편집·검증·PLC 표·올리기·시작·진행) ·
-> 시뮬레이터 공정 실행 · 공정 데이터 로그까지.
-> 설정 편집 화면, 트렌드 이력 저장, 배포용 빌드는 3단계입니다.
+> **버전 0.4.0 (3단계)** — 관리자 PIN · 설정 편집 · 트렌드 이력 · 데이터 로그 보기 · exe 빌드까지.
+> 2단계(수동 조작 · 레시피 · 공정 시작 흐름 · 시뮬레이터 공정 실행 · 데이터 로그)에 더했습니다.
 
 ```bash
 pip install -r requirements.txt
 python run.py                 # exe 옆 / 이 폴더의 config.json
 python run.py --config 경로
 python run.py --headless      # 창 없이 서버만 (검증용)
+python run.py --selftest      # 설정·번들 자원·서버 기동 점검 → 종료 코드 0/1 (결과 한 줄은 data/logs)
+build.bat                     # exe 빌드(PyInstaller onedir) + 자동 --selftest
 
 pip install -r requirements-dev.txt
 python -m pytest -q           # 이 폴더에서만 실행
@@ -29,7 +30,8 @@ python -m pytest -q           # 이 폴더에서만 실행
 ## 폴더 구조
 
 ```
-run.py                 진입점 (--config, --headless)
+run.py                 진입점 (--config, --headless, --selftest)
+build.bat · build.spec exe 빌드 (dist/POWDERALD_Control/)
 powderald/
   device.py            장비 정체성·구조 — 이름·테마·고유색·밸브·보조 출력·입력·인터락·알람 문구
   addresses.py         PLC 주소표 (D 번호·비트·명령 코드·결과 코드)
@@ -42,7 +44,11 @@ powderald/
   commands.py          화면 명령 → 권한·상태 검사 → PLC
   connection.py        WebSocket 연결, 로컬/원격 구분
   loops.py             주기 태스크 (샘플링 10 Hz, 화면 전송 5 Hz)
-  trend_buffer.py      트렌드 링버퍼
+  trend_buffer.py      트렌드 링버퍼 (실시간 화면용)
+  trendlog.py          트렌드 이력 — 날짜별 SQLite (1 Hz)
+  admin.py             관리자 PIN · 잠금 해제 세션
+  settings.py          설정 편집 — 검증·바뀌는 항목·저장·백업
+  logview.py           데이터 로그 보기 — 목록·그래프·표
   window.py            창 좌/우 반쪽 배치, 단일 실행, 아이콘, 종료 확인
   paths.py  logger.py  version.py  server.py
 frontend/              index.html · css/tokens.css · css/style.css · js/…
@@ -58,6 +64,10 @@ data/logs/      POWDERALD-YYYYMMDD.log      프로그램 로그 (모든 PLC 명�
 data/alarms/    alarms-YYYYMMDD.csv     알람 발생·해제 이력
 data/datalog/                           공정 데이터 로그 (CSV + 그때 레시피 사본)
 data/recipes/                           레시피 (이름.json)
+data/trend/     YYYYMMDD.db             트렌드 이력 (1 Hz, 하루 10 MB 안팎)
+data/export/                            트렌드 CSV 내보내기
+data/config_backup/ config-YYYYMMDD-HHMMSS.json  설정 저장 전 백업 (최근 20개)
+data/admin_pin.json                     관리자 PIN 해시 (PIN 자체는 어디에도 없음)
 ```
 
 ---
@@ -473,6 +483,115 @@ O3 현재/설정 · 열린 밸브 · 밸브 워드 · 보조 출력 워드 · �
 
 ---
 
+## 관리자 PIN
+
+설정 편집에만 PIN 이 필요합니다. **레시피 편집·수동 조작·시뮬레이터 조작판은 PIN 없이** 됩니다.
+
+- `data/admin_pin.json` 에는 **PBKDF2-HMAC-SHA256 해시·무작위 salt·반복 횟수(240,000)** 만
+  둡니다. PIN 과 해시는 화면·로그·웹소켓·config.json 어디에도 내보내지 않습니다
+- PIN 이 없으면 처음 편집하려 할 때 새 PIN(숫자 4~8자리)을 두 번 입력해 정합니다.
+  바꾸기는 현재 PIN 을 확인한 뒤에 합니다
+- 잠금 해제는 **이 PC(루프백) 연결에서만** 됩니다. 서버가 무작위 토큰을 만들어 **그 웹소켓
+  연결에만** 붙입니다 — 다른 창·원격 연결은 같은 토큰으로도 통하지 않습니다
+- 관리자 조작 없이 **10 분**, **공정 시작**, **[잠금]** 중 하나면 다시 잠깁니다
+- **5 번 틀리면 5 분** 동안 입력을 막습니다. 성공·실패·잠금은 프로그램 로그에 남습니다(PIN 값 제외)
+
+### PIN 을 잊었을 때
+
+1. 프로그램을 끕니다(공정 중이 아닐 때)
+2. exe 옆 `data/admin_pin.json` 을 지웁니다
+3. 다시 켜고 설정 탭에서 **[PIN 정하기]** 로 새로 정합니다
+
+## 설정 편집 (설정 탭)
+
+잠금을 해제하면 다음을 바꿀 수 있습니다.
+
+| 묶음 | 항목 |
+|---|---|
+| PLC 파라미터 | pc_wdt_ms · base_press_torr · pump_timeout_s · vent_timeout_s · mfc_stable_s · mfc_tol_sccm · mfc_timeout_s · valve_min_ms · o3_max |
+| MFC | 이름 · 가스 · 풀스케일 · 확정 여부 (개수는 장비 고정) |
+| 히터 | 이름 · 사용 · 과온 한계 · 기본 목표 · 온도조절기 국번 |
+| 환산 | 아날로그 원시값 최대 · CVG · CM · O3 (각 확정 여부) |
+| 공정 | 베이스 대기 제한 · 안정 시간 · 히터 안정 조건 · O3 끄기 지연 |
+| 로그 | 보존 일수 · 데이터 로그 주기 · 데이터 로그 / 트렌드 보존 일수 |
+| PLC 연결 | 주소 · 포트 · Unit ID · 응답 제한 · 주기 · 시뮬레이터 여부 — **다시 시작해야 반영** |
+
+`access.local_only` 는 화면에서 바꾸지 않습니다(읽기 전용 표시). 서버 포트·장비 구조도 바꿀 수 없습니다.
+
+**저장 흐름** — 서버 검증(`config.validate` 오류·경고) → 바뀌는 항목 표(이전 → 새 값, PRM 은
+원시값 병기, 환산 때문에 함께 바뀌는 PRM 원시값까지) → 확인 창(장비 이름·고유색) →
+`config.json` 원자적 저장 + 이전 파일 백업(`data/config_backup/`, 최근 20개) → 로그에 항목별
+이전/새 값 → 환산 다시 만들기 → PLC 연결 중이면 **PRM 다시 쓰고 되읽어 확인**(불일치는 화면·로그)
+→ 화면 다시 그리기.
+
+- 시퀀서 동작 중(공정 준비·실행·일시정지·사이클 후 정지 예약)에는 저장하지 않습니다
+- 예시 설정으로 실행 중이면 첫 저장 때 exe 옆에 `config.json` 을 만듭니다
+- 파일에 있던 `"_"` 로 시작하는 설명 키는 그대로 둡니다
+- 시뮬레이터 → 실장비 전환은 확인 창이 한 번 더 경고합니다
+- PRM 표: **설정값 / 쓴 원시값 / 되읽은 값 / 일치**
+
+## 트렌드 이력
+
+- 1 Hz 샘플을 날짜별 SQLite(`data/trend/YYYYMMDD.db`, 표준 sqlite3, WAL, 5 s 마다 묶어 커밋)에 쌓습니다
+- 열은 장비 구조로 고정입니다(압력 · MFC 현재/설정 · 히터 CH1~12 현재/설정 · 장비 전용 값 ·
+  밸브/보조 출력 워드 · 장비 상태 · 블록·스텝). 설정이 바뀌어도 표 구조가 안 바뀝니다
+- 값은 공학 단위를 **고정 배율 정수**(온도·유량·전력·개도·O3 ×10, 압력은 실수)로 둡니다 —
+  환산을 나중에 바꿔도 이력이 변하지 않습니다. 하루 10 MB 안팎
+- `log.trend_keep_days`(기본 90) 지난 파일은 기동할 때 지웁니다. 쓰기 실패는 로그만 남기고
+  화면·공정을 막지 않습니다. 디스크 여유가 1 GB 아래면 경고합니다
+- 트렌드 탭 **[실시간 | 이력]** — 이력: 시작·끝 시각(1 h · 6 h · 24 h · 7 일), 계열 선택,
+  끌어서 확대 · [되돌리기], 커서 값. 서버가 구간을 최대 2000 묶음(최소·최대·평균)으로 줄여
+  보냅니다. 프로그램이 꺼져 있던 구간은 선을 잇지 않습니다. 압력은 로그 축
+- 선택 구간을 CSV(UTF-8 BOM)로 `data/export/` 에 저장 · [폴더 열기](이 PC 에서만)
+
+## 데이터 로그 보기 (데이터 로그 탭)
+
+- 데이터 로그 파일이 닫힐 때 짝 `.recipe.json` 에 끝난 시각 · 결과(정상 종료/중단 사유) ·
+  줄 수 · 걸린 시간을 덧붙입니다(원자적 저장). 예전 파일은 CSV 마지막 줄로 짐작해 `(추정)` 으로 보여 줍니다
+- 목록(시작 시각 · 레시피 · 번호 · 걸린 시간 · 결과, 날짜·이름 거르기) → 하나를 열면
+  **그래프**(공정 시간축, 블록·스텝 구간을 배경 띠로, 스텝 이름은 커서에 — 2000 묶음으로 줄임) /
+  **표**(200 줄씩) / **레시피**(그때 사본, 읽기 전용)
+- 파일 이름은 **목록에 있는 것만** 받습니다(정규식 + 데이터 로그 폴더 바로 아래인지 확인 — 경로 탈출 차단)
+- 화면에서 지우기는 없습니다. 정리는 보존 기간(`log.datalog_keep_days`)으로만 합니다
+
+## 설치 · 배포 (exe)
+
+**빌드** — 이 폴더에서 `build.bat` (PyInstaller onedir, `build.spec`, `--clean --noconfirm`).
+결과 `dist/POWDERALD_Control/`. 번들에는 `frontend` · `assets` · `config/config.example.json` 만
+들어갑니다(테스트 · `__pycache__` · `config.json` · `data` 는 넣지 않습니다). 빌드 뒤 자동으로
+`--selftest` 를 돌려 결과(0/1)를 알립니다.
+
+**설치할 PC**
+
+1. **Microsoft Edge WebView2 런타임**이 있어야 창이 뜹니다(Windows 11 은 기본 포함,
+   Windows 10 은 Evergreen 런타임 설치)
+2. `dist/POWDERALD_Control/` 폴더를 통째로 원하는 곳에 복사합니다
+3. exe 옆에 현장 값을 넣은 `config.json` 을 둡니다(없으면 예시 설정으로 뜨고, 설정 탭에서
+   처음 저장할 때 만들어집니다)
+
+```
+POWDERALD_Control/
+  POWDERALD_Control.exe
+  _internal/          번들 (읽기 전용 — 손대지 않음)
+  config.json         현장 설정 (직접 두거나 설정 탭 첫 저장 때 생김)
+  data/               실행하면 생김 — logs · alarms · datalog · recipes · trend · export ·
+                      config_backup · admin_pin.json
+```
+
+**처음 실행 순서** — ① `POWDERALD_Control.exe --selftest` 로 점검(종료 코드 0, `data/logs` 에 한 줄) →
+② 실행 → 설정 탭 [PIN 정하기] → ③ PLC 연결·환산·파라미터 입력 후 저장(처음엔 시뮬레이터로
+확인) → ④ 실장비로 전환(`plc.simulate` 끔) 후 다시 시작 → ⑤ 설정 탭 PRM 표에서 되읽기 일치 확인.
+
+**백업할 것** — `config.json`, `data/recipes/`, `data/datalog/`, `data/config_backup/`
+(필요하면 `data/trend/`, `data/alarms/`). `data/admin_pin.json` 은 옮기지 않아도 됩니다
+(잊었을 때처럼 지우고 새로 정하면 됩니다).
+
+**두 프로그램 동시 실행** — 웹 포트·시뮬레이터 포트·단일 실행 뮤텍스·작업 표시줄 묶음
+(AppUserModelID)·창 위치(좌/우 반쪽)가 전부 따로입니다. 같은 프로그램을 또 켜면
+"이미 실행 중" 창을 띄우고 끝납니다.
+
+---
+
 ## 화면 ↔ 서버 통신 약속
 
 WebSocket 하나(`ws://<host>:<port>/ws`)로 주고받습니다. 트렌드 이력만 HTTP 입니다.
@@ -554,6 +673,8 @@ PLC 가 끊기면 모든 값이 `null`(화면에서 `—`)이고 명령 버튼�
 | 레시피 | `recipe_validate` `recipe_load` `recipe_save` `recipe_rename` `recipe_delete` `recipe_select` `recipe_upload` `plc_recipe_read` |
 | 공정 | `process_start` `process_cancel_wait` `process_pause` `process_resume` `process_stop_after_cycle` `process_abort` |
 | 수동 | `manual_unlock` `manual_valve` `manual_mfc` `manual_heater` `manual_o3` (끄기 마무리는 서버 타이머) |
+| 관리자·설정 | `admin_setup` `admin_unlock` `admin_lock` `admin_change` `config_preview` `config_save` (설정 명령은 잠금 해제 토큰 필요) |
+| 이력 | `trend_export` `open_folder` |
 | 그 밖 | `sim_fault`(시뮬레이터 조작판) `alarm_popup_close` `exit` |
 
 `recipe_validate` 의 답은 `recipe_check`(오류·경고·요약), `recipe_load` 의 답은 `recipe`
@@ -568,7 +689,13 @@ PLC 가 끊기면 모든 값이 `null`(화면에서 `—`)이고 명령 버튼�
 |---|---|
 | `GET /` | 화면 (자산 URL 에 버전을 붙여 캐시를 무효화) |
 | `GET /health` | `{ok, device, name, version}` |
-| `GET /api/trend?sec=120\|600\|3600` | 트렌드 이력 (`slow` 1 Hz 1시간, `fast` 압력 10 Hz 10분) |
+| `GET /api/trend?sec=120\|600\|3600` | 실시간 트렌드 버퍼 (`slow` 1 Hz 1시간, `fast` 압력 10 Hz 10분) |
+| `GET /api/trend/history?t0&t1&cols` | 트렌드 이력 — 최대 2000 묶음 `[t, [최소,최대,평균], …]` |
+| `GET /api/datalog/list` | 데이터 로그 목록(시작·레시피·번호·걸린 시간·결과) |
+| `GET /api/datalog/chart?name` | 한 파일의 그래프 자료(2000 묶음) · 블록/스텝 구간 · 레시피 사본 |
+| `GET /api/datalog/rows?name&offset` | 표 200 줄씩 |
+
+HTTP 는 읽기 전용이라 원격 보기에서도 됩니다. 내보내기·폴더 열기는 WebSocket 명령(이 PC 에서만)입니다.
 
 ---
 

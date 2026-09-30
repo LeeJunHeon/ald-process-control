@@ -12,7 +12,7 @@ PEALD 와 Powder ALD 두 장비의 제어 프로그램입니다.
 | 웹 포트 / 시뮬레이터 포트 | 8101 / 15101 | 8201 / 15201 |
 | exe | `POWDERALD_Control.exe` | `PEALD_Control.exe` |
 
-> **현재 단계 (v0.3.1 — 2단계 점검 수정)**
+> **현재 단계 (v0.4.0 — 3단계)**
 > 1단계(저장소 분리 · 장비 정체성 · 설정 · PLC 통신 · 내장 시뮬레이터 · 운전 화면)에 더해
 > 수동 조작 전체(밸브·MFC·히터·PCV/RF·O3 라인), 레시피(편집·검증·PLC 표 변환·올리기·
 > 베이스 압력 대기 후 시작·진행 표시), 시뮬레이터 공정 실행, 공정 데이터 로그까지입니다.
@@ -20,8 +20,9 @@ PEALD 와 Powder ALD 두 장비의 제어 프로그램입니다.
 > 0.3.1: 수동 요청의 기준을 PLC 반영 영역(`D04012~D04131`)으로 바꾸고(PC 는 요청을 따로
 > 기억하지 않음), 시뮬레이터를 래더 확정 동작(내부 사본·명령 결과·펌핑/벤트·과온)에 맞췄습니다.
 >
-> - **3단계**: 설정·관리자 PIN·PLC 파라미터·환산 편집, 트렌드·이력·데이터 로그 보기,
->   exe 두 개 빌드, 최종 점검
+> 0.4.0: 관리자 PIN(설정 편집 전용) · 설정 편집(검증·바뀌는 항목 표·백업·PRM 재기록) ·
+> 트렌드 이력(날짜별 SQLite) · 데이터 로그 보기 · exe 두 개 빌드(`build.bat`, `--selftest`).
+> 설치·처음 실행 순서·백업·PIN 복구는 각 프로그램 README 의 '설치 · 배포' 에 있습니다.
 
 ---
 
@@ -75,12 +76,12 @@ cd PEALD     && python -m pytest -q
 ## 빌드
 
 ```bash
-cd POWDERALD && pyinstaller build.spec --clean --noconfirm
-cd PEALD     && pyinstaller build.spec --clean --noconfirm
+POWDERALD/build.bat     (→ POWDERALD/dist/POWDERALD_Control/, 빌드 뒤 --selftest 자동)
+PEALD/build.bat         (→ PEALD/dist/PEALD_Control/)
 ```
 
 `config.json` 과 `data/` 는 번들에 넣지 않습니다(읽기 전용 임시 폴더로 가서 저장이
-유실됩니다). 배포할 때 exe 폴더에 함께 둡니다. **빌드 검증은 3단계에서 합니다.**
+유실됩니다). 배포할 때 exe 폴더에 함께 둡니다. 설치할 PC 에는 **WebView2 런타임**이 필요합니다.
 
 ---
 
