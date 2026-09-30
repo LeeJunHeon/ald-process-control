@@ -79,6 +79,13 @@
   --series-4: #eda100;
   --series-5: #e87ba4;
   --series-6: #008300;
+  /* 7~12 — 히터 12 채널을 한 그래프에 그려도 색이 겹치지 않게 */
+  --series-7: #7b4fd6;
+  --series-8: #8a5a2b;
+  --series-9: #0097a7;
+  --series-10: #c2185b;
+  --series-11: #5c6b00;
+  --series-12: #4a5568;
   --band-a: rgba(120,130,150,.07);
   --band-b: rgba(120,130,150,.15);
   --grid: #e6eaf0;
@@ -134,6 +141,12 @@
   --series-4: #c98500;
   --series-5: #d55181;
   --series-6: #008300;
+  --series-7: #9b7bff;
+  --series-8: #c08a5a;
+  --series-9: #26c6da;
+  --series-10: #f06292;
+  --series-11: #a4b83a;
+  --series-12: #a0aec0;
   --band-a: rgba(160,170,190,.06);
   --band-b: rgba(160,170,190,.13);
   --grid: #262f3c;

@@ -6,6 +6,8 @@
  * ★ PLC 연결이 끊기면 모든 값은 '—' 이고 명령 버튼은 잠근다. 마지막 값을 계속
  *   보여 주면 운전자가 현재 상태로 오해한다.
  * ★ 위험하거나 되돌리기 어려운 명령은 확인 창을 거친다(제목에 장비 이름).
+ * ★ 5 Hz 갱신은 바뀐 칸만 고친다(core.html) — 칩을 매번 다시 만들면 이유 툴팁이 뜨지 않는다.
+ * ★ 인터락 · 입력 칩은 색만으로 상태를 나타내지 않는다 — 기호(✓ ✕ ⚠ ●/○)를 붙인다.
  * ============================================================ */
 (function (w, d) {
   'use strict';
@@ -80,14 +82,14 @@
     heaters.forEach(function (h) {
       if (!h.enabled) return;   // 사용 채널만 보여 준다
       html += '<tr data-hrow="' + h.ch + '">' +
-        '<td>CH' + h.ch + ' ' + core.esc(h.name) + '</td>' +
+        '<td>CH' + core.esc(h.ch) + ' ' + core.esc(h.name) + '</td>' +
         '<td class="sv" data-hsv="' + h.ch + '">—</td>' +
         '<td class="pv" data-hpv="' + h.ch + '">—</td>' +
         '<td data-hout="' + h.ch + '">—</td>' +
         '<td data-hpow="' + h.ch + '">—</td>' +
         '<td data-hst="' + h.ch + '"></td></tr>';
     });
-    tbl.innerHTML = html + '</tbody>';
+    core.html(tbl, html + '</tbody>');
     var miss = heaters.filter(function (h) { return h.enabled && h.max_c == null; });
     core.setText('tcNote', miss.length
       ? '⚠ 과온 한계 미정 ' + miss.length + '채널 — PLC 한계에 0 을 써서 막습니다'
@@ -101,15 +103,15 @@
     var mfc = (s.structure || {}).mfc || [];
     var html = '<thead><tr><th>MFC</th><th>가스</th><th>풀스케일</th><th>설정</th><th>현재</th></tr></thead><tbody>';
     mfc.forEach(function (m) {
-      html += '<tr><td>' + m.no + ' ' + core.esc(m.name) + '</td>' +
+      html += '<tr><td>' + core.esc(m.no) + ' ' + core.esc(m.name) + '</td>' +
         '<td>' + core.esc(m.gas || fmt.DASH) + '</td>' +
         '<td>' + (m.full_scale_sccm == null
           ? '<span class="unconf">미정</span>'
-          : fmt.int(m.full_scale_sccm) + '<span class="unit">sccm</span>') + '</td>' +
+          : core.esc(fmt.int(m.full_scale_sccm)) + '<span class="unit">sccm</span>') + '</td>' +
         '<td class="sv" data-msv="' + m.no + '">—</td>' +
         '<td class="pv" data-mpv="' + m.no + '">—</td></tr>';
     });
-    tbl.innerHTML = html + '</tbody>';
+    core.html(tbl, html + '</tbody>');
   }
 
   /* ---------- 장비 전용 패널 (PEALD: RF · PCV) ---------- */
@@ -154,21 +156,21 @@
     // 스텝 경과와 레시피 표 통과는 위 두 줄에 붙여 보여 준다(패널을 낮게 유지한다).
     var bs = core.bind('sqBS');
     if (bs && conn) {
-      bs.innerHTML = core.esc(bs.textContent) + ' · 스텝 ' + fmt.ms(q.step_ms) + ' s';
+      bs.textContent = bs.textContent + ' · 스텝 ' + fmt.ms(q.step_ms) + ' s';
     }
     var rc = core.bind('sqRcpChip');
     if (rc) {
-      rc.innerHTML = !conn ? '' : core.chip(q.recipe_ok ? '표 통과' : '표 미통과',
-        q.recipe_ok ? 'ok' : 'off', 'PLC 합계 ' + fmt.hex16(q.recipe_sum));
+      core.html(rc, !conn ? '' : core.chip(q.recipe_ok ? '✓ 표 통과' : '✕ 표 미통과',
+        q.recipe_ok ? 'ok' : 'off', 'PLC 합계 ' + fmt.hex16(q.recipe_sum)));
     }
     var chip = core.bind('seqChip');
     if (chip) {
       // 시퀀서 상태는 장비 상태와 다를 때만 함께 보여 준다(같은 말이 두 번 보이면 읽지 않는다).
       var qn = (t.seq || {}).name || '';
-      chip.innerHTML = conn && t.state
+      core.html(chip, conn && t.state
         ? (qn && qn !== t.state.name ? core.chip(qn, 'info') + ' ' : '') +
           core.chip(t.state.name, stateLevel(t.state.code))
-        : '';
+        : '');
     }
     updateProcess(t, conn);
   }
@@ -180,6 +182,7 @@
 
     core.setText('sqRec', !conn ? fmt.DASH
       : (p.recipe || '레시피를 고르세요') + (p.number ? ' · 번호 ' + p.number : ''));
+    if (!conn) p = {};
 
     if (run && p.total_ms) {
       core.setText('sqTime', fmt.hms(p.elapsed_s) + ' / ' + fmt.hms((p.remaining_ms || 0) / 1000) +
@@ -201,13 +204,13 @@
     var sl = core.bind('sqSteps');
     if (sl) {
       var steps = p.steps || [];
-      sl.innerHTML = (run && steps.length)
+      core.html(sl, (run && steps.length)
         ? steps.map(function (x, i) {
             var on = (i + 1) === p.step_in_block;
             return '<span class="st' + (on ? ' on' : '') + '">' + core.esc(x.name || (i + 1)) +
-              '<i>' + fmt.ms(x.ms) + 's</i></span>';
+              '<i>' + core.esc(fmt.ms(x.ms)) + 's</i></span>';
           }).join('')
-        : '';
+        : '');
     }
 
     // 시작 조건 — 판정은 서버가 했고 여기서는 안 된 것만 보여 준다.
@@ -216,14 +219,15 @@
       var bad = (p.checks || []).filter(function (c) { return !c.ok; });
       // ★ 안 된 것만, 그것도 앞 셋만 보여 준다 — 패널이 넘치면 아무것도 안 읽힌다.
       //   전체 목록은 시작을 누를 때 확인 창에서 다시 보여 준다.
-      cl.innerHTML = (!run && bad.length)
+      core.html(cl, (!run && bad.length)
         ? bad.slice(0, 3).map(function (c) {
-            return core.chip(c.label + ': ' + c.detail, c.key === 'base' ? 'warn' : 'stop');
+            var txt = c.label + ': ' + checkDetail(c);
+            return core.chip('✕ ' + txt, c.key === 'base' ? 'warn' : 'stop', txt);
           }).join('') + (bad.length > 3 ? core.chip('외 ' + (bad.length - 3) + '건', 'stop') : '') +
           // O3 허가·발생기가 빠졌으면 수동 창의 O3 라인 켜기로 바로 간다(설정값은 거기서 확인)
           (bad.some(function (c) { return c.action === 'o3_on'; })
             ? ' <button class="btn sm" data-mnopen="o3">O3 라인 켜기</button>' : '')
-        : '';
+        : '');
     }
 
     var msg = p.message || '';
@@ -242,6 +246,14 @@
     en('process_stop_after_cycle', local && conn && run && !p.paused);
     en('process_abort', local && conn && run);
     en('process_cancel_wait', local && p.phase === 'base_wait');
+  }
+
+  /** 시작 조건 글자 — 베이스 압력은 게이지와 같은 규칙(fmt.torr)으로 여기서 만든다. */
+  function checkDetail(c) {
+    if (c.key === 'base' && ('cur' in c || 'target' in c)) {
+      return '현재 ' + fmt.torr(c.cur) + ' / 목표 ' + fmt.torr(c.target) + ' Torr';
+    }
+    return c.detail || '';
   }
 
   function en(cmd, ok) {
@@ -272,7 +284,7 @@
 
     var box = core.bind('ilks');
     if (!box) return;
-    if (!conn) { box.innerHTML = '<span class="chip off">PLC 끊김</span>'; return; }
+    if (!conn) { core.html(box, '<span class="chip off">PLC 끊김</span>'); return; }
     var str = s.structure || {};
     var out = [];
     (str.interlocks || []).forEach(function (k) {
@@ -280,7 +292,7 @@
       // bad:true 인 비트는 '켜져 있으면 이상'이다(동시 요청·안전 정지 요구).
       var lvl = k.bad ? (on ? 'stop' : 'off') : (on ? 'ok' : 'warn');
       if (k.bad && !on) return;      // 이상이 없으면 굳이 보여 주지 않는다
-      out.push(core.chip(k.tag, lvl, k.why));
+      out.push(core.chip((k.bad ? '⚠ ' : on ? '✓ ' : '✕ ') + k.tag, lvl, k.why));
     });
     // 위 kv 줄에서 이미 보여 준 입력은 칩으로 또 내지 않는다(패널이 넘친다).
     var SHOWN = { 'IVE-O': 1, 'IVE-C': 1, 'PMP-RUN': 1, 'ATM': 1 };
@@ -290,7 +302,7 @@
     });
     // 입력 워드1(RF·O3 관련)은 아래 장비 전용 패널에서 이미 보여 준다 —
     // 같은 칩을 두 번 그리면 인터락 패널이 넘친다.
-    box.innerHTML = out.join('');
+    core.html(box, out.join(''));
   }
 
   /** 입력 칩 한 개.
@@ -303,7 +315,8 @@
     if (k.ok_when === false) lvl = on ? 'stop' : 'off';
     else if (k.ok_when === true) lvl = on ? 'ok' : 'stop';
     else lvl = on ? 'info' : 'off';
-    return core.chip(k.name, lvl, why);
+    var sym = lvl === 'ok' ? '✓ ' : lvl === 'stop' ? '✕ ' : on ? '● ' : '○ ';
+    return core.chip(sym + k.name, lvl, why);
   }
 
   function auxMap(s, t, conn) {
@@ -322,17 +335,17 @@
       set('[data-hsv="' + def.ch + '"]', conn ? fmt.temp(h.sv) : fmt.DASH);
       set('[data-hpv="' + def.ch + '"]', conn && h.comm_ok ? fmt.temp(h.pv) : fmt.DASH);
       set('[data-hout="' + def.ch + '"]', conn && h.comm_ok && h.out_pct != null
-        ? h.out_pct + ' %' : fmt.DASH);
+        ? fmt.int(h.out_pct) + ' %' : fmt.DASH);
       var pw = d.querySelector('[data-hpow="' + def.ch + '"]');
-      if (pw) pw.innerHTML = (!conn || h.power == null) ? fmt.DASH
-        : core.chip(h.power ? 'ON' : 'OFF', h.power ? 'ok' : 'off');
+      if (pw) core.html(pw, (!conn || h.power == null) ? fmt.DASH
+        : core.chip(h.power ? 'ON' : 'OFF', h.power ? 'ok' : 'off'));
       var st = d.querySelector('[data-hst="' + def.ch + '"]');
       if (!st) return;
-      if (!conn) { st.innerHTML = fmt.DASH; return; }
-      if (!h.comm_ok) st.innerHTML = core.chip('통신 끊김', 'stop', h.power_block || '');
-      else if (h.alarm) st.innerHTML = core.chip('조절기 알람', 'stop');
-      else if (def.max_c == null) st.innerHTML = core.chip('한계 미정', 'warn', '과온 한계가 없어 PLC 소프트 과온 감시가 꺼집니다 — PC 가 설정·전원 켜기를 막습니다');
-      else st.innerHTML = core.chip('정상', 'ok');
+      if (!conn) { core.html(st, fmt.DASH); return; }
+      if (!h.comm_ok) core.html(st, core.chip('✕ 통신 끊김', 'stop', h.power_block || ''));
+      else if (h.alarm) core.html(st, core.chip('✕ 조절기 알람', 'stop'));
+      else if (def.max_c == null) core.html(st, core.chip('⚠ 한계 미정', 'warn', '과온 한계가 없어 PLC 소프트 과온 감시가 꺼집니다 — PC 가 설정·전원 켜기를 막습니다'));
+      else core.html(st, core.chip('✓ 정상', 'ok'));
     });
   }
 
@@ -353,18 +366,19 @@
     core.setText('pcvV', conn ? fmt.pct(e.pcv_sv) + ' / ' + fmt.pct(e.pcv_pv) + ' %' : fmt.DASH);
     var chips = core.bind('rfChips');
     if (!chips) return;
-    if (!conn) { chips.innerHTML = ''; return; }
+    if (!conn) { core.html(chips, ''); return; }
     var str = s.structure || {};
-    var out = [core.chip(e.rf_on ? 'RF ON' : 'RF OFF', e.rf_on ? 'ok' : 'off')];
+    var out = [core.chip(e.rf_on ? '● RF ON' : '○ RF OFF', e.rf_on ? 'ok' : 'off')];
     (str.interlocks || []).forEach(function (k) {
       if (k.tag !== 'RF 허가') return;
-      out.push(core.chip('RF 허가', core.bit(t.interlock, k.bit) ? 'ok' : 'warn', k.why));
+      var ok = core.bit(t.interlock, k.bit);
+      out.push(core.chip((ok ? '✓ ' : '✕ ') + 'RF 허가', ok ? 'ok' : 'warn', k.why));
     });
     // 알람 성격 입력은 정상 회색·알람 빨강 (Powder O3 알람 칩과 같은 규칙)
     (str.inputs1 || []).forEach(function (k) {
       out.push(inputChip(t.inputs1, k, '입력1 b' + k.bit));
     });
-    chips.innerHTML = out.join('');
+    core.html(chips, out.join(''));
   }
 
   /* ---------- 잠금 ---------- */
@@ -372,20 +386,25 @@
     var local = core.canOperate();
     var msg = '';
     var p = t.plc || {};
-    if (p.config_error) msg = '🔒 PLC 주소가 없어 연결하지 않았습니다 — 설정 탭에서 이 장비 PLC 주소를 넣으세요';
+    if (t.offline) msg = '🔒 서버 연결이 끊겨 명령을 보낼 수 없습니다 — 다시 연결하는 중';
+    else if (p.config_error) msg = '🔒 PLC 주소가 없어 연결하지 않았습니다 — 설정 탭에서 이 장비 PLC 주소를 넣으세요';
     else if (p.id_state === 'wrong') msg = '🔒 다른 장비의 PLC 입니다 — 주소를 확인하세요';
     else if (p.id_state === 'missing') msg = '🔒 PLC 장비 ID 가 없습니다(0) — 이 장비 PLC 인지 확인할 수 없습니다';
     else if (!core.canOperate()) msg = '🔒 원격 접속은 보기 전용입니다';
     else if (!conn) msg = '🔒 PLC 연결이 끊겨 명령을 보낼 수 없습니다';
 
     // ★ 공정 단추는 updateProcess 가 상태별로 따로 판단한다 — 여기서 덮어쓰지 않는다.
-    Array.prototype.forEach.call(d.querySelectorAll('.cmdbar [data-cmd]'), function (b) {
+    //   명령줄 · 알람 탭의 확인 · 리셋 모두 같은 규칙(원격 · 다른 장비 · 끊김이면 잠금).
+    Array.prototype.forEach.call(d.querySelectorAll('[data-cmd]'), function (b) {
+      if (b.closest('.procbar')) return;
       var c = b.dataset.cmd;
       // 종료는 다른 장비의 PLC 여도 된다(이 PC 에서만)
-      if (c === 'exit') { b.disabled = !((core.state || {}).access || {}).local; return; }
+      if (c === 'exit') { b.disabled = !core.isLocal(); return; }
       b.disabled = !local || !conn;
     });
     core.setText('lockMsg', msg);
+    var lm = core.bind('lockMsg');
+    if (lm && lm.title !== msg) lm.title = msg;           // 한 줄 말줄임 — 마우스를 올리면 전체
     core.setText('schemNote', !conn ? 'PLC 끊김 — 값 없음'
       : (t.state ? t.state.name : ''));
   }
@@ -432,15 +451,15 @@
     var est = p.estimate || {};
     core.confirmAsk('공정을 시작할까요?',
       '레시피 <b>' + core.esc(p.recipe || '') + '</b>' +
-      (p.number ? ' (번호 ' + p.number + ')' : '') + '<br>' +
-      '스텝 ' + (est.step_count || 0) + ' · 블록 ' + (est.block_count || 0) +
+      (p.number ? ' (번호 ' + core.esc(p.number) + ')' : '') + '<br>' +
+      '스텝 ' + core.esc(est.step_count || 0) + ' · 블록 ' + core.esc(est.block_count || 0) +
       ' · 예상 <b>' + fmt.hms((est.total_ms || 0) / 1000) + '</b><br><br>' +
       'PLC 에 레시피 표를 올리고, 베이스 압력에 도달하면 시작합니다.<br>' +
       '대기 중에는 [대기 취소]로 멈출 수 있습니다.' +
       ((p.checks || []).filter(function (c) { return !c.ok; }).length
         ? '<br><br>아직 안 된 조건:<br>' +
           (p.checks || []).filter(function (c) { return !c.ok; })
-            .map(function (c) { return '· ' + core.esc(c.label) + ' — ' + core.esc(c.detail); })
+            .map(function (c) { return '· ' + core.esc(c.label) + ' — ' + core.esc(checkDetail(c)); })
             .join('<br>')
         : ''),
       '시작', function () { w.app.send('process_start'); });

@@ -7,6 +7,8 @@
  *   표   : 200 줄씩.
  *   레시피: 그때 레시피 사본(읽기 전용).
  * ★ 화면에서 지우기는 두지 않는다 — 정리는 보존 기간으로만 한다.
+ * ★ 열기 · 표 요청마다 번호를 붙여 가장 최근 요청의 응답만 그린다(늦게 온 옛 응답이 덮지 않게).
+ * ★ 한 그래프 안 선끼리 색이 겹치지 않고, 설정값은 그 현재값과 같은 색의 점선(chart.js colorMap).
  * ============================================================ */
 (function (w, d) {
   'use strict';
@@ -19,19 +21,20 @@
   var charts = {};
   var hidden = {};
   var zoom = null;          // [x0, x1] 초
-
-  function cssVar(n) { return getComputedStyle(d.documentElement).getPropertyValue(n).trim(); }
+  var openNo = 0, tableNo = 0;
 
   function render() {
     ['p', 'm', 't', 'x'].forEach(function (k) {
       var cv = d.querySelector('[data-dlchart="' + k + '"]');
       if (cv && !charts[k]) {
-        charts[k] = HistChart(cv, core.bind('dlTip'), {
+        charts[k] = HistChart(cv, {
           onZoom: function (a, b) { zoom = [a, b]; draw(); }
         });
         cv.addEventListener('dblclick', function () { zoom = null; draw(); });
       }
     });
+    var fb = d.querySelector('[data-dlact="folder"]');
+    if (fb) fb.disabled = !core.canOperate();
     if (core.tab === 'datalog') {
       if (!items.length) refresh();
       draw();
@@ -58,57 +61,62 @@
     box.innerHTML = list.map(function (it) {
       var res = it.result || '';
       var lvl = /정상/.test(res) ? 'ok' : (/중단|알 수 없음|기록 중단/.test(res) ? 'warn' : 'off');
-      return '<div class="dl-item' + (it.name === cur ? ' on' : '') + '" data-dlname="' + core.esc(it.name) + '">' +
+      return '<div class="dl-item' + (it.name === cur ? ' on' : '') + '" tabindex="0" data-dlname="' + core.esc(it.name) + '">' +
         '<div class="a"><span class="mono">' + core.esc((it.started || '').slice(0, 16)) + '</span>' +
         core.chip(res || '진행 중?', lvl) + '</div>' +
         '<div class="b">' + core.esc(it.recipe || '') +
-        (it.number != null ? ' <span class="dim">#' + it.number + '</span>' : '') +
+        (it.number != null ? ' <span class="dim">#' + core.esc(it.number) + '</span>' : '') +
         '<span class="dim right">' + (it.took_s != null ? fmt.hms(it.took_s) : fmt.DASH) +
-        (it.rows != null ? ' · ' + it.rows + '줄' : '') + (it.guessed ? ' (추정)' : '') + '</span></div></div>';
+        (it.rows != null ? ' · ' + core.esc(it.rows) + '줄' : '') + (it.guessed ? ' (추정)' : '') + '</span></div></div>';
     }).join('') || '<div class="empty">데이터 로그가 없습니다</div>';
   }
 
   function open(name) {
     cur = name; zoom = null; offset = 0;
+    var my = ++openNo;
     paintList();
     core.setText('dlName', name);
     fetch('api/datalog/chart?name=' + encodeURIComponent(name)).then(function (r) {
       if (!r.ok) throw new Error('없음');
       return r.json();
     }).then(function (js) {
+      if (my !== openNo) return;            // ★ 가장 최근에 연 파일의 응답만
       data = js;
       var m = js.meta || {};
       var box = core.bind('dlMeta');
       if (box) {
         box.innerHTML = core.chip(m.result || '—', /정상/.test(m.result || '') ? 'ok' : 'warn') + ' ' +
-          '<span class="dim">' + core.esc(m.recipe || '') + (m.number != null ? ' #' + m.number : '') +
-          ' · ' + (m.took_s != null ? fmt.hms(m.took_s) : fmt.DASH) + ' · ' + (m.rows != null ? m.rows + '줄' : '') +
+          '<span class="dim">' + core.esc(m.recipe || '') + (m.number != null ? ' #' + core.esc(m.number) : '') +
+          ' · ' + (m.took_s != null ? fmt.hms(m.took_s) : fmt.DASH) + ' · ' + (m.rows != null ? core.esc(m.rows) + '줄' : '') +
           (m.guessed ? ' · 메타 없음(CSV 로 추정)' : '') + '</span>';
       }
       buildPicker();
       var rb = core.bind('dlRecipeBox');
       if (rb) rb.textContent = js.recipe ? JSON.stringify(js.recipe, null, 2) : '레시피 사본이 없습니다';
       setView(view);
-    }).catch(function () { core.toast('파일을 열 수 없습니다: ' + name, 'warn'); });
+    }).catch(function () { if (my === openNo) core.toast('파일을 열 수 없습니다: ' + name, 'warn'); });
   }
 
   function buildPicker() {
     var box = core.bind('dlSeries');
     if (!box || !data) return;
-    box.innerHTML = (data.cols || []).map(function (c, i) {
+    var cm = colors();
+    core.html(box, (data.cols || []).map(function (c, i) {
       return '<label class="hs"><input type="checkbox" data-dlcol="' + i + '"' +
-        (hidden[c.label] ? '' : ' checked') + '><i class="sw-c" style="background:' + colorOf(i) +
-        '"></i>' + core.esc(c.label) + '</label>';
-    }).join('');
+        (hidden[c.label] ? '' : ' checked') + '>' + HistChart.swatch(cm[c.label]) + core.esc(c.label) + '</label>';
+    }).join(''));
   }
 
-  /** 열 색 — 같은 묶음 안 순서로(체크박스 색 표시와 선이 같게). */
-  function colorOf(idx) {
-    var cols = (data || {}).cols || [];
-    var g = (cols[idx] || {}).group;
-    var n = 0;
-    for (var i = 0; i < idx; i++) if (cols[i].group === g) n++;
-    return cssVar('--series-' + ((n % 6) + 1));
+  /** 열 이름 → {color, dashed} — 묶음(그래프)마다 따로, 보이는 현재값끼리 겹치지 않게. */
+  function colors() {
+    var out = {};
+    ['p', 'm', 't', 'x'].forEach(function (g) {
+      var ids = ((data || {}).cols || []).filter(function (c) { return c.group === g; })
+        .map(function (c) { return c.label; });
+      var cm = HistChart.colorMap(ids, function (l) { return !hidden[l]; });
+      for (var k in cm) out[k] = cm[k];
+    });
+    return out;
   }
 
   function draw() {
@@ -117,11 +125,13 @@
     var tMin = rows.length ? rows[0][0] : 0, tMax = rows.length ? rows[rows.length - 1][0] : 1;
     var x0 = zoom ? zoom[0] : tMin, x1 = zoom ? zoom[1] : Math.max(tMax, tMin + 1);
     var per = { p: [], m: [], t: [], x: [] };
+    var cm = colors();
     (data.cols || []).forEach(function (c, i) {
       if (!per[c.group]) return;
+      var lu = HistChart.splitUnit(c.label);          // 띠 값에도 단위를 붙인다
       per[c.group].push({
-        label: c.label, unit: '', hidden: !!hidden[c.label],
-        color: colorOf(i),
+        label: lu.label, unit: lu.unit, hidden: !!hidden[c.label],
+        color: (cm[c.label] || {}).color, dashed: (cm[c.label] || {}).dashed,
         pts: rows.map(function (r) {
           var v = r[i + 1];
           return v ? [r[0], v[0], v[1], v[2]] : [r[0], null, null, null];
@@ -138,7 +148,7 @@
     ['p', 'm', 't', 'x'].forEach(function (k) {
       if (!charts[k]) return;
       charts[k].set({ series: per[k], x0: x0, x1: x1, logY: k === 'p', noNeg: k !== 't',
-                      gap: gap, bands: bands, xLabel: xLabel });
+                      gap: gap, bands: bands, xLabel: xLabel, dead: false });
     });
   }
 
@@ -159,8 +169,10 @@
 
   function loadTable() {
     if (!cur) return;
+    var my = ++tableNo;
     fetch('api/datalog/rows?name=' + encodeURIComponent(cur) + '&offset=' + offset)
       .then(function (r) { return r.json(); }).then(function (js) {
+        if (my !== tableNo) return;
         var t = core.bind('dlTbl');
         if (!t) return;
         t.innerHTML = '<thead><tr>' + (js.head || []).map(function (h) {
@@ -189,7 +201,7 @@
     var a = ev.target.closest('[data-dlact]');
     if (!a) return;
     if (a.dataset.dlact === 'refresh') refresh();
-    if (a.dataset.dlact === 'folder') w.app.send('open_folder', { which: 'datalog' });
+    if (a.dataset.dlact === 'folder' && !a.disabled && core.canOperate()) w.app.send('open_folder', { which: 'datalog' });
   });
 
   d.addEventListener('input', function (ev) {
@@ -201,9 +213,10 @@
     if (!c || !data) return;
     var col = data.cols[parseInt(c.dataset.dlcol, 10)];
     if (col) hidden[col.label] = !c.checked;
+    buildPicker();
     draw();
   });
 
   core.register('datalog', { render: render, update: function () {} });
-  w.viewDatalog = { refresh: refresh, open: open };
+  w.viewDatalog = { refresh: refresh, open: open, charts: charts };
 })(window, document);

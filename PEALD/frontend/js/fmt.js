@@ -5,10 +5,12 @@
  *   운전자가 "어느 쪽이 맞나"를 판단할 수 없다.
  *
  * 규칙
- *   압력  : 0.1 Torr 이상 → 소수 3자리, 그 미만 → 지수표기 (1.8E-2)
+ *   압력  : 1 Torr 이상 → 소수 2자리 (759.67), 0.1 이상 → 소수 3자리 (0.500),
+ *           그 미만 → 지수표기 (1.8E-2), 0 → '0'.
  *           진공 영역은 자릿수 자체가 정보라서 지수표기가 읽기 쉽다.
- *   온도·유량·전력 : 소수 1자리    개도 : 정수 %
- *   시간  : hh:mm:ss
+ *           서버가 만드는 압력 글자(process._torr)도 같은 규칙이다.
+ *   온도·유량·전력 : 소수 1자리    개도 : 정수 %    온도 기호는 ℃ 하나만 쓴다
+ *   시간  : hh:mm:ss    ms → 초 : fmt.ms
  *   값 없음(null / undefined / NaN) : '—'  ← 0 과 반드시 구분한다.
  *           PLC 가 끊겼을 때 0 을 보여 주면 "유량이 0"으로 오해한다.
  * ============================================================ */
@@ -31,6 +33,7 @@
     if (isNil(v)) return DASH;
     var n = Number(v);
     if (!isFinite(n)) return DASH;
+    if (n === 0) return '0';
     if (n >= 1) return n.toFixed(2);
     if (n >= 0.1) return n.toFixed(3);
     var e = n.toExponential(1).split('e');
@@ -52,7 +55,9 @@
   /** PLC 가 주는 ms 를 초.소수 로 */
   function ms(v, digits) {
     if (isNil(v)) return DASH;
-    return (Number(v) / 1000).toFixed(digits === undefined ? 1 : digits);
+    var n = Number(v);
+    if (!isFinite(n)) return DASH;          // 'abc' · NaN 은 '—' (NaN 글자를 내보내지 않는다)
+    return (n / 1000).toFixed(digits === undefined ? 1 : digits);
   }
 
   function pad(n) { return (n < 10 ? '0' : '') + n; }

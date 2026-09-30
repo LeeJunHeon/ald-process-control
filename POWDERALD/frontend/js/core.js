@@ -7,6 +7,10 @@
  *            초당 5회 레이아웃이 다시 계산돼 화면이 눈에 띄게 버벅인다.
  *
  * DOM 연결은 data-bind 속성으로만 한다.
+ *
+ * 창(모달) 쌓임 순서: 알람 창 > 확인 창 > 나머지 창(수동 조작 · PIN · 설정 · 시뮬레이터).
+ *   Esc 는 맨 위 창을 닫는다(확인 창은 취소). 창이 열리면 포커스가 창 안으로, 닫히면 원래 자리로.
+ * 서버(웹소켓)가 끊기면 모든 실시간 값을 '—' 로, 상태 칩 '서버 끊김', 조작 잠금(setOffline).
  * ============================================================ */
 (function (w, d) {
   'use strict';
@@ -15,6 +19,9 @@
   var lastState = null;
   var curTab = 'main';
   var confirmCb = null;
+  var confirmKey = '';
+  var offline = false;
+  var alarmDismissed = null;      // 원격에서 닫은 알람 창 — 그때의 알람 코드들
 
   /* ===================== DOM 도우미 ===================== */
   function bind(name, root) { return (root || d).querySelector('[data-bind="' + name + '"]'); }
@@ -41,6 +48,15 @@
   function setText(name, value, root) {
     var e = bind(name, root);
     if (e) e.textContent = value;
+  }
+
+  /** 내용이 바뀔 때만 innerHTML 을 쓴다. ★ 1 초에 5 번 같은 칩을 다시 만들면 title 툴팁이
+   *  뜨지 않고(요소가 계속 바뀐다) 레이아웃도 다시 계산된다. */
+  function html(el, markup) {
+    if (!el) return;
+    if (el._html === markup) return;
+    el._html = markup;
+    el.innerHTML = markup;
   }
 
   function chip(text, level, title) {
@@ -73,6 +89,7 @@
   /* ===================== 상태 디스패치 ===================== */
   function applyState(s) {
     lastState = s;
+    setOffline(false);
     applyDevice(s);
     for (var k in VIEWS) {
       try { VIEWS[k].render(s); } catch (e) { console.error('render ' + k, e); }
@@ -82,14 +99,44 @@
 
   function applyLive(t) {
     if (!lastState) return;
+    // ★ 끊긴 동안에는 빈 live 가 곧 현재 상태다 — 탭을 바꿔 다시 그려도 옛 값이 되살아나지 않게
     lastState.live = t;
-    setText('clock', t.clock || fmt.DASH);
-    setText('date', t.date || fmt.DASH);
+    if (!t.offline) {
+      setText('clock', t.clock || fmt.DASH);
+      setText('date', t.date || fmt.DASH);
+    }
+    var ck = d.querySelector('#app .clock');
+    if (ck) ck.classList.toggle('stale', !!t.offline);   // 끊긴 동안 시계는 멈춘 시각을 흐리게
     applyHeader(lastState, t);
     for (var k in VIEWS) {
       try { VIEWS[k].update(t); } catch (e) { console.error('update ' + k, e); }
     }
-    if (t.alarm_popup) showAlarmModal();
+    // 알람이 하나도 없으면(모두 풀렸거나 PLC 가 끊겨 모를 때) 빈 알람 창을 새로 띄우지 않는다
+    if (t.alarm_popup && !t.offline && (t.alarms || []).length && !dismissedStill(t)) showAlarmModal();
+  }
+
+  /** 원격에서 닫은 알람 창은 새 알람(그때 없던 코드)이 오기 전까지 다시 띄우지 않는다. */
+  function dismissedStill(t) {
+    if (!alarmDismissed) return false;
+    var now = (t.alarms || []).map(function (a) { return a.code; });
+    var fresh = now.some(function (c) { return alarmDismissed.indexOf(c) < 0; });
+    if (fresh || !now.length) alarmDismissed = null;     // 모두 풀리면 다음에 다시 뜬다
+    return !fresh;
+  }
+
+  /* ===================== 서버 끊김 ===================== */
+  /** 웹소켓이 끊기면 마지막 값을 남기지 않는다 — '—' · '서버 끊김' · 조작 잠금.
+   *  다시 연결되면 서버가 state 를 보내 applyState 가 되돌린다. */
+  function setOffline(on) {
+    if (on === offline) return;
+    offline = on;
+    d.documentElement.classList.toggle('offline', on);
+    if (on && lastState) {
+      var prev = lastState.live || {};
+      applyLive({ offline: true, clock: prev.clock, date: prev.date,
+                  plc: { connected: false, addr: (prev.plc || {}).addr }, alarms: [], heaters: [],
+                  mfc: [], process: {}, manual: {}, seq: {}, extra: {}, pressure: {} });
+    }
   }
 
   /** 장비 정체성 — 접속할 때 한 번 정해지고 바뀌지 않는다. */
@@ -132,7 +179,10 @@
     if (t.plc && t.plc.config_error) setText('plcAddr', 'PLC 주소 없음');
     var pill = bind('stateChip');
     if (pill) {
-      if (!t.plc || !t.plc.connected) {
+      if (t.offline) {
+        pill.className = 'chip big stop';
+        pill.textContent = '서버 끊김';
+      } else if (!t.plc || !t.plc.connected) {
         pill.className = 'chip big off';
         pill.textContent = 'PLC 끊김';
       } else if (!t.plc.hb_ok) {
@@ -148,8 +198,10 @@
     var ac = bind('alarmChip');
     if (ac) {
       var crit = alarms.some(function (a) { return a.crit; });
-      ac.className = 'chip ' + (crit ? 'stop' : alarms.length ? 'warn' : '');
-      ac.textContent = alarms.length
+      // PLC 가 끊겼으면 알람을 모른다 — '알람 없음' 이 아니라 '—'
+      var known = !t.offline && t.plc && t.plc.connected;
+      ac.className = 'chip ' + (!known ? 'off' : crit ? 'stop' : alarms.length ? 'warn' : '');
+      ac.textContent = !known ? '알람 ' + fmt.DASH : alarms.length
         ? '⚠ ' + (crit ? '중대 ' : '경고 ') + alarms.length + '건'
         : '알람 없음';
     }
@@ -165,6 +217,7 @@
     var plc = t.plc || {};
     var dot = bind('sbDot');
     if (dot) dot.classList.toggle('off', !plc.connected);
+    if (t.offline) { setText('sbText', '서버 연결 끊김 — 다시 연결하는 중 · 값은 표시하지 않습니다'); return; }
     setText('sbText', plc.config_error ? 'PLC 주소 없음 — 연결하지 않았습니다' : [
       'PLC ' + (plc.addr || fmt.DASH) + (plc.connected ? ' 연결됨' : ' 연결 안 됨'),
       plc.connected ? (plc.hb_ok ? '하트비트 정상' : '하트비트 멈춤') : '',
@@ -197,30 +250,102 @@
    *  제목에 장비 이름을 고유색으로 크게 보여 준다 — 두 창이 나란히 떠 있을 때
    *  다른 장비에 명령을 보내는 사고를 막는 마지막 방어선이다. */
   function confirmAsk(title, body, okLabel, cb) {
+    var m = d.getElementById('confirmModal');
+    var key = title + '|' + body + '|' + (okLabel || '');
+    if (!m.hidden) {
+      // ★ 떠 있는 동안 온 요청은 새로 띄우지 않는다 — 두 번째 클릭이 확인 콜백을 바꾸면
+      //   운전자가 본 문구와 실제로 실행되는 동작이 달라진다.
+      if (key !== confirmKey) toast('열려 있는 확인 창을 먼저 닫으세요', 'warn');
+      return;
+    }
     setText('cfTitle', title);
     var b = bind('cfBody');
     if (b) b.innerHTML = body;
     var ok = d.querySelector('[data-cf="ok"]');
     if (ok) ok.textContent = okLabel || '실행';
     confirmCb = cb;
-    d.getElementById('confirmModal').hidden = false;
+    confirmKey = key;
+    // 위험한 동작의 확인 창 — 포커스는 '취소' 에(Enter 한 번으로 실행되지 않게).
+    // 입력 칸이 있는 확인 창(이름 입력)은 그 칸에 — 늦게 오는 '취소' 포커스가 친 글자를 빼앗지 않게
+    showModal('confirmModal', b && b.querySelector('input') ? '[data-bind="cfBody"] input' : '[data-cf="cancel"]');
+  }
+
+  /** 확인 창 닫기 — 취소 · Esc · 다른 경로 모두 여기로. 콜백을 지운다. */
+  function closeConfirm(run) {
+    var cb = confirmCb;
+    confirmCb = null;
+    confirmKey = '';
+    hideModal('confirmModal');
+    if (run && cb) cb();
   }
 
   d.addEventListener('click', function (ev) {
     var b = ev.target.closest('[data-cf]');
     if (!b) return;
-    d.getElementById('confirmModal').hidden = true;
-    var cb = confirmCb;
-    confirmCb = null;
-    if (b.dataset.cf === 'ok' && cb) cb();
+    closeConfirm(b.dataset.cf === 'ok');
+  });
+
+  /* ===================== 창 공통 (포커스 · Esc) ===================== */
+  var returnFocus = {};
+
+  function showModal(id, focusSel) {
+    var m = d.getElementById(id);
+    if (!m) return;
+    if (m.hidden) returnFocus[id] = d.activeElement;
+    m.hidden = false;
+    var f = (focusSel && m.querySelector(focusSel)) ||
+      m.querySelector('input:not([disabled]),select,textarea,button:not([disabled]),[tabindex="0"]');
+    if (f) setTimeout(function () { try { f.focus(); } catch (e) { /* 없음 */ } }, 0);
+  }
+
+  function hideModal(id) {
+    var m = d.getElementById(id);
+    if (!m || m.hidden) return;
+    m.hidden = true;
+    var back = returnFocus[id];
+    returnFocus[id] = null;
+    if (back && back.focus && d.body.contains(back)) { try { back.focus(); } catch (e) { /* 없음 */ } }
+  }
+
+  // Esc — 맨 위 창부터(알람 > 확인 > 나머지)
+  var ESC_ORDER = [
+    ['alarmModal', function () { closeAlarm(); }],
+    ['confirmModal', function () { closeConfirm(false); }],
+    ['cfgModal', function () { hideModal('cfgModal'); }],
+    ['pinModal', function () { hideModal('pinModal'); }],
+    ['simModal', function () { hideModal('simModal'); }],
+    ['manualModal', function () { hideModal('manualModal'); }]
+  ];
+  d.addEventListener('keydown', function (ev) {
+    if (ev.key === 'Escape') {
+      for (var i = 0; i < ESC_ORDER.length; i++) {
+        var m = d.getElementById(ESC_ORDER[i][0]);
+        if (m && !m.hidden) { ev.preventDefault(); ESC_ORDER[i][1](); return; }
+      }
+      return;
+    }
+    // 키보드로 누를 수 있는 칸(밸브 칸 · 스위치 · 체크 칸 · 목록 항목) — Enter / Space
+    if ((ev.key === 'Enter' || ev.key === ' ') && ev.target.matches &&
+        ev.target.matches('[tabindex="0"]:not(input):not(button):not(select)')) {
+      ev.preventDefault();
+      ev.target.click();
+    }
   });
 
   /* ===================== 알람 창 ===================== */
   function showAlarmModal() {
     var m = d.getElementById('alarmModal');
     if (!m || !m.hidden) { renderAlarmModal(); return; }
-    m.hidden = false;
     renderAlarmModal();
+    showModal('alarmModal', '[data-am="close"]');
+  }
+
+  /** 알람 창 닫기. ★ 원격(보기 전용)은 명령을 보내지 않고 이 화면에서만 닫는다 —
+   *  보내면 서버가 거절하고 알람 창이 곧 다시 떠, 로컬 운전자가 닫을 때까지 원격 화면이 막힌다. */
+  function closeAlarm() {
+    hideModal('alarmModal');
+    if (canOperate()) w.app.send('alarm_popup_close');
+    else alarmDismissed = (((lastState || {}).live || {}).alarms || []).map(function (a) { return a.code; });
   }
 
   function renderAlarmModal() {
@@ -232,7 +357,15 @@
         '<td class="mono">' + esc(a.since) + '</td>' +
         '<td class="l">' + esc(a.name) + '</td></tr>';
     }).join('');
-    tbl.innerHTML = rows || '<tr><td class="empty">현재 알람이 없습니다</td></tr>';
+    // 서버 · PLC 가 끊겼으면 알람을 모른다 — '없습니다' 가 아니라 '알 수 없음'
+    var known = !t.offline && t.plc && t.plc.connected;
+    html(tbl, !known ? '<tr><td class="empty">' + (t.offline ? '서버' : 'PLC') +
+      ' 연결이 끊겨 지금 알람을 알 수 없습니다</td></tr>'
+      : rows || '<tr><td class="empty">현재 알람이 없습니다</td></tr>');
+    // 원격은 '닫기' 만 — 확인 · 리셋은 조작이다
+    var op = canOperate();
+    Array.prototype.forEach.call(d.querySelectorAll('#alarmModal [data-am="ack"],#alarmModal [data-am="reset"]'),
+      function (b) { b.hidden = !op; });
   }
 
   d.addEventListener('click', function (ev) {
@@ -240,15 +373,13 @@
     if (!b) return;
     var a = b.dataset.am;
     if (a === 'close') {
-      d.getElementById('alarmModal').hidden = true;
-      w.app.send('alarm_popup_close');
-    } else if (a === 'ack') {
+      closeAlarm();
+    } else if (a === 'ack' && canOperate()) {
       w.app.send('alarm_ack');
       w.app.send('alarm_popup_close');
-    } else if (a === 'reset') {
+    } else if (a === 'reset' && canOperate()) {
       w.app.send('alarm_reset');
-      w.app.send('alarm_popup_close');
-      d.getElementById('alarmModal').hidden = true;
+      closeAlarm();
     }
   });
 
@@ -256,15 +387,15 @@
   d.addEventListener('click', function (ev) {
     if (ev.target.closest('[data-bind="simChip"]')) {
       renderSimPanel();
-      d.getElementById('simModal').hidden = false;
+      showModal('simModal', '[data-sm="close"]');
       return;
     }
     if (ev.target.closest('[data-sm="close"]')) {
-      d.getElementById('simModal').hidden = true;
+      hideModal('simModal');
       return;
     }
     var sw = ev.target.closest('[data-fault]');
-    if (sw) {
+    if (sw && !sw.classList.contains('dis') && canOperate()) {
       w.app.send('sim_fault', { key: sw.dataset.fault, on: !sw.classList.contains('on') });
     }
   });
@@ -273,9 +404,12 @@
     var box = bind('simList');
     if (!box) return;
     var list = (lastState || {}).sim_faults || [];
+    var op = canOperate();
     box.innerHTML = list.map(function (f) {
       return '<div class="row2"><span>' + esc(f.name) + '</span>' +
-        '<span class="sw' + (f.on ? ' on' : '') + '" data-fault="' + esc(f.key) + '"></span></div>';
+        '<span class="sw' + (f.on ? ' on' : '') + (op ? '' : ' dis') + '" tabindex="' + (op ? 0 : -1) +
+        '" role="switch" aria-checked="' + !!f.on + '" data-fault="' + esc(f.key) + '"' +
+        (op ? '' : ' title="이 PC 에서만 바꿀 수 있습니다"') + '></span></div>';
     }).join('') || '<div class="empty">시뮬레이터가 아닙니다</div>';
   }
 
@@ -286,9 +420,11 @@
   };
 
   function askExit() {
+    var dirty = w.viewRecipe && w.viewRecipe.dirty && w.viewRecipe.dirty();
     confirmAsk('프로그램을 종료할까요?',
       'PC 가 꺼지면 PLC 가 <b>PC 통신 끊김</b> 알람을 내고 안전 정지합니다.<br>' +
-      '장비를 계속 돌려 둘 계획이면 종료하지 마세요.',
+      '장비를 계속 돌려 둘 계획이면 종료하지 마세요.' +
+      (dirty ? '<br><br><b>레시피 편집기에 저장하지 않은 편집이 있습니다</b> — 종료하면 사라집니다.' : ''),
       '종료', function () {
         if (!w.app.send('exit') && w.pywebview && w.pywebview.api) w.pywebview.api.force_close();
       });
@@ -319,9 +455,18 @@
   if (d.fonts && d.fonts.ready) d.fonts.ready.then(fit);
 
   /* ===================== 공개 ===================== */
+  // ★ 다른 장비의 PLC 에 붙어 있거나 서버가 끊겼으면 이 PC 에서도 조작하지 못한다
+  function canOperate() {
+    if (offline) return false;
+    if (!(lastState && (lastState.access || {}).local)) return false;
+    return !idBlocked((lastState.live || {}).plc);
+  }
+
   w.core = {
-    bind: bind, esc: esc, h: h, setText: setText, chip: chip, bit: bit,
-    toast: toast, setTab: setTab, fit: fit, confirmAsk: confirmAsk,
+    bind: bind, esc: esc, h: h, html: html, setText: setText, chip: chip, bit: bit,
+    toast: toast, setTab: setTab, fit: fit, confirmAsk: confirmAsk, closeConfirm: closeConfirm,
+    showModal: showModal, hideModal: hideModal, setOffline: setOffline,
+    get offline() { return offline; },
     askExit: askExit, renderSimPanel: renderSimPanel, renderAlarmModal: renderAlarmModal,
     applyState: applyState, applyLive: applyLive,
     get state() { return lastState; },
@@ -337,16 +482,14 @@
         if (lastState.live) mod.update(lastState.live);
       } catch (e) { console.error('late render ' + name, e); }
     },
-    // ★ 다른 장비의 PLC 에 붙어 있으면 이 PC 에서도 조작하지 못한다
-    canOperate: function () {
-      if (!(lastState && (lastState.access || {}).local)) return false;
-      return !idBlocked((lastState.live || {}).plc);
-    },
+    canOperate: canOperate,
+    /** 이 PC(로컬) 접속인가 — 종료 단추처럼 PLC 와 무관한 것만 이걸로 판단한다 */
+    isLocal: function () { return !offline && !!(lastState && (lastState.access || {}).local); },
     idText: idText,
     idBlocked: idBlocked,
     plcOk: function () {
       var t = (lastState || {}).live || {};
-      return !!(t.plc && t.plc.connected);
+      return !offline && !!(t.plc && t.plc.connected);
     }
   };
 

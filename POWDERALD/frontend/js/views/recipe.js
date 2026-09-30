@@ -7,6 +7,9 @@
  *
  * ★ 편집 중인 것과 PLC 에 올라가 있는 것은 다른 것이다. 둘을 나란히 보여 준다 —
  *   "화면에서 고쳤는데 장비는 옛 레시피로 돈다"가 가장 흔한 사고다.
+ * ★ 입력 칸은 레시피를 새로 열 때 · 운전자가 칸을 더하고 뺄 때만 다시 만든다. 상태를 다시
+ *   받을 때마다(명령 뒤 · 저장 직후) 다시 그리면 치던 값이 지워지고 포커스가 빠진다.
+ * ★ '저장됨'은 서버의 저장 결과(recipe_saved)를 받은 뒤에만 — 거절되면 dirty 를 그대로 둔다.
  * ============================================================ */
 (function (w, d) {
   'use strict';
@@ -19,16 +22,43 @@
   var lim = {};
   var sel = { block: 1 };
   var sendTimer = null;
+  var drawn = false;        // 지금 cur 로 편집기 칸을 만들었는가
+  var limSig = '';
+  var editNo = 0;           // 편집할 때마다 +1 — 저장 요청 뒤에 또 고쳤는지 본다
+  var saving = null;        // { name, editNo } — 답을 기다리는 저장
+  var lastPlcConn = null;
 
   /* ===================== 서버에서 오는 것 ===================== */
   w.app.on('recipe', function (m) {
     cur = m.recipe;
     curName = m.name || '';
     dirty = false;
+    saving = null;
     check = m.check || { errors: [], warnings: [] };
     summary = m.summary || {};
     sel.block = 1;
     draw();
+  });
+
+  /** 저장 결과. 성공이면 그 이름으로 · 저장 요청 뒤에 더 고치지 않았으면 dirty 를 내린다. */
+  w.app.on('recipe_saved', function (m) {
+    var sv = saving;
+    saving = null;
+    if (!m.ok) {
+      // 거절 — 편집은 그대로(dirty 유지), 이유는 서버 알림과 함께 여기에도 남긴다
+      dirty = true;
+      core.setText('rcSaveMsg', '저장 안 됨 — ' + (m.why || ''));
+      drawStatus();
+      return;
+    }
+    core.setText('rcSaveMsg', '');
+    curName = m.name;
+    if (cur) cur.name = m.name;
+    dirty = !!(sv && sv.editNo !== editNo);
+    var nm = d.querySelector('[data-rcf="name"]');
+    if (nm && d.activeElement !== nm) nm.value = m.name;
+    drawStatus();
+    drawList(core.state || {});
   });
 
   w.app.on('recipe_check', function (m) {
@@ -41,6 +71,7 @@
   /** 편집한 내용을 서버로 보내 검증받는다. 타이핑마다 보내지 않고 조금 모은다. */
   function validateSoon() {
     dirty = true;
+    editNo++;
     if (sendTimer) clearTimeout(sendTimer);
     sendTimer = setTimeout(function () {
       sendTimer = null;
@@ -53,8 +84,12 @@
     lim = s.recipe_limits || {};
     drawList(s);
     drawPlcRow(s);
+    // ★ 편집기 칸은 새로 열 때만 만든다(한계가 바뀐 때 제외) — 치던 값 · 포커스를 지킨다
+    var sig = JSON.stringify(lim) + '|' + JSON.stringify((s.device || {}).key || '');
     if (!cur) drawEmpty();
-    else draw();
+    else if (!drawn || sig !== limSig) draw();
+    else drawStatus();
+    limSig = sig;
   }
 
   function update(t) {
@@ -70,9 +105,13 @@
       if (k === 'rcUpload' || k === 'rcStart') block = block || !core.plcOk();
       b.disabled = block;
     });
-    core.setText('rcRunNote', run
-      ? '공정 중입니다 — 저장·올리기는 공정이 끝난 뒤에 하세요'
-      : (flow ? '시작 절차 진행 중 — 끝나거나 대기 취소 뒤에 바꿀 수 있습니다' : ''));
+    core.setText('rcRunNote', !core.canOperate() ? '보기 전용 — 저장 · 올리기는 이 PC 에서만'
+      : run ? '공정 중입니다 — 저장·올리기는 공정이 끝난 뒤에 하세요'
+        : (flow ? '시작 절차 진행 중 — 끝나거나 대기 취소 뒤에 바꿀 수 있습니다' : ''));
+    var conn = core.plcOk();
+    if (conn !== lastPlcConn) { lastPlcConn = conn; drawPlcRow(core.state || {}); }
+    var nb = d.querySelector('[data-rcbtn="new"]');
+    if (nb) nb.disabled = false;
   }
 
   /* ---------- 목록 ---------- */
@@ -80,14 +119,14 @@
     var box = core.bind('rcList');
     if (!box) return;
     var list = s.recipes || [];
-    box.innerHTML = list.length ? list.map(function (r) {
+    core.html(box, list.length ? list.map(function (r) {
       return '<div class="rc-item' + (r.name === curName ? ' on' : '') +
-        '" data-rcopen="' + core.esc(r.name) + '">' +
+        '" tabindex="0" role="button" data-rcopen="' + core.esc(r.name) + '">' +
         '<div class="n">' + core.esc(r.name) + '</div>' +
         '<div class="m">' + core.esc(r.memo || '') + '</div>' +
         '<div class="s mono">블록 ' + core.esc(r.block_count) + ' · 번호 ' + core.esc(r.number) +
         (r.modified ? ' · ' + core.esc(r.modified) : '') + '</div></div>';
-    }).join('') : '<div class="empty">저장된 레시피가 없습니다 — [새로]를 누르세요</div>';
+    }).join('') : '<div class="empty">저장된 레시피가 없습니다 — [새로]를 누르세요</div>');
   }
 
   /** 지금 PLC 에 올라가 있는 레시피 한 줄. */
@@ -95,15 +134,21 @@
     var e = core.bind('rcPlc');
     if (!e) return;
     var p = s.plc_recipe || {};
-    if (!p.number) { e.innerHTML = '<span class="dim">PLC 레시피 정보를 아직 읽지 않았습니다</span>'; return; }
-    e.innerHTML = core.chip(p.plc_ok ? 'PLC 검사 통과' : 'PLC 검사 미통과', p.plc_ok ? 'ok' : 'warn') +
+    // ★ PLC 가 끊겼으면 마지막으로 읽은 것일 뿐이다 — 흐리게 · 'PLC 끊김'
+    var conn = core.plcOk();
+    var row = e.closest('.plcrow');
+    if (row) row.classList.toggle('stale', !conn);
+    var pre = conn ? '' : core.chip('PLC 끊김', 'off') + ' <span class="dim">마지막으로 읽은 것:</span> ';
+    if (!p.number) { core.html(e, pre + '<span class="dim">PLC 레시피 정보를 아직 읽지 않았습니다</span>'); return; }
+    core.html(e, pre + core.chip(p.plc_ok ? '✓ PLC 검사 통과' : '✕ PLC 검사 미통과', p.plc_ok ? 'ok' : 'warn') +
       ' <b>' + core.esc(p.name || '(이름 모름)') + '</b>' +
-      ' <span class="mono dim">번호 ' + p.number + ' · 스텝 ' + p.step_count +
-      ' · 블록 ' + p.block_count + ' · 합계 ' + fmt.hex16(p.checksum) + '</span>' +
-      (p.name ? '' : ' <span class="warn-txt">이 번호에 맞는 로컬 레시피가 없습니다</span>');
+      ' <span class="mono dim">번호 ' + core.esc(p.number) + ' · 스텝 ' + core.esc(p.step_count) +
+      ' · 블록 ' + core.esc(p.block_count) + ' · 합계 ' + fmt.hex16(p.checksum) + '</span>' +
+      (p.name ? '' : ' <span class="warn-txt">이 번호에 맞는 로컬 레시피가 없습니다</span>'));
   }
 
   function drawEmpty() {
+    drawn = false;
     var box = core.bind('rcEdit');
     if (box) box.innerHTML =
       '<div class="empty" style="padding:36px 20px;line-height:2">' +
@@ -118,6 +163,7 @@
     if (!cur) { drawEmpty(); return; }
     var box = core.bind('rcEdit');
     if (!box) return;
+    drawn = true;
     var blocks = arr(cur.blocks);
     if (sel.block > blocks.length) sel.block = blocks.length || 1;
 
@@ -184,11 +230,11 @@
         core.esc(lim.step_ms_max || 3276700) + '" data-rcs="time_ms" value="' + attr(st.time_ms) + '"></td>' +
         valves.map(function (v) {
           return '<td><span class="cb' + (hasValve(st, v) ? ' on' : '') +
-            '" data-rcv="' + core.esc(v) + '"></span></td>';
+            '" tabindex="0" role="checkbox" title="' + core.esc(v) + '" data-rcv="' + core.esc(v) + '"></span></td>';
         }).join('') +
         ((core.state.device || {}).has_rf
-          ? '<td><span class="cb' + (st.rf ? ' on' : '') + '" data-rcflag="rf"></span></td>' : '') +
-        '<td><span class="cb' + (st.pause_ok ? ' on' : '') + '" data-rcflag="pause_ok"></span></td>' +
+          ? '<td><span class="cb' + (st.rf ? ' on' : '') + '" tabindex="0" role="checkbox" data-rcflag="rf"></span></td>' : '') +
+        '<td><span class="cb' + (st.pause_ok ? ' on' : '') + '" tabindex="0" role="checkbox" data-rcflag="pause_ok"></span></td>' +
         '<td><button class="xbtn" data-rcdel="step" title="이 스텝 삭제">✕</button></td></tr>';
     });
     h += '</tbody></table>' +
@@ -198,12 +244,28 @@
     return h;
   }
 
+  /** 새 그룹 기본값 — 마지막 그룹 뒤 첫 블록부터 끝 블록까지. 자리가 없으면 null. */
+  function nextGroup() {
+    var gs = arr(cur.groups);
+    var n = arr(cur.blocks).length;
+    var lastTo = 0;
+    gs.forEach(function (g) { var t = Number((g || {}).to_block) || 0; if (t > lastTo) lastTo = t; });
+    if (lastTo + 1 > n) return null;
+    return { from_block: lastTo + 1, to_block: n, repeat: 2 };
+  }
+
   function groupsHtml() {
     var gs = arr(cur.groups);
     var n = arr(cur.blocks).length;
+    var room = nextGroup();
+    var full = gs.length >= (lim.group_max || 5);
+    var why = full ? '반복 그룹은 최대 ' + (lim.group_max || 5) + '개입니다'
+      : !room ? '마지막 그룹 뒤에 남은 블록이 없습니다 — 블록을 더하거나 그룹 범위를 줄이세요' : '';
     var h = '<div class="rc-groups"><div class="rc-ghead">반복 그룹' +
-      '<span class="hint">블록 여러 개를 묶어 다시 돌립니다. 겹치게 둘 수 없습니다.</span>' +
-      '<button class="btn sm" data-rcadd="group">＋ 그룹</button></div>';
+      '<span class="hint">블록 여러 개를 묶어 다시 돌립니다. 겹치게 둘 수 없습니다.' +
+      (why ? ' <span class="warn-txt">' + core.esc(why) + '</span>' : '') + '</span>' +
+      '<button class="btn sm" data-rcadd="group"' + (why ? ' disabled title="' + core.esc(why) + '"' : '') +
+      '>＋ 그룹</button></div>';
     if (!gs.length) h += '<div class="dim">없음</div>';
     gs.forEach(function (g, i) {
       // ★ 키는 서버·저장 파일·PLC 표와 같은 from_block / to_block (from / to 가 아니다)
@@ -366,7 +428,7 @@
     }
 
     var add = t.closest('[data-rcadd]');
-    if (add && cur) { addThing(add.dataset.rcadd); return; }
+    if (add && cur && !add.disabled) { addThing(add.dataset.rcadd); return; }
 
     var del = t.closest('[data-rcdel]');
     if (del && cur) { delThing(del); return; }
@@ -411,7 +473,9 @@
         core.toast('반복 그룹은 최대 ' + (lim.group_max || 5) + '개입니다', 'warn');
         return;
       }
-      cur.groups.push({ from_block: 1, to_block: (cur.blocks || []).length || 1, repeat: 2 });
+      var ng = nextGroup();
+      if (!ng) { core.toast('마지막 그룹 뒤에 남은 블록이 없습니다', 'warn'); return; }
+      cur.groups.push(ng);
     }
     draw();
     validateSoon();
@@ -451,7 +515,27 @@
     w.app.send('recipe_load', { name: name });
   }
 
+  /** 저장 요청 — 답(recipe_saved)이 올 때까지 이름 · dirty 를 바꾸지 않는다. */
+  function sendSave(nm) {
+    saving = { name: nm, editNo: editNo };
+    core.setText('rcSaveMsg', '저장하는 중…');
+    if (!w.app.send('recipe_save', { name: nm, recipe: cur })) {
+      saving = null;
+      core.setText('rcSaveMsg', '저장 안 됨 — 서버에 연결되어 있지 않습니다');
+    }
+  }
+
+  function exists(nm) {
+    return ((core.state || {}).recipes || []).some(function (r) { return r.name === nm; });
+  }
+
   function doButton(which) {
+    if (which === 'new' && dirty) {
+      core.confirmAsk('저장하지 않은 편집이 있습니다',
+        '새 레시피를 만들면 지금 편집한 내용이 사라집니다.',
+        '그래도 새로', function () { dirty = false; doButton('new'); });
+      return;
+    }
     if (which === 'new') {
       var mk = [];
       for (var i = 0; i < (lim.mfc_count || 0); i++) mk.push(0);
@@ -460,6 +544,7 @@
         blocks: [{ name: '블록 1', repeat: 1, mfc_sccm: mk, steps: [] }], groups: []
       };
       curName = '';
+      saving = null;
       sel.block = 1;
       draw();
       validateSoon();
@@ -470,19 +555,18 @@
     if (which === 'save') {
       var nm = (cur.name || '').trim();
       if (!nm) { core.toast('레시피 이름을 넣으세요', 'warn'); return; }
-      w.app.send('recipe_save', { name: nm, recipe: cur });
-      curName = nm;
-      dirty = false;
-      drawStatus();
+      if (nm !== curName && exists(nm)) { confirmOverwrite(nm); return; }
+      sendSave(nm);
       return;
     }
     if (which === 'saveas') {
       askName('다른 이름으로 저장', cur.name || '', function (nm) {
+        // ★ 이미 있는 이름이면 덮어쓰기 확인 — PLC 에 올린 레시피를 조용히 바꾸지 않게
+        if (exists(nm)) { confirmOverwrite(nm); return; }
         cur.name = nm;
-        w.app.send('recipe_save', { name: nm, recipe: cur });
-        curName = nm;
-        dirty = false;
-        draw();
+        var f = d.querySelector('[data-rcf="name"]');
+        if (f) f.value = nm;
+        sendSave(nm);
       });
       return;
     }
@@ -527,6 +611,18 @@
     }
   }
 
+  function confirmOverwrite(nm) {
+    core.confirmAsk('같은 이름의 레시피가 있습니다',
+      '<b>' + core.esc(nm) + '</b> 파일을 지금 편집한 내용으로 덮어씁니다.<br>' +
+      'PLC 에 올라가 있는 레시피라면 다음에 올릴 때 바뀐 내용이 올라갑니다.',
+      '덮어쓰기', function () {
+        cur.name = nm;
+        var f = d.querySelector('[data-rcf="name"]');
+        if (f) f.value = nm;
+        sendSave(nm);
+      });
+  }
+
   /** 이름 입력 — 브라우저 prompt 는 pywebview 창에서 동작이 제각각이라 쓰지 않는다. */
   function askName(title, initial, cb) {
     core.confirmAsk(title,
@@ -541,7 +637,7 @@
       });
     setTimeout(function () {
       var e = d.getElementById('rcAskName');
-      if (e) { e.focus(); e.select(); }
+      if (e && d.activeElement === e) e.select();   // 포커스는 확인 창이 이 칸에 둔다
     }, 30);
   }
 
@@ -561,6 +657,15 @@
     }
   });
 
+  // 이름 입력 창은 Enter 로 확인
+  d.addEventListener('keydown', function (ev) {
+    if (ev.key === 'Enter' && ev.target && ev.target.id === 'rcAskName') {
+      ev.preventDefault();
+      var ok = d.querySelector('[data-cf="ok"]');
+      if (ok) ok.click();
+    }
+  });
+
   core.register('recipe', { render: render, update: update });
-  w.viewRecipe = { render: render, update: update };
+  w.viewRecipe = { render: render, update: update, dirty: function () { return !!(cur && dirty); } };
 })(window, document);

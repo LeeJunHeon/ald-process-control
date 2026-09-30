@@ -11,36 +11,49 @@
  * ★ 잠금 해제가 없으면 밸브를 못 누른다. 공정이 시작되면 서버가 다시 잠근다.
  * ★ 판정은 서버가 한다 — 여기서 막는 것은 손이 미끄러지는 것을 줄이려는 것뿐이고,
  *   실제로 거절하는 쪽은 PLC 다.
+ * ★ 입력 칸은 창을 새로 열 때(또는 장비 구조가 바뀔 때)만 다시 만든다. 상태를 다시 받을 때마다
+ *   (밸브를 누르거나 잠금 해제를 바꿀 때) 통째로 다시 그리면 치던 MFC·히터·RF 값이 지워진다.
+ *   나머지 갱신은 표시 글자 · 상태 클래스만 바꾼다.
  * ============================================================ */
 (function (w, d) {
   'use strict';
 
   var built = false;
+  var builtSig = '';
   var heaterBusy = {};     // ch → { target, until } — 응답 전까지 스위치 잠금
 
   function open() {
     core.setText('mnDev', ((core.state || {}).device || {}).name || '');
+    built = false;                 // 창을 새로 열 때는 새 칸으로
     build();
-    d.getElementById('manualModal').hidden = false;
+    core.showModal('manualModal', '[data-mn="close"]');
     paint();
+  }
+
+  /** 입력 칸을 다시 만들어야 하는 구조(밸브·MFC·히터·장비 전용)의 서명. */
+  function structSig() {
+    var s = core.state || {};
+    return JSON.stringify([s.device || {}, (s.structure || {}).valves, (s.structure || {}).mfc,
+                           (s.structure || {}).heaters, (s.recipe_limits || {}).recipe_valves]);
   }
 
   function build() {
     var box = core.bind('mnBody');
     if (!box || built) return;
+    builtSig = structSig();
     var s = core.state || {};
     var dev = s.device || {};
     var str = s.structure || {};
     var rv = (s.recipe_limits || {}).recipe_valves || [];
 
     var h = '<div class="mn-lock">' +
-      '<span class="sw" data-bind="mnUnlock" data-mn="unlock"></span>' +
+      '<span class="sw" data-bind="mnUnlock" data-mn="unlock" role="switch" tabindex="0"></span>' +
       '<span>밸브 조작 잠금 해제<span class="hint"> 5분 뒤 · 공정이 시작되면 자동으로 잠깁니다</span></span>' +
       '<span class="right mono" data-bind="mnLeft"></span></div>' +
       '<div class="mn-sec">밸브</div><div class="mn-valves">';
     (str.valves || []).forEach(function (v) {
       if (rv.indexOf(v.tag) < 0) return;      // 자동 밸브는 수동으로 다루지 않는다
-      h += '<div class="mn-v" data-mnv="' + core.esc(v.tag) + '">' +
+      h += '<div class="mn-v" role="button" tabindex="0" data-mnv="' + core.esc(v.tag) + '">' +
         '<span class="t">' + core.esc(v.tag) + '</span>' +
         '<span class="n">' + core.esc(v.name || '') + '</span>' +
         '<span class="st" data-mnvst="' + core.esc(v.tag) + '">&mdash;</span></div>';
@@ -49,12 +62,12 @@
 
     h += '<div class="mn-sec">MFC</div><div class="mn-grid">';
     (str.mfc || []).forEach(function (m) {
-      h += '<label>' + m.no + ' ' + core.esc(m.name) +
+      h += '<label>' + core.esc(m.no) + ' ' + core.esc(m.name) +
         (m.full_scale_sccm == null ? ' <span class="unconf">풀스케일 미정</span>' : '') +
-        '<span class="inrow"><input type="number" min="0" step="0.1" data-mnmfc="' + m.no + '"' +
+        '<span class="inrow"><input type="number" min="0" step="0.1" data-mnmfc="' + core.esc(m.no) + '"' +
         (m.full_scale_sccm == null ? ' disabled' : '') + '>' +
         '<span class="unit">sccm</span>' +
-        '<span class="cur mono" data-mnmfccur="' + m.no + '">&mdash;</span></span></label>';
+        '<span class="cur mono" data-mnmfccur="' + core.esc(m.no) + '">&mdash;</span></span></label>';
     });
     h += '<button class="btn sm primary" data-mn="mfc">MFC 적용</button></div>';
 
@@ -62,13 +75,14 @@
       '<div class="mn-grid">';
     (str.heaters || []).forEach(function (x) {
       if (!x.enabled) return;
-      h += '<label>CH' + x.ch + ' ' + core.esc(x.name) +
+      var ch = core.esc(x.ch);
+      h += '<label>CH' + ch + ' ' + core.esc(x.name) +
         (x.max_c == null ? ' <span class="unconf">한계 미정</span>' : '') +
-        '<span class="inrow"><input type="number" min="0" step="1" data-mnhsv="' + x.ch + '"' +
+        '<span class="inrow"><input type="number" min="0" step="1" data-mnhsv="' + ch + '"' +
         (x.max_c == null ? ' disabled' : '') + '>' +
         '<span class="unit">℃</span>' +
-        '<span class="sw sm" data-mnhpow="' + x.ch + '"></span>' +
-        '<span class="cur mono" data-mnhcur="' + x.ch + '">&mdash;</span></span></label>';
+        '<span class="sw sm" role="switch" tabindex="0" data-mnhpow="' + ch + '"></span>' +
+        '<span class="cur mono" data-mnhcur="' + ch + '">&mdash;</span></span></label>';
     });
     h += '<button class="btn sm primary" data-mn="heater">히터 적용</button></div>';
 
@@ -114,12 +128,18 @@
     var s = core.state || {};
     var t = s.live || {};
     var mn = t.manual || {};
-    var conn = !!(t.plc && t.plc.connected);
+    var conn = !core.offline && !!(t.plc && t.plc.connected);
     var run = !!((t.process || {}).running);
     var can = core.canOperate() && conn && !run;
 
     var sw = core.bind('mnUnlock');
-    if (sw) sw.classList.toggle('on', !!mn.unlocked);
+    if (sw) {
+      sw.classList.toggle('on', !!mn.unlocked);
+      // ★ 원격 · 다른 장비 · 끊김 · 공정 중에는 스위치도 잠근다(서버가 거절하긴 하지만 화면에서 먼저)
+      sw.classList.toggle('dis', !can);
+      sw.tabIndex = can ? 0 : -1;
+      sw.setAttribute('aria-checked', String(!!mn.unlocked));
+    }
     core.setText('mnLeft', mn.unlocked ? '잠금 해제 ' + (mn.unlock_left_s || 0) + ' s 남음'
       : (run ? '공정 중 — 수동 조작 잠김' : '잠김'));
 
@@ -132,12 +152,13 @@
       e.classList.toggle('on', app);
       e.classList.toggle('req', req && !app);
       e.classList.toggle('dis', !can || !mn.unlocked);
+      e.tabIndex = (!can || !mn.unlocked) ? -1 : 0;
       var st = d.querySelector('[data-mnvst="' + tag + '"]');
       if (st) {
-        st.innerHTML = !conn ? fmt.DASH
-          : app ? core.chip('열림', 'ok')
-            : req ? core.chip('대기', 'warn', 'PLC 가 아직 허가하지 않았습니다')
-              : core.chip('닫힘', 'off');
+        core.html(st, !conn ? fmt.DASH
+          : app ? core.chip('● 열림', 'ok')
+            : req ? core.chip('◐ 대기', 'warn', 'PLC 가 아직 허가하지 않았습니다')
+              : core.chip('○ 닫힘', 'off'));
       }
     });
 
@@ -162,7 +183,12 @@
       if (p) {
         p.classList.toggle('on', !!(conn && v.power));
         p.classList.toggle('busy', !!busy);
-        p.title = busy ? '응답을 기다리는 중' : (conn && v.comm_ok === false ? (v.power_block || '') : '');
+        p.classList.toggle('dis', !can);
+        p.tabIndex = can ? 0 : -1;
+        p.setAttribute('aria-checked', String(!!(conn && v.power)));
+        var tt = busy ? '응답을 기다리는 중' : !can ? '지금은 바꿀 수 없습니다(공정 중 · 원격 · 연결 끊김)'
+          : (conn && v.comm_ok === false ? (v.power_block || '') : '');
+        if (p.title !== tt) p.title = tt;
       }
     });
 
@@ -198,6 +224,7 @@
       return;
     }
     var pw = ev.target.closest('[data-mnhpow]');
+    if (pw && pw.classList.contains('dis')) return;
     if (pw) {
       var ch = Number(pw.dataset.mnhpow);
       if (heaterBusy[ch]) return;
@@ -218,9 +245,10 @@
   function kv(k, v) { var o = {}; o[k] = v; return o; }
 
   function act(what) {
-    if (what === 'close') { d.getElementById('manualModal').hidden = true; return; }
+    if (what === 'close') { core.hideModal('manualModal'); return; }
     if (what === 'unlock') {
       var sw = core.bind('mnUnlock');
+      if (sw.classList.contains('dis')) return;
       w.app.send('manual_unlock', { on: !sw.classList.contains('on') });
       return;
     }
@@ -282,7 +310,8 @@
 
   core.register('manual', {
     render: function () {
-      // 구조가 바뀌면 다시 만든다. 열려 있으면 그 자리에서 바로 다시 그린다.
+      // ★ 구조가 바뀐 때만 다시 만든다 — 상태를 받을 때마다 다시 만들면 치던 값이 지워진다.
+      if (built && structSig() === builtSig) { paint(); return; }
       built = false;
       var m = d.getElementById('manualModal');
       if (m && !m.hidden) { build(); paint(); }

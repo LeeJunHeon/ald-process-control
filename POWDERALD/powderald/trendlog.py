@@ -43,8 +43,8 @@ def _cols():
         out.append((f"mfc{no}_pv", "INTEGER", 10, "m", f"MFC{no} 현재", "sccm"))
         out.append((f"mfc{no}_sv", "INTEGER", 10, "m", f"MFC{no} 설정", "sccm"))
     for ch in range(1, DEV.HEATER_COUNT + 1):
-        out.append((f"h{ch}_pv", "INTEGER", 10, "t", f"CH{ch} 현재", "°C"))
-        out.append((f"h{ch}_sv", "INTEGER", 10, "t", f"CH{ch} 설정", "°C"))
+        out.append((f"h{ch}_pv", "INTEGER", 10, "t", f"CH{ch} 현재", "℃"))
+        out.append((f"h{ch}_sv", "INTEGER", 10, "t", f"CH{ch} 설정", "℃"))
     if DEV.HAS_RF:
         out += [("rf_fwd", "INTEGER", 10, "x", "RF 순방향", "W"),
                 ("rf_ref", "INTEGER", 10, "x", "RF 반사", "W"),

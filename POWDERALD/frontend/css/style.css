@@ -134,6 +134,14 @@ header {
 .btn:disabled { opacity: .40; cursor: not-allowed; }
 .btn.primary { background: var(--primary); border-color: var(--primary); color: var(--primary-ink); }
 .btn.danger { background: var(--stop); border-color: var(--stop); color: #fff; }
+/* ★ 채운 단추는 hover 에도 배경색을 지킨다 — 배경만 --panel-2 로 바뀌면 흰 글자가 사라진다(밝은 테마) */
+.btn.primary:hover:not(:disabled) { background: var(--primary); border-color: var(--ink); filter: brightness(1.12); }
+.btn.danger:hover:not(:disabled)  { background: var(--stop); border-color: var(--ink); filter: brightness(1.12); }
+/* 키보드 포커스가 보이게 */
+.btn:focus-visible, .tab:focus-visible, .sw:focus-visible, .cb:focus-visible, .mn-v:focus-visible,
+.rc-item:focus-visible, .dl-item:focus-visible, .inp:focus-visible, input:focus-visible, select:focus-visible {
+  outline: 2px solid var(--accent); outline-offset: 1px;
+}
 .btn.danger-line { color: var(--stop); border-color: var(--stop-line); }
 .btn.danger-line:hover:not(:disabled) { background: var(--stop-bg); border-color: var(--stop); }
 .btn.sm { padding: 3px 9px; font-size: var(--fs-md); }
@@ -231,7 +239,10 @@ header {
   background: var(--panel); border: 1px solid var(--line);
   border-radius: var(--r-3); box-shadow: var(--shadow);
 }
-.cmdbar .lockmsg { margin-left: auto; margin-right: var(--sp-2); font-size: var(--fs-md); color: var(--ink-faint); }
+.cmdbar .lockmsg {
+  margin-left: auto; margin-right: var(--sp-2); font-size: var(--fs-md); color: var(--ink-faint);
+  min-width: 0; flex: 0 1 auto; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;  /* 한 줄 말줄임 */
+}
 
 /* ===================== 트렌드 ===================== */
 .trendbar { flex: 0 0 auto; display: flex; align-items: center; gap: var(--sp-2); }
@@ -242,16 +253,7 @@ header {
 .legend-inline { margin-left: auto; display: flex; gap: var(--sp-3); font-size: var(--fs-xs); }
 .legend-inline span { display: flex; align-items: center; gap: 4px; color: var(--ink-dim); }
 .legend-inline i { width: 12px; height: 2.5px; border-radius: 2px; }
-#tip {
-  position: absolute; z-index: 20; pointer-events: none;
-  padding: var(--sp-2) var(--sp-3); border-radius: var(--r-2);
-  border: 1px solid var(--line-2); background: var(--panel);
-  box-shadow: var(--shadow-lg); font-size: var(--fs-sm); white-space: nowrap;
-}
-#tip .tt { color: var(--ink-faint); margin-bottom: 3px; }
-#tip .tr { display: flex; align-items: center; gap: 5px; }
-#tip .tr i { width: 8px; height: 8px; border-radius: 2px; }
-#tip .tr b { font-family: var(--font-mono); margin-left: auto; }
+.legend-inline { overflow: hidden; flex-wrap: wrap; justify-content: flex-end; max-height: 1.4em; }
 
 /* ===================== 알람 · 로그 ===================== */
 .logbox {
@@ -513,17 +515,6 @@ header {
 .hseries[hidden] { display: none; }
 .hs { display: inline-flex; align-items: center; gap: 3px; cursor: pointer; }
 .hs-g { font-weight: 700; color: var(--ink); margin-left: var(--sp-2); }
-.ctip {
-  position: absolute; z-index: 20; pointer-events: none;
-  padding: var(--sp-2) var(--sp-3); border-radius: var(--r-2);
-  border: 1px solid var(--line-2); background: var(--panel);
-  box-shadow: var(--shadow-lg); font-size: var(--fs-sm); white-space: nowrap;
-}
-.ctip .tt { color: var(--ink-faint); margin-bottom: 3px; }
-.ctip .tb { color: var(--accent); font-weight: 700; margin-bottom: 3px; }
-.ctip .tr { display: flex; align-items: center; gap: 5px; }
-.ctip .tr i { width: 8px; height: 8px; border-radius: 2px; }
-.ctip .tr b { font-family: var(--font-mono); margin-left: auto; padding-left: var(--sp-3); }
 #view-trend .col.grow, #view-datalog .col.grow { min-height: 0; }
 
 .dlfilter { display: flex; gap: var(--sp-2); padding: var(--sp-2) var(--sp-3) 0; }
@@ -568,6 +559,21 @@ header {
   font-weight: 700; font-size: var(--fs-lg); text-align: center; }
 
 /* v0.4.2 — 범례 색 표시 · PRM 표 폭 */
-.hs .sw-c { display: inline-block; width: 10px; height: 3px; border-radius: 1px; margin-right: 2px; }
+/* 선 색 표시 — 설정값은 같은 색 점선, 안 그리는 열은 빈 칸 */
+.sw-c { display: inline-block; width: 12px; height: 3px; border-radius: 1px; margin-right: 3px; background: var(--c); }
+.sw-c.dash { background: repeating-linear-gradient(90deg, var(--c) 0 3px, transparent 3px 5px); }
+.sw-c.none { background: none; border-top: 1px dashed var(--ink-faint); height: 0; }
 .prmtbl td, .prmtbl th { white-space: nowrap; }
 .prmtbl .small, .tbl .small { font-size: var(--fs-sm); }
+
+/* ===================== 창 쌓임 · 끊김 · 잠금 ===================== */
+/* ★ 쌓임 순서: 알람 창 > 확인 창 > 나머지 창. DOM 순서에 맡기면 뒤에 있는 창이 이겨
+ *   수동 조작 창 뒤에 확인 창·알람 창이 숨는다. */
+#confirmModal { z-index: 90; }
+#alarmModal { z-index: 100; }
+.sw.dis { opacity: .4; cursor: not-allowed; }
+.clock.stale { opacity: .45; }
+.plcrow.stale { opacity: .6; }
+.rcbar [data-bind="rcSaveMsg"] { margin-left: var(--sp-2); }
+.chartpanel .panel-head { white-space: nowrap; }
+.chartpanel .legend-inline { min-width: 0; flex: 1 1 auto; }

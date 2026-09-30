@@ -27,7 +27,9 @@ from .state import state
 from .connection import manager, push_state, push_notice, push_log
 
 # 원격(보기 전용)이 보낼 수 있는 명령. 나머지는 전부 거절한다.
-READ_ONLY_CMDS = {"ping"}
+# 레시피 불러오기 · 검증(요약 포함)은 파일을 바꾸지 않는 읽기라 원격에서도 된다 —
+# 저장 · 올리기 · 삭제 · 이름 바꾸기 · 선택 · 시작은 그대로 거절한다.
+READ_ONLY_CMDS = {"ping", "recipe_load", "recipe_validate"}
 
 # 배기·알람 계열 — 화면 버튼 하나가 PLC 명령 하나에 대응한다.
 SIMPLE_CMDS = {
@@ -72,7 +74,7 @@ async def handle_command(data: dict, ws=None):
         manager.log_limited(ws, "warn", f"알 수 없는 명령 무시: {shown}")
         await push_notice(f"알 수 없는 명령입니다: {shown}", "warn", ws)
         return
-    if cmd in READ_ONLY_CMDS:
+    if cmd == "ping":
         return
     from . import loops
     loops.note_work(f"명령 {cmd}")          # 권한 확인 뒤, 등록된 이름으로만
@@ -285,39 +287,46 @@ async def _cmd_recipe_load(d, ws):
 
 
 async def _cmd_recipe_save(d, ws):
+    """저장. ★ 결과(저장한 이름 · 거절 이유)를 그 연결에 recipe_saved 로 돌려준다 — 화면은 이 답을
+    받은 뒤에만 '저장됨'으로 바꾼다(거절된 저장이 저장된 것처럼 보이지 않게)."""
     name = d.get("name") if isinstance(d.get("name"), str) else ""
     name = name.strip()
+    ok, why, level, rec = _save_recipe(name, d.get("recipe"))
+    if not ok:
+        await push_notice(why, level, ws)
+        await manager.send_to(ws, {"type": "recipe_saved", "ok": False, "name": name, "why": why})
+        return
+    await push_log(f"레시피 저장 [{name}] 번호 {R.recipe_number(rec)}", "ok")
+    await push_notice(f"저장했습니다: {name}", "ok", ws)
+    await manager.send_to(ws, {"type": "recipe_saved", "ok": True, "name": name,
+                               "number": R.recipe_number(rec)})
+    await push_state()
+
+
+def _save_recipe(name: str, recipe):
+    """(성공, 이유, 알림 등급, 저장한 레시피)."""
     # 저장은 새 키로만 — 옛 키(반복 그룹 from / to)는 여기서 바꾼다
-    rec = R.upgrade(d.get("recipe") or {})
+    rec = R.upgrade(recipe or {})
     if not isinstance(rec, dict):
-        await push_notice("레시피 형식이 올바르지 않습니다", "warn", ws)
-        return
+        return False, "레시피 형식이 올바르지 않습니다", "warn", None
     if not storage.valid_name(name):
-        await push_notice("레시피 이름에 쓸 수 없는 문자가 있습니다", "warn", ws)
-        return
+        return False, "레시피 이름에 쓸 수 없는 문자가 있습니다", "warn", None
     why = _flow_block(name)
     if why:
-        await push_notice(why, "warn", ws)
-        return
+        return False, why, "warn", None
     rec["format"] = DEV.RECIPE_FORMAT
     rec["name"] = name
     res = R.validate(state.cfg, rec)
     if res["errors"]:
-        await push_notice(f"검증 오류 {len(res['errors'])}건 — 고친 뒤 저장하세요", "warn", ws)
-        return
+        return False, f"검증 오류 {len(res['errors'])}건 — 고친 뒤 저장하세요", "warn", None
     # ★ 실행 중인 레시피는 덮어쓸 수 없다(다른 이름으로 저장은 된다).
     if _running() and state.runner and state.runner.active_name == name:
-        await push_notice("실행 중인 레시피는 덮어쓸 수 없습니다 — 다른 이름으로 저장하세요",
-                          "warn", ws)
-        return
+        return False, "실행 중인 레시피는 덮어쓸 수 없습니다 — 다른 이름으로 저장하세요", "warn", None
     rec["modified"] = time.strftime("%Y-%m-%d %H:%M:%S")
     rec.setdefault("created", rec["modified"])
     if not storage.save(name, rec):
-        await push_notice("레시피를 저장하지 못했습니다 — 폴더 쓰기 권한을 확인하세요", "err", ws)
-        return
-    await push_log(f"레시피 저장 [{name}] 번호 {R.recipe_number(rec)}", "ok")
-    await push_notice(f"저장했습니다: {name}", "ok", ws)
-    await push_state()
+        return False, "레시피를 저장하지 못했습니다 — 폴더 쓰기 권한을 확인하세요", "err", None
+    return True, "", "ok", rec
 
 
 async def _cmd_recipe_delete(d, ws):

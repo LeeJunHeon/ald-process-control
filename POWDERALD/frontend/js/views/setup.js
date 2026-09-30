@@ -95,7 +95,8 @@
         (c.source === 'example'
           ? '⚠ 예시 설정으로 실행 중입니다. 처음 저장할 때 exe 옆에 config.json 을 만듭니다.'
           : '저장할 때마다 이전 파일을 data/config_backup 에 백업합니다(최근 20개).') + '</div>' +
-        '<div style="margin-top:6px"><button class="btn sm" data-cfgact="backup">백업 폴더 열기</button></div>') +
+        '<div style="margin-top:6px"><button class="btn sm" data-cfgact="backup"' +
+        (core.canOperate() ? '' : ' disabled title="이 PC 에서만 됩니다"') + '>백업 폴더 열기</button></div>') +
       panel('PLC 연결', '<span class="chip warn">바꾸면 다시 시작해야 반영</span>',
         tbl(row('plc.simulate') + row('plc.host') + row('plc.port') + row('plc.unit_id') +
             row('plc.timeout_ms', 'ms') + row('plc.poll_ms', 'ms') + row('plc.heartbeat_ms', 'ms') +
@@ -186,37 +187,37 @@
     var ic = core.bind('idCell');
     if (ic) {
       var p = t.plc || {};
-      ic.innerHTML = p.config_error ? core.chip('주소 없음 — 연결 안 함', 'stop', p.config_error)
+      core.html(ic, p.config_error ? core.chip('주소 없음 — 연결 안 함', 'stop', p.config_error)
         : !conn ? fmt.DASH
           : p.id_state === 'ok' ? core.chip(core.idText(p.device_id) + ' 일치', 'ok')
             : p.id_state === 'unset' ? core.chip('0 — PLC 에 ID 가 아직 없음', 'warn', '동작은 막지 않습니다')
               : p.id_state === 'wrong' ? core.chip(core.idText(p.device_id) + ' 다른 장비', 'stop')
                 : p.id_state === 'missing' ? core.chip('0 — ID 필수라 막음', 'stop', '장비 ID 필수(plc.require_device_id) 가 켜져 있습니다')
-                : fmt.DASH;
+                : fmt.DASH);
     }
     var body = core.bind('prmBody');
     var rows = (t.plc || {}).prm || [];
     if (body && rows.length) {
-      body.innerHTML = rows.map(function (r) {
+      core.html(body, rows.map(function (r) {
         var ev = r.eng == null ? fmt.DASH
           : r.unit === 'Torr' ? fmt.torr(r.eng)
             : (Number.isInteger(r.eng) ? String(r.eng) : fmt.num(r.eng, 1));
         return '<tr' + (r.match ? '' : ' class="hl"') + '><td class="l">' + core.esc(r.name) +
           '<div class="mono dim small">' + core.esc(r.addr) + '</div></td>' +
           '<td class="mono">' + (r.setting == null ? '<span class="unconf">없음</span>' : core.esc(r.setting)) + '</td>' +
-          '<td class="mono">' + r.written + '</td>' +
-          '<td class="mono">' + (r.readback == null ? fmt.DASH : r.readback) +
-          '<div class="dim small">' + ev + (r.unit ? ' ' + core.esc(r.unit) : '') + '</div></td>' +
-          '<td>' + core.chip(r.match ? '일치' : '불일치', r.match ? 'ok' : 'stop') + '</td></tr>';
-      }).join('');
+          '<td class="mono">' + core.esc(r.written) + '</td>' +
+          '<td class="mono">' + (r.readback == null ? fmt.DASH : core.esc(r.readback)) +
+          '<div class="dim small">' + core.esc(ev) + (r.unit ? ' ' + core.esc(r.unit) : '') + '</div></td>' +
+          '<td>' + core.chip(r.match ? '✓ 일치' : '✕ 불일치', r.match ? 'ok' : 'stop') + '</td></tr>';
+      }).join(''));
     } else if (body && !conn) {
-      body.innerHTML = '<tr><td class="l dim" colspan="5">PLC 끊김 — 값 없음</td></tr>';
+      core.html(body, '<tr><td class="l dim" colspan="5">PLC 끊김 — 값 없음</td></tr>');
     }
     var pc = core.bind('prmChip');
     if (pc) {
       var mm = (t.plc || {}).prm_mismatch || [];
-      pc.innerHTML = !conn ? '' : core.chip(mm.length ? '되읽기 불일치 ' + mm.length : '되읽기 일치',
-                                            mm.length ? 'stop' : 'ok');
+      core.html(pc, !conn ? '' : core.chip(mm.length ? '✕ 되읽기 불일치 ' + mm.length : '✓ 되읽기 일치',
+                                           mm.length ? 'stop' : 'ok'));
     }
     paintAdmin();
   }
@@ -227,11 +228,13 @@
     var chip = core.bind('admChip');
     var local = core.canOperate();
     if (chip) {
-      chip.innerHTML = !local ? core.chip('원격 — 보기 전용', 'off')
+      core.html(chip, !local ? core.chip('원격 — 보기 전용', 'off')
         : blocked ? core.chip('입력 막힘 ' + blocked + ' s', 'stop')
           : adm.unlocked && left > 0 ? core.chip('잠금 해제 · ' + Math.ceil(left / 60) + '분 남음', 'ok')
-            : core.chip(adm.has_pin ? '잠김' : 'PIN 없음 — 처음 편집할 때 정합니다', 'warn');
+            : core.chip(adm.has_pin ? '잠김' : 'PIN 없음 — 처음 편집할 때 정합니다', 'warn'));
     }
+    var bk = d.querySelector('[data-cfgact="backup"]');
+    if (bk) bk.disabled = !local;
     if (adm.unlocked && left <= 0) adm.unlocked = false;
     var u = core.bind('admUnlock');
     if (u) {
@@ -294,9 +297,7 @@
       return '<label class="pinrow">' + r[1] + '<input type="password" inputmode="numeric" maxlength="8" ' +
         'autocomplete="off" class="inp" data-pin="' + r[0] + '"></label>';
     }).join('');
-    d.getElementById('pinModal').hidden = false;
-    var first = box.querySelector('input');
-    if (first) first.focus();
+    core.showModal('pinModal', '[data-pin]');
   }
 
   function pinSubmit() {
@@ -319,7 +320,7 @@
     var p = ev.target.closest('[data-pn]');
     if (p) {
       if (p.dataset.pn === 'ok') pinSubmit();
-      else d.getElementById('pinModal').hidden = true;
+      else core.hideModal('pinModal');
       return;
     }
     var c = ev.target.closest('[data-cfgact]');
@@ -327,12 +328,12 @@
       var act = c.dataset.cfgact;
       if (act === 'revert') { edits = {}; render(core.state); }
       else if (act === 'review') w.app.send('config_preview', { token: adm.token, edits: edits });
-      else if (act === 'backup') w.app.send('open_folder', { which: 'backup' });
+      else if (act === 'backup' && core.canOperate()) w.app.send('open_folder', { which: 'backup' });
       return;
     }
     var g = ev.target.closest('[data-cg]');
     if (g) {
-      d.getElementById('cfgModal').hidden = true;
+      core.hideModal('cfgModal');
       if (g.dataset.cg === 'ok' && lastPreview && lastPreview.ok && !lastPreview.blocked) {
         w.app.send('config_save', { token: adm.token, edits: edits });
       }
@@ -346,7 +347,7 @@
   /* ===================== 서버 응답 ===================== */
   w.app.on('admin', function (m) {
     adm = m; admAt = Date.now();
-    if (m.unlocked) d.getElementById('pinModal').hidden = true;
+    if (m.unlocked) core.hideModal('pinModal');
     paintAdmin();
   });
 
@@ -395,7 +396,7 @@
       ok.disabled = !m.ok || !!m.blocked || !(m.diff || []).length;
       ok.textContent = m.sim_to_real ? '실장비로 전환하고 저장' : '저장';
     }
-    d.getElementById('cfgModal').hidden = false;
+    core.showModal('cfgModal', '[data-cg="cancel"]');
   });
 
   w.app.on('config_saved', function () {

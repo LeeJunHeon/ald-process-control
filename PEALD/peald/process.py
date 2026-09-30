@@ -102,8 +102,10 @@ class ProcessRunner:
         conv = st.conv
         cur = conv.cvg.to_torr(s[A.D_CVG_RAW])
         target = (cfg.get("params") or {}).get("base_press_torr")
+        # 화면은 cur · target 숫자로 게이지와 같은 규칙(fmt.torr)으로 다시 쓴다(detail 은 로그용)
         out.append({"key": "base", "label": "베이스 압력", "ok": A.bit(ilk, A.ILK_VACUUM),
-                    "detail": f"현재 {_torr(cur)} / 목표 {_torr(target)} Torr"})
+                    "detail": f"현재 {_torr(cur)} / 목표 {_torr(target)} Torr",
+                    "cur": cur, "target": target})
 
         if DEV.HAS_O3:
             ok = A.bit(ilk, A.ILK_O3_OK)
@@ -139,7 +141,7 @@ class ProcessRunner:
                 sv = _temp(sv_raw) if sv_raw is not None else None
                 if sv is None or abs(pv - sv) > band:
                     bad.append(f"CH{h['ch']} {h['name']}")
-            out.append({"key": "heater", "label": f"히터 안정 (±{band:g} °C)", "ok": not bad,
+            out.append({"key": "heater", "label": f"히터 안정 (±{band:g} ℃)", "ok": not bad,
                         "detail": " · ".join(bad) if bad else "모든 사용 채널이 설정 안"})
         return out
 
@@ -623,9 +625,18 @@ def _uses_o3(recipe) -> bool:
 
 
 def _torr(v) -> str:
+    """화면 fmt.torr 와 같은 규칙 — 1 이상 소수 2자리, 0.1 이상 3자리, 그 미만 지수, 0 은 '0'."""
     if v is None:
         return "—"
-    return f"{v:.3f}" if v >= 0.1 else f"{v:.1E}"
+    v = float(v)
+    if v == 0:
+        return "0"
+    if v >= 1:
+        return f"{v:.2f}"
+    if v >= 0.1:
+        return f"{v:.3f}"
+    m, e = f"{v:.1e}".split("e")
+    return f"{m}E{'+' if int(e) >= 0 else '-'}{abs(int(e))}"
 
 
 def _temp(raw) -> float:

@@ -61,7 +61,9 @@
     if (!box) return;
     var out = [];
     var plc = t.plc || {};
-    if (!plc.connected) {
+    if (t.offline) {
+      out.push(['err', '서버 연결 끊김 — 이 화면은 다시 연결될 때까지 값을 보이지 않습니다.']);
+    } else if (!plc.connected) {
       out.push(['err', 'PLC 연결 끊김 — ' + (plc.addr || '') + ' 에 접속하지 못했습니다. 값 표시와 명령이 멈춥니다.']);
     } else if (!plc.hb_ok) {
       out.push(['warn', 'PLC 하트비트 멈춤 — 통신은 되는데 PLC 가 스캔을 돌리지 않습니다 (STOP 상태일 수 있습니다).']);
@@ -72,11 +74,11 @@
     (s.notices || []).forEach(function (n) {
       out.push([n.level === 'err' ? 'err' : 'warn', n.msg]);
     });
-    box.innerHTML = out.length
+    core.html(box, out.length
       ? out.map(function (x) {
           return '<div class="pcnotice ' + x[0] + '">' + core.esc(x[1]) + '</div>';
         }).join('')
-      : '<div class="empty">프로그램 알림이 없습니다</div>';
+      : '<div class="empty">프로그램 알림이 없습니다</div>');
   }
 
   /* ---------- 이력 ---------- */

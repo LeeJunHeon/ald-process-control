@@ -106,6 +106,7 @@
           <span class="right">
             <span class="mono" data-bind="rcName">&mdash;</span>
             <span class="chip warn" data-bind="rcDirty" hidden>저장 안 함</span>
+            <span class="warn-txt" data-bind="rcSaveMsg"></span>
             <span class="warn-txt" data-bind="rcRunNote"></span>
           </span>
         </div>
@@ -163,7 +164,7 @@
             <div class="panel-body"><canvas data-hchart="p"></canvas></div>
           </div>
           <div class="panel chartpanel">
-            <div class="panel-head">온도 (°C)</div>
+            <div class="panel-head">온도 (℃)</div>
             <div class="panel-body"><canvas data-hchart="t"></canvas></div>
           </div>
           <div class="panel chartpanel">
@@ -174,7 +175,6 @@
             <div class="panel-head" data-bind="hXHead">장비 전용</div>
             <div class="panel-body"><canvas data-hchart="x"></canvas></div>
           </div>
-          <div class="ctip" data-bind="hTip" hidden></div>
         </div>
         <div class="col grow" data-bind="livePanels">
         <div class="panel chartpanel">
@@ -182,7 +182,7 @@
           <div class="panel-body"><canvas data-chart="p"></canvas></div>
         </div>
         <div class="panel chartpanel">
-          <div class="panel-head">온도 (°C)<span class="legend-inline" data-bind="lgT"></span></div>
+          <div class="panel-head">온도 (℃)<span class="legend-inline" data-bind="lgT"></span></div>
           <div class="panel-body"><canvas data-chart="t"></canvas></div>
         </div>
         <div class="panel chartpanel">
@@ -190,7 +190,6 @@
           <div class="panel-body"><canvas data-chart="m"></canvas></div>
         </div>
         </div>
-        <div id="tip" hidden></div>
       </section>
 
       <!-- ---------- 데이터 로그 ---------- -->
@@ -221,11 +220,10 @@
                 <div class="panel-body"><canvas data-dlchart="p"></canvas></div></div>
               <div class="panel chartpanel"><div class="panel-head">MFC (sccm)</div>
                 <div class="panel-body"><canvas data-dlchart="m"></canvas></div></div>
-              <div class="panel chartpanel"><div class="panel-head">히터 (°C)</div>
+              <div class="panel chartpanel"><div class="panel-head">히터 (℃)</div>
                 <div class="panel-body"><canvas data-dlchart="t"></canvas></div></div>
               <div class="panel chartpanel" data-bind="dlXPanel"><div class="panel-head">장비 전용</div>
                 <div class="panel-body"><canvas data-dlchart="x"></canvas></div></div>
-              <div class="ctip" data-bind="dlTip" hidden></div>
             </div>
             <div class="panel grow" data-bind="dlTable" hidden>
               <div class="panel-head">표<span class="note"><span data-bind="dlPage"></span>

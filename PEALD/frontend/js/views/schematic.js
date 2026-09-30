@@ -323,7 +323,7 @@
     var heaters = t.heaters || [];
     [1, 2, 3, 4, 5, 6].forEach(function (ch) {
       var hh = heaters[ch - 1] || {};
-      setSv('h' + ch, conn && hh.enabled ? fmt.temp(hh.pv) + ' °C' : fmt.DASH);
+      setSv('h' + ch, conn && hh.enabled ? fmt.temp(hh.pv) + ' ℃' : fmt.DASH);
     });
     var p = t.pressure || {};
     setSv('cvg', conn ? fmt.torr(p.cvg) : fmt.DASH);

@@ -32,9 +32,8 @@
   function onDisconnect() {
     if (connected) core.toast('서버 연결이 끊겼습니다 — 다시 연결합니다', 'warn');
     connected = false;
-    var dot = core.bind('sbDot');
-    if (dot) dot.classList.add('off');
-    core.setText('sbText', '서버 연결 끊김 — 표시된 값은 과거 값입니다');
+    // ★ 마지막 값을 남기지 않는다 — '—' · '서버 끊김' · 조작 잠금(다시 붙으면 state 가 되돌린다)
+    core.setOffline(true);
     scheduleReconnect();
   }
 
