@@ -82,8 +82,8 @@ def selftest(config_path: str = "") -> int:
         app = create_app(config_path, single_instance=False, start_io=False)
         host = "127.0.0.1"
         port = window.find_free_port(host, DEV.DEFAULT_PORT + 50) or (DEV.DEFAULT_PORT + 50)
-        server = uvicorn.Server(uvicorn.Config(app, host=host, port=port,
-                                               log_level="warning", log_config=None))
+        from peald.server import uvicorn_config
+        server = uvicorn.Server(uvicorn_config(app, host, port))
         th = threading.Thread(target=server.run, daemon=True)
         th.start()
         body = None
@@ -127,7 +127,8 @@ def main():
         import uvicorn
         free = window.find_free_port(host, port) or port
         print(f"[info] {DEV.NAME} headless — http://{host}:{free}")
-        uvicorn.run(app, host=host, port=free, log_level="warning", log_config=None)
+        from peald.server import uvicorn_config
+        uvicorn.Server(uvicorn_config(app, host, free)).run()
         return
     window.run(app, host, port, side)
 

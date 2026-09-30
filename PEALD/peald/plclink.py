@@ -123,6 +123,12 @@ class PlcLink:
         self._seen = None               # (반영 밸브, 반영 보조, 그때의 _cmd_seq)
         self._ot_prev = False
         self._trip_task = None
+        self._fix_task = None               # 대기 중 PRM 되읽기 불일치 자동 복구
+        self._last_drop_at = 0.0
+        self._prm_note = ""                 # 같은 PRM 경고를 되풀이하지 않게
+        # 대기 중 PRM 이 설정과 다르면(예: PLC 재시작으로 기본값) 다시 쓴다. 시험이 PRM 을 일부러
+        # 바꿔 볼 때는 끈다.
+        self.prm_autofix = True
         self.hb_gap_ms = 0                  # 마지막 하트비트 쓰기 간격
         self.hb_gap_max_ms = 0              # 기동 뒤 최대 간격
         self._plc_hb_val = None
@@ -200,7 +206,12 @@ class PlcLink:
             except Exception as e:  # noqa: BLE001
                 self._drop(f"PLC 링크 오류: {type(e).__name__}: {e}")
             await self.client.close()
-            await asyncio.sleep(RECONNECT_DELAYS[0])
+            # ★ 끊긴 뒤 첫 재연결은 기다리지 않는다 — 응답 하나를 잃은 것만으로 하트비트 공백이
+            #   PC 끊김 판정(3 s)에 닿지 않게. 짧은 사이에 또 끊기면 그때부터 쉰다.
+            now = time.monotonic()
+            if now - self._last_drop_at < 5.0:
+                await asyncio.sleep(RECONNECT_DELAYS[0])
+            self._last_drop_at = now
 
     def _drop(self, msg):
         if self.connected:
@@ -219,6 +230,10 @@ class PlcLink:
         ★ 하트비트는 따로 태스크로 돈다 — 읽기 여러 개 뒤에 줄을 서면 그만큼 밀린다."""
         hb = asyncio.create_task(self._heartbeat_loop())
         try:
+            # 하트비트가 돌기 시작한 뒤에 PRM 을 맞춘다(다른 것만, 공정 중이면 쓰지 않는다)
+            if self.write_ok:
+                async with self._cmd_lock:
+                    await self._sync_params("연결")
             await self._serve_reads(hb)
         finally:
             hb.cancel()
@@ -279,9 +294,9 @@ class PlcLink:
         #   보고 무시하거나, 옛 명령을 다시 실행한 것처럼 보일 수 있다.
         self._cmd_no = (regs[A.D_CMD_NO - A.CMD_READ_BASE] + 1) & 0xFFFF
         if self.write_ok:
-            await self._write_params()
-        else:
-            self._store_prm_readback(await self.client.read_holding(PRM_READ_BASE, PRM_READ_COUNT))
+            # ★ ID 확인 뒤 첫 쓰기는 하트비트다 — PRM 을 먼저 쓰면 그 왕복(약 30번) 동안 하트비트가 빈다
+            await self._write_heartbeat()
+        self._store_prm_readback(await self.client.read_holding(PRM_READ_BASE, PRM_READ_COUNT))
         self._set_applied(await self.client.read_holding(A.APPLIED_BASE, A.APPLIED_COUNT))
         self._seen = None
         self.status = await self.client.read_holding(A.STATUS_BASE, A.STATUS_COUNT)
@@ -343,24 +358,88 @@ class PlcLink:
             return ID_BLOCK_TEXT[self.id_state]
         return ""
 
-    async def _write_params(self):
-        """공학 단위 params 를 원시값으로 바꿔 PRM 영역에 쓰고 되읽어 확인한다."""
+    def _plc_running(self) -> bool:
+        return self.status[A.D_STATE] in (A.STATE_READY, A.STATE_RUN, A.STATE_PAUSE, A.STATE_STOPPING)
+
+    def _warn_once(self, key: str, level: str, msg: str):
+        if self._prm_note != key:
+            self._prm_note = key
+            self.on_event(level, msg)
+
+    async def _sync_params(self, why: str) -> int:
+        """PRM 을 먼저 읽어 설정과 다른 것만 쓴다. 쓴 개수를 돌려준다(명령 잠금 안에서 부른다).
+        ★ PLC 가 공정 중(장비 상태 2~5)이면 쓰지 않고 경고만 한다 — 공정 중에 RF 창·MFC 허용치·
+          O3 한계가 바뀌지 않게. 공정이 끝나 대기가 되면 1 s 되읽기가 맞춘다.
+        ★ 설정의 PRM 이 규칙에 어긋나면(0·음수·필수 값 없음) 아무것도 쓰지 않는다."""
+        from .config import prm_problems
         want = self._param_words()
-        self.prm_mismatch = []
         self.prm_written = {addr: val & 0xFFFF for addr, (_n, val) in want.items()}
-        for addr, (name, val) in sorted(want.items()):
+        self._store_prm_readback(await self.client.read_holding(PRM_READ_BASE, PRM_READ_COUNT))
+        bad = prm_problems(self.cfg)
+        if bad:
+            self.prm_mismatch = [f"설정 오류 — {m}" for m in bad]
+            self._warn_once("bad:" + bad[0], "err", "설정의 PLC 파라미터가 올바르지 않아 PLC 에 쓰지 않았습니다 — "
+                            + " · ".join(bad[:2]))
+            return 0
+        diff = [(addr, name, val) for addr, (name, val) in sorted(want.items())
+                if self.prm_readback.get(addr) != (val & 0xFFFF)]
+        if not diff:
+            self.prm_mismatch = []
+            self._prm_note = ""
+            return 0
+        if self._plc_running():
+            self.prm_mismatch = [f"{n}: 설정 {v} / PLC {self.prm_readback.get(a)} (공정 중 — 끝나면 맞춤)"
+                                 for a, n, v in diff]
+            self._warn_once("run:" + ",".join(str(a) for a, _n, _v in diff), "warn",
+                            f"공정 중이라 PLC 파라미터를 쓰지 않았습니다 ({why}) — 다른 항목 "
+                            + " · ".join(n for _a, n, _v in diff[:4])
+                            + (" 외" if len(diff) > 4 else "") + " — 공정이 끝나면 맞춥니다")
+            return 0
+        problems = []
+        for addr, name, val in diff:
             try:
                 await self.client.write_single(addr, val)
             except ModbusError as e:
-                self.prm_mismatch.append(f"{name}: 쓰기 실패 ({e})")
-        got = await self.client.read_holding(PRM_READ_BASE, PRM_READ_COUNT)
-        self._store_prm_readback(got)
+                problems.append(f"{name}: 쓰기 실패 ({e})")
+        self._store_prm_readback(await self.client.read_holding(PRM_READ_BASE, PRM_READ_COUNT))
         for addr, (name, val) in sorted(want.items()):
             back = self.prm_readback.get(addr)
             if back is not None and back != (val & 0xFFFF):
-                self.prm_mismatch.append(f"{name}: 쓴 값 {val} / 되읽은 값 {back}")
-        if self.prm_mismatch:
-            self.on_event("warn", "PLC 파라미터 되읽기 불일치 — " + " · ".join(self.prm_mismatch[:3]))
+                problems.append(f"{name}: 쓴 값 {val} / 되읽은 값 {back}")
+        self.prm_mismatch = problems
+        if problems:
+            self.on_event("warn", "PLC 파라미터 되읽기 불일치 — " + " · ".join(problems[:3]))
+        else:
+            self._prm_note = ""
+        return len(diff)
+
+    def _maybe_fix_prm(self):
+        """1 s 되읽기에서 설정과 다른 PRM 이 보이면(대기 중) 명령 잠금 안에서 다시 쓴다.
+        (PLC 가 다시 시작되면 0 인 PRM 을 기본값으로 바꾼다 — 예: valve_min_ms 0 → 200)"""
+        if not (self.prm_autofix and self.write_ok and self.prm_written):
+            return
+        if self._fix_task and not self._fix_task.done():
+            return
+        diff = [a for a, v in self.prm_written.items() if self.prm_readback.get(a) != v]
+        if not diff:
+            if self.prm_mismatch and not self._plc_running():
+                self.prm_mismatch = []
+            return
+        if self._plc_running():
+            return
+        self._fix_task = asyncio.create_task(self._prm_fix())
+
+    async def _prm_fix(self):
+        try:
+            async with self._cmd_lock:
+                if not self.write_ok:
+                    return
+                n = await self._sync_params("되읽기 불일치")
+            if n:
+                self.on_event("warn", f"PLC 파라미터가 설정과 달라 다시 썼습니다 ({n}개) — "
+                              "PLC 가 다시 시작됐거나 다른 곳에서 바뀌었을 수 있습니다")
+        except (ModbusTimeout, ModbusError, OSError) as e:
+            log.debug("PRM 복구 실패: %s", e)
 
     def _store_prm_readback(self, got):
         self.prm_readback = {PRM_READ_BASE + i: int(v) for i, v in enumerate(got)}
@@ -373,7 +452,7 @@ class PlcLink:
         if self.blocked_reason():
             return [self.blocked_reason()]
         async with self._cmd_lock:
-            await self._write_params()
+            await self._sync_params("설정 저장")
         return list(self.prm_mismatch)
 
     # ===================== 주기 작업 =====================
@@ -434,6 +513,7 @@ class PlcLink:
     async def _read_cmd_area(self):
         self.cmd_regs = list(await self.client.read_holding(A.CMD_READ_BASE, A.CMD_READ_COUNT))
         self._store_prm_readback(await self.client.read_holding(PRM_READ_BASE, PRM_READ_COUNT))
+        self._maybe_fix_prm()
 
     def clear_reason(self, valve_lost: bool) -> str:
         """PLC 가 수동 반영을 지운 사유(지금 상태로 추정)."""
@@ -649,6 +729,7 @@ class PlcLink:
     async def _send_locked(self, code: int, args: dict = None):
         """명령 잠금을 쥔 채로 부른다."""
         self._cmd_seq += 1
+        sent = False
         try:
             # ① 인자 레지스터 먼저
             for addr, values in (args or {}).items():
@@ -659,6 +740,7 @@ class PlcLink:
             # ② 명령 코드 → ③ 명령 번호 (번호를 마지막에 써야 PLC 가 완성된 명령을 본다)
             no = self._cmd_no
             await self.client.write_single(A.D_CMD_CODE, code)
+            sent = True                     # 이 뒤의 오류는 PLC 가 명령을 받았을 수 있다
             await self.client.write_single(A.D_CMD_NO, no)
             self._cmd_no = (no + 1) & 0xFFFF
 
@@ -672,6 +754,9 @@ class PlcLink:
             # ★ 다시 보내지 않는다 — PLC 가 이미 받았을 수 있다.
             return None, "PLC 응답 없음 (명령이 처리됐는지 확인하세요)"
         except (ModbusTimeout, ModbusError, OSError) as e:
+            if sent:
+                # ★ 다시 보내지 않는다 — 응답 없음과 같다
+                return None, f"PLC 통신 오류: {e} — PLC 가 명령을 받았을 수 있습니다 — 상태를 확인하세요"
             return None, f"PLC 통신 오류: {e}"
         finally:
             self._cmd_seq += 1

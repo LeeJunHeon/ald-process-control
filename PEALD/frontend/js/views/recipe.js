@@ -61,16 +61,18 @@
     var p = t.process || {};
     // 실행 중에는 저장·삭제·올리기를 막는다(PLC 는 작업본으로 돌지만 화면이 헷갈린다).
     var run = !!p.running;
+    // 시작 흐름(올리기·베이스 압력 대기·명령 1) 동안에도 올리기·시작·선택 레시피 덮어쓰기를 막는다
+    var flow = !!(p.phase && p.phase !== 'idle');
     ['rcSave', 'rcSaveAs', 'rcDelete', 'rcRename', 'rcUpload', 'rcStart'].forEach(function (k) {
       var b = core.bind(k);
       if (!b) return;
-      var block = !core.canOperate() || (run && k !== 'rcSaveAs');
+      var block = !core.canOperate() || ((run || flow) && k !== 'rcSaveAs');
       if (k === 'rcUpload' || k === 'rcStart') block = block || !core.plcOk();
       b.disabled = block;
     });
     core.setText('rcRunNote', run
       ? '공정 중입니다 — 저장·올리기는 공정이 끝난 뒤에 하세요'
-      : '');
+      : (flow ? '시작 절차 진행 중 — 끝나거나 대기 취소 뒤에 바꿀 수 있습니다' : ''));
   }
 
   /* ---------- 목록 ---------- */

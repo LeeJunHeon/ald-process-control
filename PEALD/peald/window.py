@@ -271,7 +271,8 @@ def run(app, host: str, port: int, side: str = None):
         try:
             # log_config=None: uvicorn 자체 로깅 dictConfig 를 타지 않는다
             # (창 전용 exe 에서 sys.stdout.isatty() 로 죽는다).
-            uvicorn.run(app, host=host, port=port, log_level="warning", log_config=None)
+            from .server import uvicorn_config
+            uvicorn.Server(uvicorn_config(app, host, port)).run()
         except Exception as e:  # noqa: BLE001
             _SERVER_ERROR = f"{type(e).__name__}: {e}"
             print(f"[error] 내부 서버가 중단되었습니다: {traceback.format_exc()}")

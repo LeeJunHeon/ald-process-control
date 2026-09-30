@@ -222,6 +222,7 @@ async def test_base_wait_times_out(wired):
     # 리미트·상태만 통과시키고 베이스만 미달로 둔다.
     await pumped(lk, sim)
     sim.base_pressure = 500.0                       # 다시 올려 미달로 만든다
+    lk.prm_autofix = False                     # 일부러 바꾼 PRM 을 링크가 되돌리지 않게
     sim.write(A.D_PRM_BASE_PRESS, [1])              # 사실상 도달 불가
     cfg["process"]["base_wait_timeout_s"] = 1.0
     rec = short_recipe("대기초과")
@@ -239,6 +240,7 @@ async def test_base_wait_can_be_cancelled(wired):
     lk, sim, cfg = wired
     await pumped(lk, sim)
     sim.base_pressure = 500.0
+    lk.prm_autofix = False                     # 일부러 바꾼 PRM 을 링크가 되돌리지 않게
     sim.write(A.D_PRM_BASE_PRESS, [1])
     cfg["process"]["base_wait_timeout_s"] = 60.0
     rec = short_recipe("대기취소")
@@ -811,6 +813,7 @@ async def test_aborted_process_is_never_normal(wired, how, want):
     await _start(lk, sim, cfg, f"중단{how}")
     await asyncio.sleep(0.3)
     if how == "pc_hb":
+        lk.prm_autofix = False                     # 일부러 바꾼 PRM 을 링크가 되돌리지 않게
         sim.write(A.D_PRM_PC_WDT_MS, [300])
         sim.set_fault("pc_hb_stop", True)
     elif how == "emo":

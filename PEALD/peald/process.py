@@ -11,6 +11,7 @@ process.py — 공정 시작 흐름 · 진행 · 종료 감지.
 ★ 최종 판단은 PLC 결과다. 여기서 통과시켰다고 "됐다"고 말하지 않는다.
 """
 
+import copy
 import time
 import asyncio
 
@@ -40,6 +41,10 @@ class ProcessRunner:
         self.recipe_name = ""
         self.recipe = None              # 실행 중(또는 시작하려는) 레시피 사본
         self.table = None               # to_plc_words 결과
+        # ★ 시작을 누른 순간의 스냅샷(이름·레시피·표). 시작 흐름·진행 표시·로그·데이터 로그·
+        #   끝 기록은 이것만 쓴다 — 도중에 다른 레시피를 골라도 돌고 있는 공정 기록이 바뀌지 않게.
+        self.run = None
+        self._task = None               # 백그라운드 시작 흐름
         self.base_wait_started = 0.0
         self.base_ok_since = 0.0
         self.started_at = 0.0
@@ -167,12 +172,80 @@ class ProcessRunner:
         s["name"] = self.recipe_name
         return s
 
+    # ===================== 스냅샷 =====================
+    @property
+    def active_name(self) -> str:
+        return self.run.get("name") if self.run is not None else self.recipe_name
+
+    @property
+    def active_recipe(self):
+        return self.run.get("recipe") if self.run is not None else self.recipe
+
+    @property
+    def active_table(self):
+        return self.run.get("table") if self.run is not None else self.table
+
+    @property
+    def busy(self) -> bool:
+        """시작 흐름(올리기·베이스 압력 대기·명령 1)이 도는 중인가."""
+        return self.phase != IDLE or bool(self._task and not self._task.done())
+
     # ===================== 시작 흐름 =====================
+    def begin(self, push_log, push_notice, notify=None):
+        """시작 흐름을 러너가 쥐는 백그라운드 태스크로 띄우고 바로 돌아온다.
+        ★ 명령 통로를 붙잡지 않는다 — 베이스 압력 대기(최대 30 분) 동안에도 대기 취소·알람 확인·
+          벤트·펌핑 정지·전체 닫기가 바로 처리돼야 한다. (성공, 메시지)"""
+        if self.busy:
+            return False, "이미 시작 절차가 진행 중입니다"
+        if not self.recipe:
+            return False, "레시피를 고르세요"
+
+        async def run():
+            ok, msg = await self.start(push_log, push_notice)
+            if notify:
+                try:
+                    await notify(msg, ok)
+                except Exception:  # noqa: BLE001
+                    pass
+
+        self._task = asyncio.create_task(run())
+        return True, "시작 절차를 시작합니다 — 레시피 올리기 → 베이스 압력 대기 → 공정 시작"
+
+    async def stop_task(self):
+        """프로그램을 끌 때 시작 흐름 태스크를 정리한다."""
+        t = self._task
+        if t and not t.done():
+            self._cancel = True
+            t.cancel()
+            try:
+                await t
+            except (asyncio.CancelledError, Exception):  # noqa: BLE001
+                pass
+
     async def start(self, push_log, push_notice):
-        """올리기 → 베이스 압력 대기 → 명령 1. 화면은 phase 로 진행을 본다."""
-        st = self.state
+        """올리기 → 베이스 압력 대기 → 명령 1. 화면은 phase 로 진행을 본다.
+        ★ 어떤 예외가 나도 phase 를 idle 로 돌린다 — 'uploading' 에 멈추면 다음 시작이
+          프로그램을 다시 켜기 전까지 '이미 진행 중'으로 거절된다."""
         if self.phase != IDLE:
             return False, "이미 시작 절차가 진행 중입니다"
+        try:
+            return await self._start_flow(push_log, push_notice)
+        except asyncio.CancelledError:
+            raise
+        except Exception as e:  # noqa: BLE001
+            why = f"시작 절차 오류 — {type(e).__name__}: {logger.clean(e, 200)}"
+            logger.write("err", why)
+            try:
+                await push_log(why, "err")
+            except Exception:  # noqa: BLE001
+                pass
+            return False, why
+        finally:
+            self.phase = IDLE
+            self.message = ""
+
+    async def _start_flow(self, push_log, push_notice):
+        st = self.state
         if not self.recipe:
             return False, "레시피를 고르세요"
         check = R.validate(st.cfg, self.recipe)
@@ -192,16 +265,18 @@ class ProcessRunner:
         self._abort_sent = False
         self.last_result = ""
 
+        # --- 스냅샷 ---
+        rec = copy.deepcopy(self.recipe)
+        tbl = R.to_plc_words(st.cfg, st.conv, rec)
+        snap = {"name": self.recipe_name, "recipe": rec, "table": tbl}
+
         # --- 올리기 ---
         self.phase = UPLOADING
         self.message = "PLC 에 레시피를 올리는 중"
-        self.table = R.to_plc_words(st.cfg, st.conv, self.recipe)
-        good, why = await st.link.upload_recipe(self.table["words"], self.table["checksum"])
-        await push_log(f"레시피 올리기 [{self.recipe_name}] 번호 {self.table['number']} — {why}",
+        good, why = await st.link.upload_recipe(tbl["words"], tbl["checksum"])
+        await push_log(f"레시피 올리기 [{snap['name']}] 번호 {tbl['number']} — {why}",
                        "ok" if good else "err")
         if not good:
-            self.phase = IDLE
-            self.message = ""
             return False, f"레시피 올리기 실패 — {why}"
 
         # --- 베이스 압력 대기 ---
@@ -216,14 +291,10 @@ class ProcessRunner:
         while True:
             await asyncio.sleep(0.2)
             if self._cancel:
-                self.phase = IDLE
-                self.message = ""
                 await push_log("베이스 압력 대기 취소 (운전자)", "warn")
                 return False, "베이스 압력 대기를 취소했습니다"
             stop_why = self._wait_broken()
             if stop_why:
-                self.phase = IDLE
-                self.message = ""
                 await push_log(f"베이스 압력 대기 중단 — {stop_why}", "err")
                 return False, stop_why
             now = time.monotonic()
@@ -236,26 +307,28 @@ class ProcessRunner:
                 self.base_ok_since = 0.0
             self.message = f"베이스 압력 대기 {now - self.base_wait_started:.0f} s"
             if now - self.base_wait_started > timeout:
-                self.phase = IDLE
-                self.message = ""
                 await push_log(f"베이스 압력 대기 시간 초과 ({timeout:g} s)", "err")
                 return False, f"베이스 압력에 도달하지 못했습니다 ({timeout:g} s 초과)"
 
         # --- 시작 명령 ---
         self.phase = STARTING
         self.message = "공정 시작 명령"
+        # ★ 명령 1 직전에 PLC 표가 올린 그대로인지 다시 본다(합계·검증 통과·레시피 번호)
+        mism = await self._plc_table_differs(tbl)
+        if mism:
+            await push_log(f"공정 시작 취소 — {mism}", "err")
+            return False, mism
         no = st.link._cmd_no
         result, text = await st.link.send_command(A.CMD_PROCESS_START)
         logger.command("공정 시작", no, text, "local")
-        self.phase = IDLE
-        self.message = ""
         if result == A.RESULT_OK:
+            self.run = snap
             self.started_at = time.time()
             # ★ '공정 중'으로 본 적이 있다는 표시(_was_running)는 여기서 세우지 않는다.
             #   PLC 상태는 100 ms 주기로 읽어 오므로, 명령이 처리된 직후에도 아직 '대기'로
             #   읽힌다. 그 한 번을 종료로 오해해 '정상 종료' 로그가 먼저 찍힌다.
-            await push_log(f"공정 시작 — {self.recipe_name} (번호 {self.table['number']}, "
-                           f"예상 {_hms(R.total_ms(st.cfg, self.recipe))})", "ok")
+            await push_log(f"공정 시작 — {snap['name']} (번호 {tbl['number']}, "
+                           f"예상 {_hms(R.total_ms(st.cfg, rec))})", "ok")
             return True, "공정을 시작했습니다"
         detail = text
         if result == A.RESULT_INTERLOCK:
@@ -265,6 +338,20 @@ class ProcessRunner:
             detail = f"{text} — PLC 표 검사 불합격 (합계·개수 확인)"
         await push_log(f"공정 시작 거절 — {detail}", "err")
         return False, detail
+
+    async def _plc_table_differs(self, tbl) -> str:
+        """PLC 의 합계(D00028)·검증 통과(D00029)·표 머리 레시피 번호가 스냅샷과 같은지.
+        다르면 이유 문구, 같으면 ''."""
+        link = self.state.link
+        try:
+            head = await link.client.read_holding(A.D_RECIPE_SUM_PLC, 2)
+            no = (await link.client.read_holding(A.D_RCP_NO, 1))[0]
+        except Exception as e:  # noqa: BLE001
+            return f"PLC 표를 확인하지 못했습니다 ({logger.clean(e, 120)})"
+        if head[0] != (tbl["checksum"] & 0xFFFF) or head[1] != 1 or no != (tbl["number"] & 0xFFFF):
+            return (f"PLC 레시피 표가 올린 것과 다릅니다 (합계 {head[0]:#06x}/{tbl['checksum']:#06x}, "
+                    f"통과 {head[1]}, 번호 {no}/{tbl['number']}) — 시작하지 않았습니다")
+        return ""
 
     def _wait_broken(self):
         """대기 중 그만둬야 하는 사유. 없으면 빈 문자열."""
@@ -307,7 +394,7 @@ class ProcessRunner:
                      f"사이클 {A.dword(s[A.D_SEQ_BLOCK_PASS], s[A.D_SEQ_BLOCK_PASS + 1])}")
             self.last_result = self.end_result(s)
             push_log_sync("ok" if self.last_result == "정상 종료" else "warn",
-                          f"공정 {self.last_result} — {self.recipe_name or ''} · "
+                          f"공정 {self.last_result} — {self.active_name or ''} · "
                           f"걸린 시간 {_hms(int(took * 1000))} · 마지막 위치 {where}")
             self.started_at = 0.0
             self._abort_sent = False
@@ -346,8 +433,9 @@ class ProcessRunner:
             "running": running,
             "phase": self.phase,
             "message": self.message,
-            "recipe": self.recipe_name,
-            "number": (self.table or {}).get("number"),
+            # 공정 중이면 시작 때 스냅샷, 아니면 지금 고른 레시피
+            "recipe": self.active_name if running else self.recipe_name,
+            "number": ((self.active_table if running else self.table) or {}).get("number"),
             "block": s[A.D_SEQ_BLOCK],
             "step": s[A.D_SEQ_STEP],
             "cycle": cycle,
@@ -366,15 +454,16 @@ class ProcessRunner:
             out["blocking"] = [c["label"] for c in blocking]
             if self.recipe:
                 out["estimate"] = self.estimate()
-        if self.recipe and running:
+        rec = self.active_recipe
+        if rec and running:
             pos = {"block": s[A.D_SEQ_BLOCK], "step": s[A.D_SEQ_STEP], "cycle": cycle,
                    "group_pass": s[A.D_SEQ_GROUP_PASS], "step_elapsed_ms": step_ms,
                    "paused": out["paused"]}
-            out["remaining_ms"] = R.remaining_ms(st.cfg, self.recipe, pos)
-            out["total_ms"] = R.total_ms(st.cfg, self.recipe)
+            out["remaining_ms"] = R.remaining_ms(st.cfg, rec, pos)
+            out["total_ms"] = R.total_ms(st.cfg, rec)
             out["eta"] = time.strftime("%H:%M:%S",
                                        time.localtime(time.time() + out["remaining_ms"] / 1000))
-            blocks = self.recipe.get("blocks") or []
+            blocks = rec.get("blocks") or []
             bno = s[A.D_SEQ_BLOCK]
             if 1 <= bno <= len(blocks):
                 b = blocks[bno - 1]
@@ -385,7 +474,7 @@ class ProcessRunner:
                 out["step_in_block"] = s[A.D_SEQ_STEP] - base
                 out["steps"] = [{"name": x.get("name", ""), "ms": int(x.get("time_ms") or 0)}
                                 for x in (b.get("steps") or [])]
-            g, gi = R._group_of(self.recipe, bno)
+            g, gi = R._group_of(rec, bno)
             if g:
                 out["group"] = {"no": gi, "repeat": int(g.get("repeat") or 1)}
         return out
@@ -407,11 +496,13 @@ class ProcessRunner:
         name = storage.find_by_number(info["number"])
         if name:
             self.select(name)
+            self.run = {"name": name, "recipe": self.recipe, "table": self.table}
             await push_log(f"PLC 가 이미 공정 중입니다 — 레시피 [{name}] "
                            f"(번호 {info['number']})로 이어 갑니다", "warn")
         else:
             self.recipe_name = f"(PLC 번호 {info['number']})"
             self.table = {"number": info["number"], "checksum": info["checksum"]}
+            self.run = {"name": self.recipe_name, "recipe": None, "table": self.table}
             await push_log(f"PLC 가 이미 공정 중입니다 — 번호 {info['number']} 에 맞는 "
                            f"로컬 레시피가 없어 이름 없이 표시합니다", "warn")
         self._was_running = True

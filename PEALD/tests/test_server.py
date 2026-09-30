@@ -27,7 +27,11 @@ def make_app():
 def client(app):
     """★ TestClient 의 기본 client 는 ("testclient", 50000) 이라 루프백으로 판정되지 않는다.
     현장에서는 창·브라우저가 127.0.0.1 로 붙으므로 그 조건을 명시해 만든다."""
-    return TestClient(app, client=("127.0.0.1", 50000))
+    # ★ Host 도 IP 로 — 도메인 Host(TestClient 기본 'testserver')는 서버가 거절한다
+    return TestClient(app, client=("127.0.0.1", 50000), base_url="http://127.0.0.1:8201")
+
+
+WS_URL = "ws://127.0.0.1:8201/ws"          # TestClient 웹소켓은 base_url 을 쓰지 않는다 — 절대 URL 로
 
 
 STATE_KEYS = ["device", "structure", "config", "unconfirmed", "notices",
@@ -40,7 +44,7 @@ def test_health_and_first_state():
         h = c.get("/health").json()
         assert h["ok"] is True and h["device"] == DEV.KEY
 
-        with c.websocket_connect("/ws") as ws:
+        with c.websocket_connect(WS_URL) as ws:
             msg = ws.receive_json()
             assert msg["type"] == "state"
             for k in STATE_KEYS:
@@ -60,7 +64,7 @@ def test_live_has_no_values_when_plc_down():
     """★ PLC 가 없으면 값을 지어내지 않는다 — 전부 None(화면에서 '—')."""
     app = make_app()
     with client(app) as c:
-        with c.websocket_connect("/ws") as ws:
+        with c.websocket_connect(WS_URL) as ws:
             msg = ws.receive_json()
             live = msg["live"]
             if not live["plc"]["connected"]:
@@ -89,7 +93,7 @@ def test_example_config_is_flagged():
     """config.json 이 없으면 예시 설정으로 기동하고 화면에 경고를 띄운다."""
     app = make_app()
     with client(app) as c:
-        with c.websocket_connect("/ws") as ws:
+        with c.websocket_connect(WS_URL) as ws:
             msg = ws.receive_json()
             assert msg["config"]["source"] == "example"
             assert any("예시 설정" in n["msg"] for n in msg["notices"])
@@ -98,7 +102,7 @@ def test_example_config_is_flagged():
 def test_unconfirmed_conversions_are_reported():
     app = make_app()
     with client(app) as c:
-        with c.websocket_connect("/ws") as ws:
+        with c.websocket_connect(WS_URL) as ws:
             msg = ws.receive_json()
             assert "CVG 압력" in msg["unconfirmed"]
 

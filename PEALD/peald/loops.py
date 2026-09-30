@@ -38,15 +38,17 @@ lag = {"last_ms": 0, "max_ms": 0, "max_at": "", "max_work": "", "hist": []}
 
 def note_work(name: str):
     """무거울 수 있는 일을 시작할 때 부른다(지연 경고에 이름을 붙이려고)."""
-    _work[0], _work[1] = name, time.monotonic()
+    _work[0], _work[1] = logger.clean(name, 40), time.monotonic()
 
 
 def lag_status() -> dict:
     now = time.monotonic()
     recent = [(t, ms, w) for t, ms, w in lag["hist"] if now - t <= LAG_WINDOW_S]
     top = max(recent, key=lambda x: x[1]) if recent else (0, 0, "")
-    return {"last_ms": lag["last_ms"], "recent_max_ms": top[1], "recent_max_work": top[2],
-            "max_ms": lag["max_ms"], "max_at": lag["max_at"], "max_work": lag["max_work"]}
+    return {"last_ms": lag["last_ms"], "recent_max_ms": top[1],
+            "recent_max_work": logger.clean(top[2], 40),
+            "max_ms": lag["max_ms"], "max_at": lag["max_at"],
+            "max_work": logger.clean(lag["max_work"], 40)}
 
 
 async def lag_loop():
@@ -148,7 +150,7 @@ def _datalog_tick():
         return
     prog = runner.progress()
     dl.follow(bool(prog.get("running")),
-              lambda: dl.start(runner.recipe_name, runner.recipe, runner.table,
+              lambda: dl.start(runner.active_name, runner.active_recipe, runner.active_table,
                                prog.get("total_ms") or 0),
               lambda: runner.last_result)
     dl.tick((state.cfg.get("log") or {}).get("datalog_interval_s", 1))

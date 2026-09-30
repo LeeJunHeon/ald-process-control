@@ -150,6 +150,7 @@ async def test_pc_link_alarm_and_reset(link, monkeypatch):
     """PC 하트비트가 멈추면 PC 끊김 알람 + 안전 정지 요구.
     다시 보내고 리셋하면 풀린다."""
     lk, s, _cfg = link
+    lk.prm_autofix = False                     # 일부러 바꾼 PRM 을 링크가 되돌리지 않게
     s.write(A.D_PRM_PC_WDT_MS, [300])
     s.set_fault("pc_hb_stop", True)
     assert await wait_until(lambda: (s.reg[A.D_ALARM0] >> A.ALM0_PC_LINK) & 1, 4)

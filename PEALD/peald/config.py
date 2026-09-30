@@ -135,6 +135,68 @@ def _fill_devices(cfg: dict):
     cfg["heaters"] = out
 
 
+# PRM 규칙 — 래더 P00 은 첫 스캔에만 0 인 PRM 을 기본값으로 바꾸고, 그 뒤에는 PC 가 쓴 값을
+# 타이머 설정값·비교값으로 그대로 쓴다(TON 설정값 0 = 조건이 서는 즉시 완료).
+#   (키, 최소, 최대, 설명) — 초 단위는 ×10 해서 100 ms 타이머로 쓰므로 워드(65535) 안이 되게 6553 s 까지.
+PRM_INT_RULES = [
+    ("pc_wdt_ms", 1, 65535, "0 이면 첫 하트비트 뒤 곧바로 PC 통신 끊김"),
+    ("pump_timeout_s", 1, 6553, "0 이면 IV-E 가 열리자마자 펌핑 시간 초과"),
+    ("vent_timeout_s", 1, 6553, "0 이면 VV 가 열리기 전에 벤트 시간 초과"),
+    ("mfc_timeout_s", 1, 6553, "0 이면 모든 블록 준비에서 MFC 시간 초과"),
+    ("mfc_stable_s", 0, 6553, "0 = 안정 대기 없음"),
+    ("valve_min_ms", 0, 65535, "0 = 최소 열림 없음"),
+]
+if DEV.HAS_RF:
+    PRM_INT_RULES.append(("rf_ref_ms", 0, 65535, "0 = 반사 초과 즉시 알람"))
+# 반드시 0 보다 커야 하는 값(비어 있으면 0 으로 써진다)
+PRM_REQUIRED_POS = []
+if DEV.HAS_RF:
+    PRM_REQUIRED_POS += [
+        ("rf_max_w", "0 이면 RF 금지"),
+        ("rf_ref_max_w", "비거나 0 이면 첫 RF 스텝에서 반사 알람 → 안전 정지(래더에 0 보호 없음)"),
+        ("rf_p_max_torr", "0 이면 RF 허가(인터락 b8)가 나지 않음"),
+    ]
+if DEV.HAS_O3:
+    PRM_REQUIRED_POS.append(("o3_max", "0 이면 O3 허가(인터락 b9)가 나지 않음"))
+
+
+def prm_problems(cfg: dict) -> list:
+    """PLC 파라미터 오류 목록(문구). 비어 있으면 PLC 에 써도 된다.
+    ★ 설정 불러오기·설정 편집 저장·PLC 링크가 같은 규칙을 쓴다."""
+    out = []
+    prm = cfg.get("params") or {}
+    for key, lo, hi, why in PRM_INT_RULES:
+        v = prm.get(key)
+        if v is None or v == "":
+            continue                        # 비어 있으면 PLC 링크가 기본값을 쓴다
+        try:
+            f = float(v)
+            if f != int(f):
+                raise ValueError
+            iv = int(f)
+        except (TypeError, ValueError, OverflowError):
+            out.append(f"params.{key} 는 정수여야 합니다: {v!r}")
+            continue
+        if not (lo <= iv <= hi):
+            out.append(f"params.{key} 는 {lo}~{hi} 여야 합니다 (지금 {iv}) — {why}")
+    for key, why in PRM_REQUIRED_POS:
+        v = prm.get(key)
+        try:
+            ok = v is not None and float(v) > 0
+        except (TypeError, ValueError, OverflowError):
+            ok = False
+        if not ok:
+            out.append(f"params.{key} 는 0 보다 커야 합니다 (지금 {v!r}) — {why}")
+    tol = prm.get("mfc_tol_sccm")
+    if tol is not None:
+        try:
+            if float(tol) < 0:
+                raise ValueError
+        except (TypeError, ValueError, OverflowError):
+            out.append(f"params.mfc_tol_sccm 는 0 이상이어야 합니다: {tol!r}")
+    return out
+
+
 def validate(cfg: dict) -> list:
     """[(level, message)] — 비어 있으면 정상."""
     p = []
@@ -163,6 +225,13 @@ def validate(cfg: dict) -> list:
             p.append(("warn", f"plc.{key} 값이 올바르지 않습니다"))
     try:
         wdt = int((cfg.get("params") or {}).get("pc_wdt_ms") or 3000)
+        # ★ 응답 하나를 잃었을 때의 최악 공백 = 응답 제한 + 하트비트 주기 + 재연결 여유(500 ms).
+        #   이것이 PC 하트비트 판정보다 짧지 않으면 PLC 가 PC 끊김으로 공정을 세울 수 있다.
+        worst = int(plc.get("timeout_ms")) + int(plc.get("heartbeat_ms")) + 500
+        if worst >= wdt:
+            p.append(("err", f"응답 하나를 잃었을 때의 최악 하트비트 공백({worst} ms = plc.timeout_ms "
+                             f"{plc.get('timeout_ms')} + plc.heartbeat_ms {plc.get('heartbeat_ms')} + 500)이 "
+                             f"params.pc_wdt_ms({wdt}) 이상입니다 — PLC 가 PC 끊김으로 공정을 세울 수 있습니다"))
         if int(plc.get("heartbeat_ms")) > wdt / 3:
             p.append(("err", f"plc.heartbeat_ms({plc.get('heartbeat_ms')})가 "
                              f"PC 하트비트 판정(params.pc_wdt_ms={wdt})의 1/3 보다 깁니다 — "
@@ -253,6 +322,8 @@ def validate(cfg: dict) -> list:
     except (TypeError, ValueError):
         p.append(("err", "plc.port(1~65535) 또는 plc.unit_id(0~255) 값이 올바르지 않습니다"))
 
+    for msg in prm_problems(cfg):
+        p.append(("err", msg))
     prm = cfg.get("params") or {}
     if prm.get("base_press_torr") is None:
         p.append(("warn", "params.base_press_torr 가 없습니다 — PLC 가 공정 시작을 막습니다"))

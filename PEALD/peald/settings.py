@@ -195,7 +195,7 @@ def _coerce(field, v):
                 raise ValueError
             return (int(f) if f == int(f) and abs(f) < 1e15 else f), ""
         return str(v).strip(), ""
-    except (TypeError, ValueError):
+    except (TypeError, ValueError, OverflowError):
         return None, f"{field['label']}: 숫자가 아닙니다 ({v!r})"
 
 

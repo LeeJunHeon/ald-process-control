@@ -93,6 +93,9 @@ class ModbusClient:
         if not self.connected:
             raise ModbusError("연결되어 있지 않습니다")
         async with self._lock:
+            # ★ 잠금을 기다리는 사이 앞 요청이 시간 초과로 소켓을 버렸을 수 있다 — 다시 본다
+            if self._reader is None or self._writer is None or self._writer.is_closing():
+                raise ModbusError("연결되어 있지 않습니다")
             tid = self._next_tid()
             frame = struct.pack(">HHHB", tid, 0, len(pdu) + 1, self.unit_id) + pdu
             try:

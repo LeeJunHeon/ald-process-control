@@ -18,6 +18,15 @@ from . import paths
 from . import device as DEV
 
 _LEVELS = {"info": 0, "ok": 0, "warn": 1, "err": 2}
+MAX_LINE = 2000                 # 한 줄 최대 글자 수 — 거대한 입력이 로그를 부풀리지 않게
+_CTRL = {i: " " for i in list(range(0, 32)) + [127]}
+
+
+def clean(text, limit: int = MAX_LINE) -> str:
+    """로그·화면에 남길 문자열 — 줄바꿈·제어 문자를 지우고 길이를 자른다.
+    ★ 원격에서 보낸 값에 개행을 넣어 가짜 로그 줄('처리됨')을 만들 수 없게 한다."""
+    s = str(text).translate(_CTRL)
+    return s if len(s) <= limit else s[:limit] + "…"
 
 _cfg = {"level": "info", "keep": 90}
 _abs_dir = None
@@ -86,7 +95,7 @@ def write(level: str, message: str):
         ts = datetime.datetime.now()
         path = os.path.join(_abs_dir, f"{DEV.LOG_PREFIX}-{ts:%Y%m%d}.log")
         with open(path, "a", encoding="utf-8") as fp:
-            fp.write(f"{ts:%Y-%m-%d %H:%M:%S} [{level.upper()}] {message}\n")
+            fp.write(f"{ts:%Y-%m-%d %H:%M:%S} [{clean(level, 8).upper()}] {clean(message)}\n")
     except Exception as e:  # noqa: BLE001
         print(f"[warn] 로그 기록 실패: {e}")
 

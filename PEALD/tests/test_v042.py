@@ -170,11 +170,15 @@ async def test_loop_lag_is_measured_and_logged(monkeypatch):
 def test_trend_interval_uses_monotonic(monkeypatch):
     """PC 시계를 뒤로 돌려도 1 Hz 기록이 비지 않는다."""
     from peald import trendlog as T
-    tl = T.TrendLog()
     mono = [1000.0]
     wall = [2_000_000_000.0]
+    # ★ 시계를 먼저 바꾸고 만들고, 5 s 커밋은 이 시험에서 끈다 — 그래야 호스트 기동 시간
+    #   (부팅 직후 PC·컨테이너)과 무관하게 모든 줄이 대기열에 남아 셀 수 있다.
     monkeypatch.setattr(T.time, "monotonic", lambda: mono[0])
     monkeypatch.setattr(T.time, "time", lambda: wall[0])
+    monkeypatch.setattr(T, "COMMIT_S", 1e9)
+    tl = T.TrendLog()
+    tl.last_commit = mono[0]
     live = {"pressure": {"cvg": 0.1, "cm": None}, "mfc": [], "heaters": [], "extra": {},
             "valves": 0, "aux": 0, "state": {"code": 1}, "seq": {"block": 0, "step": 0}}
     for i in range(10):

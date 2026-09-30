@@ -187,11 +187,19 @@ async def test_precursor_and_reactant_together_is_blocked(link):
     saw_both_req = []
     opened = []
 
-    def watch():
+    # ★ b6 은 한 스캔(20 ms)만 선다 — 바깥에서 들여다보면 부하에 따라 놓친다.
+    #   스캔마다 상태 영역을 내보내는 자리에서 기록한다.
+    orig_publish = s._publish
+
+    def publish():
+        orig_publish()
         if (s.reg[A.D_INTERLOCK] >> A.ILK_BOTH_REQ) & 1:
             saw_both_req.append(True)
         if s.reg[A.D_VALVE_OUT] & (pre | rea):
             opened.append(s.reg[A.D_VALVE_OUT])
+    s._publish = publish
+
+    def watch():
         return (s.reg[A.D_ALARM0] >> A.ALM0_BOTH_OPEN) & 1
 
     await at_vacuum(lk, s)

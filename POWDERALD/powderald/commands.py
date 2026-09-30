@@ -55,16 +55,27 @@ def set_shutdown_handler(fn):
 
 
 async def handle_command(data: dict, ws=None):
-    cmd = (data or {}).get("cmd")
-    if not cmd:
+    cmd = (data or {}).get("cmd") if isinstance(data, dict) else None
+    # ★ 명령 이름은 문자열이고 등록된 이름일 때만 처리한다. 로그에는 앞 40자만, 제어 문자 없이,
+    #   같은 연결에서 초당 한 번만 남긴다(거대한·개행 섞인 이름으로 로그를 부풀리거나 꾸미지 못하게).
+    if not isinstance(cmd, str) or not cmd:
         return
+    shown = logger.clean(cmd, 40)
 
     local = manager.is_local_ws(ws) if ws is not None else True
     if not local and cmd not in READ_ONLY_CMDS:
-        host = getattr(getattr(ws, "client", None), "host", "?")
-        logger.write("warn", f"원격 조작 명령 거절: {cmd} ({host})")
+        host = logger.clean(getattr(getattr(ws, "client", None), "host", "?"), 60)
+        manager.log_limited(ws, "warn", f"원격 조작 명령 거절: {shown} ({host})")
         await push_notice("원격 접속은 보기 전용입니다 — 조작은 장비 PC에서 하세요", "warn", ws)
         return
+    if cmd not in _HANDLERS and cmd not in SIMPLE_CMDS and cmd not in READ_ONLY_CMDS:
+        manager.log_limited(ws, "warn", f"알 수 없는 명령 무시: {shown}")
+        await push_notice(f"알 수 없는 명령입니다: {shown}", "warn", ws)
+        return
+    if cmd in READ_ONLY_CMDS:
+        return
+    from . import loops
+    loops.note_work(f"명령 {cmd}")          # 권한 확인 뒤, 등록된 이름으로만
 
     fn = _HANDLERS.get(cmd)
     if fn is not None:
@@ -251,6 +262,10 @@ async def _cmd_recipe_save(d, ws):
     if not storage.valid_name(name):
         await push_notice("레시피 이름에 쓸 수 없는 문자가 있습니다", "warn", ws)
         return
+    why = _flow_block(name)
+    if why:
+        await push_notice(why, "warn", ws)
+        return
     rec["format"] = DEV.RECIPE_FORMAT
     rec["name"] = name
     res = R.validate(state.cfg, rec)
@@ -258,7 +273,7 @@ async def _cmd_recipe_save(d, ws):
         await push_notice(f"검증 오류 {len(res['errors'])}건 — 고친 뒤 저장하세요", "warn", ws)
         return
     # ★ 실행 중인 레시피는 덮어쓸 수 없다(다른 이름으로 저장은 된다).
-    if _running() and state.runner and state.runner.recipe_name == name:
+    if _running() and state.runner and state.runner.active_name == name:
         await push_notice("실행 중인 레시피는 덮어쓸 수 없습니다 — 다른 이름으로 저장하세요",
                           "warn", ws)
         return
@@ -274,6 +289,10 @@ async def _cmd_recipe_save(d, ws):
 
 async def _cmd_recipe_delete(d, ws):
     name = d.get("name") or ""
+    why = _flow_block(name)
+    if why:
+        await push_notice(why, "warn", ws)
+        return
     if _running() and state.runner and state.runner.recipe_name == name:
         await push_notice("실행 중인 레시피는 삭제할 수 없습니다", "warn", ws)
         return
@@ -287,6 +306,10 @@ async def _cmd_recipe_delete(d, ws):
 
 async def _cmd_recipe_rename(d, ws):
     old, new = d.get("name") or "", (d.get("new_name") or "").strip()
+    why = _flow_block(old)
+    if why:
+        await push_notice(why, "warn", ws)
+        return
     if not storage.valid_name(new):
         await push_notice("새 이름에 쓸 수 없는 문자가 있습니다", "warn", ws)
         return
@@ -311,6 +334,10 @@ async def _cmd_recipe_rename(d, ws):
 
 
 async def _cmd_recipe_select(d, ws):
+    why = _flow_block()
+    if why:
+        await push_notice(why, "warn", ws)
+        return
     ok, why = state.runner.select(d.get("name") or "")
     if not ok:
         await push_notice(why, "warn", ws)
@@ -321,6 +348,10 @@ async def _cmd_recipe_select(d, ws):
 async def _cmd_recipe_upload(d, ws):
     """PLC 로 올리기. 공정 중·PLC 끊김이면 거절한다."""
     name = d.get("name") or (state.runner.recipe_name if state.runner else "")
+    why = _flow_block()
+    if why:
+        await push_notice(why, "warn", ws)
+        return
     link = state.link
     if not (link and link.connected):
         await push_notice("PLC 에 연결되어 있지 않습니다", "warn", ws)
@@ -368,15 +399,35 @@ async def _cmd_plc_recipe_read(d, ws):
 
 # ===================== 공정 시작 흐름 =====================
 async def _cmd_process_start(d, ws):
+    """시작 흐름을 백그라운드로 띄우고 바로 돌아온다 — 같은 연결의 다음 명령(대기 취소 등)이
+    바로 처리돼야 한다. 결과는 흐름이 끝날 때 알린다."""
+    if state.runner.busy:
+        await push_notice("이미 시작 절차가 진행 중입니다", "warn", ws)
+        return
     name = d.get("name")
     if name:
         ok, why = state.runner.select(name)
         if not ok:
             await push_notice(why, "warn", ws)
             return
-    ok, msg = await state.runner.start(push_log, push_notice)
-    await push_notice(msg, "ok" if ok else "warn", ws)
+
+    async def notify(msg, ok):
+        await push_notice(msg, "ok" if ok else "warn", ws)
+        await push_state()
+
+    ok, msg = state.runner.begin(push_log, push_notice, notify)
+    await push_notice(msg, "info" if ok else "warn", ws)
     await push_state()
+
+
+def _flow_block(name: str = None) -> str:
+    """시작 흐름 동안 막는 조작의 이유(없으면 ''). name 을 주면 그 레시피가 지금 선택된 것일 때만."""
+    r = state.runner
+    if not (r and r.busy):
+        return ""
+    if name is not None and name != r.recipe_name:
+        return ""
+    return "공정 시작 절차가 진행 중입니다 — 끝나거나 취소한 뒤에 하세요"
 
 
 async def _cmd_process_cancel_wait(d, ws):
@@ -823,7 +874,7 @@ async def _need_admin(d, ws) -> bool:
 def _save_blocked() -> str:
     if _running():
         return "시퀀서 동작 중(공정 준비·실행·일시정지·사이클 후 정지 예약)에는 설정을 저장할 수 없습니다"
-    if state.runner and state.runner.phase != "idle":
+    if state.runner and state.runner.busy:
         return "공정 시작 절차가 진행 중입니다 — 끝난 뒤에 저장하세요"
     return ""
 

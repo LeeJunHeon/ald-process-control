@@ -8,7 +8,9 @@ connection.py — WebSocket 연결 관리 + 로컬/원격 구분 + push_*.
 """
 
 import json
+import time
 import ipaddress
+from urllib.parse import urlsplit
 
 from fastapi import WebSocket
 
@@ -28,9 +30,53 @@ def is_local(ws) -> bool:
         return host == "localhost"
 
 
+def _split_host(host: str):
+    """'127.0.0.1:8201' · '[::1]:8201' · 'localhost' → (호스트, 포트 문자열)."""
+    host = (host or "").strip()
+    if host.startswith("["):
+        end = host.find("]")
+        return (host[1:end], host[end + 2:]) if end > 0 else ("", "")
+    if host.count(":") == 1:
+        h, _, p = host.partition(":")
+        return h, p
+    return host, ""
+
+
+def host_ok(host_header) -> bool:
+    """요청의 Host 가 IP 주소(v4/v6) 또는 localhost 인지.
+    ★ 도메인 이름이면 거절한다 — DNS 재바인딩으로 외부 페이지가 이 서버에 닿는 길을 막는다."""
+    h, p = _split_host(host_header)
+    if not h:
+        return False
+    if p and not p.isdigit():
+        return False
+    if h.lower() == "localhost":
+        return True
+    try:
+        ipaddress.ip_address(h)
+        return True
+    except ValueError:
+        return False
+
+
+def origin_ok(origin, host_header) -> bool:
+    """Origin 이 있으면(브라우저는 항상 보낸다) 그 host:port 가 요청의 Host 와 같아야 한다.
+    ★ 운전 PC 브라우저에 열린 아무 웹 페이지가 ws://127.0.0.1:포트/ws 로 명령을 보내지 못하게 한다."""
+    if origin is None:
+        return True                 # 브라우저가 아닌 도구 — 루프백 여부 규칙을 그대로 쓴다
+    try:
+        u = urlsplit(origin)
+    except ValueError:
+        return False
+    if u.scheme not in ("http", "https") or not u.netloc:
+        return False
+    return u.netloc.lower() == (host_header or "").strip().lower()
+
+
 class ConnectionManager:
     def __init__(self):
         self.active = {}          # WebSocket -> {"local": bool}
+        self._log_at = {}         # WebSocket -> 마지막 거절 로그 시각(초당 한 번만)
 
     async def connect(self, ws: WebSocket):
         await ws.accept()
@@ -48,6 +94,15 @@ class ConnectionManager:
 
     def disconnect(self, ws):
         self.active.pop(ws, None)
+        self._log_at.pop(ws, None)
+
+    def log_limited(self, ws, level: str, msg: str):
+        """같은 연결에서 초당 한 번만 로그를 남긴다(명령을 쏟아부어 로그를 부풀리지 못하게)."""
+        now = time.monotonic()
+        if now - self._log_at.get(ws, 0.0) < 1.0:
+            return
+        self._log_at[ws] = now
+        logger.write(level, msg)
 
     def is_local_ws(self, ws) -> bool:
         return bool((self.active.get(ws) or {}).get("local"))

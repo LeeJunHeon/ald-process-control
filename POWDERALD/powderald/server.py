@@ -18,7 +18,7 @@ import logging
 import contextlib
 
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
-from fastapi.responses import FileResponse, HTMLResponse, JSONResponse
+from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, PlainTextResponse
 from fastapi.staticfiles import StaticFiles
 
 from . import paths
@@ -34,13 +34,24 @@ from .plclink import PlcLink
 from .process import ProcessRunner
 from .simulator import PlcSim, SimServer
 from .state import state
-from .connection import manager
+from .connection import manager, host_ok, origin_ok
 from .commands import handle_command
 from .trend_buffer import trend
 from . import trendlog as trendlog_mod
 from . import logview
 
 log = logging.getLogger(__name__)
+
+# WebSocket 메시지 크기 상한 — 가장 큰 레시피 저장 명령의 몇 배. 넘으면 uvicorn 이 연결을 닫는다.
+WS_MAX_SIZE = 256 * 1024
+
+
+def uvicorn_config(app, host: str, port: int):
+    """창·headless·자체 점검이 같은 서버 설정을 쓴다.
+    log_config=None: uvicorn 자체 로깅 dictConfig 를 타지 않는다(창 전용 exe 에서 죽는다)."""
+    import uvicorn
+    return uvicorn.Config(app, host=host, port=port, log_level="warning", log_config=None,
+                          ws_max_size=WS_MAX_SIZE)
 
 _ASSET_FILES = ["css/tokens.css", "css/style.css", "js/fmt.js", "js/core.js", "js/app.js",
                 "js/views/main.js", "js/views/schematic.js", "js/views/trend.js",
@@ -126,6 +137,9 @@ def create_app(config_path: str = "", single_instance: bool = True,
         try:
             yield
         finally:
+            if state.runner:
+                with contextlib.suppress(Exception):
+                    await state.runner.stop_task()
             if state.datalog:
                 state.datalog.close()
             with contextlib.suppress(Exception):
@@ -165,6 +179,13 @@ def _asset_version() -> str:
 
 
 def _routes(app: FastAPI):
+    @app.middleware("http")
+    async def host_guard(request, call_next):
+        # ★ Host 가 IP·localhost 가 아니면 거절 — DNS 재바인딩으로 이력·데이터 로그에 닿지 못하게
+        if not host_ok(request.headers.get("host")):
+            return PlainTextResponse("Host 거절", status_code=403)
+        return await call_next(request)
+
     @app.get("/")
     async def root():
         try:
@@ -220,6 +241,15 @@ def _routes(app: FastAPI):
 
     @app.websocket("/ws")
     async def ws_endpoint(ws: WebSocket):
+        host = ws.headers.get("host")
+        origin = ws.headers.get("origin")
+        if not host_ok(host) or not origin_ok(origin, host):
+            # ★ 다른 출처의 웹 페이지·도메인 Host 는 연결 자체를 받지 않는다
+            logger.write("warn", "WebSocket 연결 거절 — 출처 "
+                         + logger.clean(origin if origin is not None else "(없음)", 80)
+                         + " · Host " + logger.clean(host or "(없음)", 60))
+            await ws.close(code=1008)
+            return
         await manager.connect(ws)
         try:
             while True:
@@ -229,8 +259,16 @@ def _routes(app: FastAPI):
                 except Exception:  # noqa: BLE001
                     continue
                 if isinstance(data, dict) and "cmd" in data:
-                    loops.note_work(f"명령 {data.get('cmd')}")
-                    await handle_command(data, ws)
+                    try:
+                        await handle_command(data, ws)
+                    except WebSocketDisconnect:
+                        raise
+                    except Exception as e:  # noqa: BLE001
+                        # ★ 명령 처리 중 예외가 나도 연결은 유지한다(화면이 말없이 끊기지 않게)
+                        logger.write("err", f"명령 처리 오류({logger.clean(data.get('cmd'), 40)}): "
+                                            f"{type(e).__name__}: {logger.clean(e, 300)}")
+                        from .connection import push_notice
+                        await push_notice(f"명령을 처리하지 못했습니다 — {type(e).__name__}", "err", ws)
         except WebSocketDisconnect:
             manager.disconnect(ws)
         except Exception:  # noqa: BLE001
