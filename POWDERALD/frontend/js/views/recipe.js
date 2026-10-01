@@ -33,7 +33,8 @@
     cur = m.recipe;
     curName = m.name || '';
     dirty = false;
-    saving = null;
+    saving = null;                       // 기다리던 저장은 버린다 — '저장하는 중…' 도 지운다
+    core.setText('rcSaveMsg', '');
     check = m.check || { errors: [], warnings: [] };
     summary = m.summary || {};
     sel.block = 1;
@@ -46,7 +47,8 @@
     saving = null;
     if (!sv) {
       // ★ 기다리던 저장이 없다(그사이 [새로] · 다른 레시피 열기) — 편집 중인 레시피 · 이름 · dirty 는
-      //   건드리지 않고 목록만 갱신한다
+      //   건드리지 않고 목록만 갱신한다(남아 있을 수 있는 '저장하는 중…' 은 지운다)
+      if ((core.bind('rcSaveMsg') || {}).textContent === '저장하는 중…') core.setText('rcSaveMsg', '');
       drawList(core.state || {});
       return;
     }
@@ -555,6 +557,7 @@
       };
       curName = '';
       saving = null;
+      core.setText('rcSaveMsg', '');
       sel.block = 1;
       draw();
       validateSoon();

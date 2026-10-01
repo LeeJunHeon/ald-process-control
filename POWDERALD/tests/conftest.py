@@ -87,3 +87,51 @@ async def wait_until(fn, timeout=5.0, step=0.05):
             return True
         await asyncio.sleep(step)
     return False
+
+
+class FakeSim:
+    """가짜 시계로 tick 단위로 돌리는 시뮬레이터(소켓 없이). step(n, dt) 로 n 스캔."""
+
+    def __init__(self, cfg, speed=1, o3=False):
+        from powderald.simulator import PlcSim
+        self.t = [1000.0]
+        self.sim = PlcSim(cfg, speed, clock=lambda: self.t[0])
+        if o3:
+            self.o3_ready()
+
+    def step(self, n=1, dt=0.02):
+        for _ in range(n):
+            self.t[0] += dt
+            self.sim.tick()
+        return self.sim
+
+    def o3_ready(self):
+        """Powder: O3 라인을 래더대로 켠다(바이패스 펌프 → IV-B → 5 s 뒤 O3 허가 → 발생기).
+        ★ 래더는 공정 중 O3 허가가 빠지면 알람1 b3 로 중단한다 — 시퀀서를 직접 돌리는 시험의 전제."""
+        from powderald import addresses as A
+        from powderald import device as DEV
+        if not DEV.HAS_O3:
+            return
+        s = self.sim
+        if s.reg[A.D_PRM_O3_MAX] == 0:
+            s.write(A.D_PRM_O3_MAX, [16000])
+        s.man_aux |= (1 << A.AUX_BYPASS_PUMP) | (1 << A.AUX_IVB) | (1 << A.AUX_O3_GEN)
+        for _ in range(400):
+            self.step(1, 0.05)
+            if A.bit(s.reg[A.D_INTERLOCK], A.ILK_O3_OK) and s.o3_gen_on:
+                return
+        raise AssertionError("O3 허가가 서지 않았다")
+
+
+async def o3_line_live(sim, timeout=10.0):
+    """실시간으로 도는 시뮬레이터에 O3 라인을 켜고 O3 허가(5 s 뒤)를 기다린다 — Powder 에서
+    시퀀서를 직접 시작하는 시험의 전제(래더는 공정 중 O3 허가가 없으면 알람1 b3 로 중단한다).
+    O3 가 없는 장비에서는 아무것도 안 한다."""
+    from powderald import addresses as A
+    from powderald import device as DEV
+    if not DEV.HAS_O3:
+        return
+    if sim.reg[A.D_PRM_O3_MAX] == 0:
+        sim.write(A.D_PRM_O3_MAX, [16000])
+    sim.man_aux |= (1 << A.AUX_BYPASS_PUMP) | (1 << A.AUX_IVB) | (1 << A.AUX_O3_GEN)
+    assert await wait_until(lambda: A.bit(sim.reg[A.D_INTERLOCK], A.ILK_O3_OK), timeout), "O3 허가가 서지 않았다"

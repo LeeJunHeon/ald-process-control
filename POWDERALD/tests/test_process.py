@@ -914,19 +914,25 @@ def test_end_result_rules():
 
 
 def test_simulator_aborts_sequencer_in_same_scan(cfg):
-    """래더와 같게 — 안전 정지 요구가 서는 스캔에 시퀀서도 8 이 된다(6 + 4 가 읽히지 않는다)."""
-    import time as _t
-    from powderald.simulator import PlcSim
-    sim = PlcSim(cfg, 1)
+    """래더와 같게 — 안전 정지 요구(P30)가 서는 스캔에 시퀀서(P40)도 8 이 된다(6 + 4 가 읽히지 않는다).
+    래더 스캔 순서: 비상정지 입력 → 그 스캔 P35 가 알람 래치 → 다음 스캔 P30 이 SAFE_REQ → 같은 스캔 P40 중단.
+    (v0.4.8 — 예전 시뮬레이터는 알람과 같은 스캔에 중단해 한 스캔 빨랐다)"""
+    from conftest import FakeSim
+    fs = FakeSim(cfg, o3=True)
+    sim = fs.sim
     tbl = R.to_plc_words(cfg, Converters(cfg), long_recipe("같은스캔"))
     sim.write(A.RCP_SUM_BASE, tbl["words"])
     assert sim._process_start() == A.RESULT_OK
-    sim.tick()
+    fs.step(1)
     sim.set_fault("emo", True)
-    _t.sleep(0.02)
-    sim.tick()
-    assert sim.reg[A.D_STATE] == A.STATE_SAFE_STOP
-    assert sim.reg[A.D_SEQ_STATE] == 8, "안전 정지 스캔에 시퀀서가 멈추지 않았다"
+    seen = []
+    for _ in range(3):
+        fs.step(1)
+        seen.append((sim.reg[A.D_STATE], sim.reg[A.D_SEQ_STATE], (sim.reg[A.D_ALARM0] >> A.ALM0_EMO) & 1))
+    # 스캔 1: 알람만(아직 공정 중) · 스캔 2: 안전 정지 + 시퀀서 8 — 6 + 4 는 한 번도 없다
+    assert seen[0][2] == 1 and seen[0][0] != A.STATE_SAFE_STOP, seen
+    assert seen[1][0] == A.STATE_SAFE_STOP and seen[1][1] == 8, seen
+    assert not any(st == A.STATE_SAFE_STOP and q == 4 for st, q, _a in seen), seen
 
 
 

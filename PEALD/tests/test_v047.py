@@ -271,9 +271,9 @@ async def test_largest_valid_recipe_passes_and_oversize_closes(rig):
 
 
 # ===================== 원격이 쏟아붓는 검증 요청 =====================
-async def _flood(port, msg, until):
+async def _flood(port, msg, until, compression=None):
     async with websockets.connect(f"ws://127.0.0.1:{port}/ws?remote=1", max_size=None,
-                                  compression=None) as ws:
+                                  compression=compression) as ws:
         async def drain():
             try:
                 async for _ in ws:
@@ -293,10 +293,12 @@ async def _flood(port, msg, until):
         return n
 
 
-@pytest.mark.parametrize("remotes", [1, 3])
-async def test_remote_flood_keeps_heartbeat_and_local_screen(rig, remotes):
+@pytest.mark.parametrize("remotes,compression", [(1, None), (1, "deflate"), (3, "mix")])
+async def test_remote_flood_keeps_heartbeat_and_local_screen(rig, remotes, compression):
     """원격 1개 · 3개가 가장 큰 허용 크기의 recipe_validate 를 쉬지 않고 — PLC 쪽 하트비트 간격 < 1000 ms,
-    PC 통신 끊김 없음, 로컬 live 초당 4개 이상, 로컬 명령 답 1 s 안, 멈춘 뒤 루프 지연 경고 없음."""
+    PC 통신 끊김 없음, 로컬 live 초당 4개 이상, 로컬 명령 답 1 s 안, 멈춘 뒤 루프 지연 경고 없음.
+    ★ 압축(permessage-deflate)을 켠 경우도 — 브라우저는 기본으로 켠다. 작은 프레임이 서버에서 큰
+      메시지로 풀린다(v0.4.6 은 압축을 켜야 하트비트 공백이 재현됐다). 'mix' = 3개 중 하나만 압축."""
     loc = Local(rig.port)
     await loc.start()
     await asyncio.sleep(1.0)
@@ -304,7 +306,8 @@ async def test_remote_flood_keeps_heartbeat_and_local_screen(rig, remotes):
     msg = allowed_max_msg()
     t0 = time.monotonic()
     until = t0 + 6
-    flood = asyncio.gather(*[_flood(rig.port, msg, until) for _ in range(remotes)])
+    comp = ([None, "deflate", None] if compression == "mix" else [compression] * remotes)[:remotes]
+    flood = asyncio.gather(*[_flood(rig.port, msg, until, c) for c in comp])
     answers = []
     while time.monotonic() < until:
         await asyncio.sleep(0.8)
@@ -339,7 +342,9 @@ def _nonreader(port):
 
 
 async def test_nonreading_remotes_do_not_stall_local(rig, monkeypatch):
-    monkeypatch.setattr(CN, "SEND_TIMEOUT_S", 1.0)
+    """읽지 않는 원격 3개 — 로컬이 멈추지 않는다(live 초당 4개 이상 · 명령 뒤 state 1 s 안).
+    ★ 연결이 '닫히는' 것은 운영체제 소켓 버퍼 크기에 따라 수십 초 걸린다(리눅스는 커서 오래) —
+      닫힘은 send 가 끝나지 않는 가짜 연결로 따로 본다(test_send_timeout_closes_stuck_connection)."""
     loc = Local(rig.port)
     await loc.start()
     await asyncio.sleep(1.0)
@@ -355,18 +360,63 @@ async def test_nonreading_remotes_do_not_stall_local(rig, monkeypatch):
             await asyncio.sleep(0.5)
         t1 = time.monotonic()
         per = loc.per_second(t0, t1)
-        end = time.monotonic() + 15
-        while CN.manager.remote_count() and time.monotonic() < end:
-            await asyncio.sleep(0.2)
         assert min(per) >= 4, per
         assert max(waits) < 1.0, waits
-        assert CN.manager.remote_count() == 0, "읽지 않는 연결이 닫히지 않았다"
-        log = open(os.path.join(paths.LOGS_DIR, os.listdir(paths.LOGS_DIR)[0]), encoding="utf-8").read()
-        assert "화면 응답 없음 — 연결을 끊었습니다" in log
     finally:
         for s in socks:
             s.close()
         await loc.close()
+
+
+class StuckWS:
+    """send 가 끝나지 않는 가짜 연결(읽지 않는 화면) — 운영체제 버퍼에 기대지 않고 시간 초과를 본다."""
+
+    def __init__(self, host):
+        import types
+        self.client = types.SimpleNamespace(host=host)
+        self.query_params = {}
+        self.closed = None
+
+    async def accept(self):
+        pass
+
+    async def send_text(self, text):
+        await asyncio.Event().wait()            # 영원히 끝나지 않는다
+
+    async def close(self, code=1000):
+        self.closed = code
+
+
+@pytest.mark.parametrize("host,who", [("10.1.2.3", "10.1.2.3"), ("127.0.0.1", "이 PC 화면")])
+async def test_send_timeout_closes_stuck_connection(monkeypatch, host, who):
+    """send 하나가 SEND_TIMEOUT_S 안에 끝나지 않으면 그 연결만 닫고 로그 한 줄. 다른 연결은 그대로 받는다."""
+    from peald import logger
+    monkeypatch.setattr(CN, "SEND_TIMEOUT_S", 0.3)
+    lines = []
+    monkeypatch.setattr(logger, "write", lambda lv, msg: lines.append(msg))
+    monkeypatch.setattr(state, "snapshot", lambda access_local=True, recipes=None: {"type": "state"})
+    m = CN.ConnectionManager()
+    monkeypatch.setattr(CN, "manager", m)
+    stuck = StuckWS(host)
+    assert await m.connect(stuck)
+    ok_ws = type("W", (), {})()
+    got = []
+    ok_ws.client = type("C", (), {"host": "127.0.0.1"})()
+
+    async def acc():
+        pass
+
+    async def snd(text):
+        got.append(text)
+    ok_ws.accept, ok_ws.send_text, ok_ws.close = acc, snd, acc
+    assert await m.connect(ok_ws)
+    for i in range(5):
+        await m.broadcast({"type": "live", "n": i}, live=True)
+        await asyncio.sleep(0.1)
+    await asyncio.sleep(0.5)
+    assert stuck not in m.active and stuck.closed == 1008
+    assert any(f"화면 응답 없음 — 연결을 끊었습니다 ({who})" in x for x in lines), lines
+    assert ok_ws in m.active and any('"live"' in t for t in got)
 
 
 # ===================== 속도 · 연결 수 · 검증 합치기 =====================

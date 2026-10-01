@@ -141,8 +141,7 @@ def test_group_repeat_limit_is_signed_word(cfg):
 
 def test_simulator_reads_group_repeat_signed(cfg):
     """[1 ×2, 2 ×32768] — 그룹 1 을 다 돈 뒤 그룹 2 를 불러올 때 래더처럼 레시피 오류(8)."""
-    import time as _t
-    from powderald.simulator import PlcSim
+    from conftest import FakeSim
     rec = two_blocks("부호")
     for b in rec["blocks"]:
         b["repeat"] = 1
@@ -153,15 +152,15 @@ def test_simulator_reads_group_repeat_signed(cfg):
     cfg["params"]["mfc_stable_s"] = 0
     cfg["params"]["mfc_tol_sccm"] = 0
     tbl = R.to_plc_words(cfg, Converters(cfg), rec)
-    sim = PlcSim(cfg, 1)
+    fs = FakeSim(cfg, o3=True)               # Powder: 공정 중 O3 허가가 없으면 래더가 b3 로 중단한다
+    sim = fs.sim
     sim.write(A.RCP_SUM_BASE, tbl["words"])
     sim.reg.pc_set(A.D_PRM_MFC_STABLE, 0)
     sim.reg.pc_set(A.D_PRM_MFC_TOL, 0)
     assert sim._process_start() == A.RESULT_OK
     passes = set()
     for _ in range(400):
-        _t.sleep(0.005)
-        sim.tick()
+        fs.step(1, 0.005)
         if sim.running:
             passes.add((sim.blk, sim.group_pass))
         else:
@@ -226,29 +225,28 @@ def test_valve_min_default_comes_from_plc_default_table(cfg):
 
 # ===================== 6. 끝 판정 · 마지막 위치 · 스냅샷 =====================
 def test_simulator_keeps_position_and_bumps_block_on_normal_end(cfg):
-    import time as _t
-    from powderald.simulator import PlcSim
+    from conftest import FakeSim
     rec = two_blocks("끝위치")
     for b in rec["blocks"]:
         b["repeat"] = 1
         b["steps"] = b["steps"][:1]
         b["steps"][0]["time_ms"] = 20
     tbl = R.to_plc_words(cfg, Converters(cfg), rec)
-    sim = PlcSim(cfg, 1)
+    fs = FakeSim(cfg, o3=True)
+    sim = fs.sim
     sim.write(A.RCP_SUM_BASE, tbl["words"])
     sim.reg.pc_set(A.D_PRM_MFC_STABLE, 0)
     sim.reg.pc_set(A.D_PRM_MFC_TOL, 0)
     assert sim._process_start() == A.RESULT_OK
     for _ in range(400):
-        _t.sleep(0.005)
-        sim.tick()
+        fs.step(1, 0.005)
         if not sim.running:
             break
     assert sim.reg[A.D_SEQ_STATE] == 6
     assert sim.reg[A.D_SEQ_BLOCK] == 3                     # 블록 수 + 1
     assert sim.reg[A.D_SEQ_STEP] == 2 and A.dword(sim.reg[A.D_SEQ_BLOCK_PASS], 0) == 1
     assert sim._process_start() == A.RESULT_OK             # 시작 때만 지운다
-    sim.tick()
+    fs.step(1)
     assert sim.reg[A.D_SEQ_BLOCK] == 1
 
 

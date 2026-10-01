@@ -207,7 +207,8 @@ async def test_precursor_and_reactant_together_is_blocked(link):
     assert await wait_until(watch, 3, step=0.01), "동시 개방 알람이 걸리지 않았다"
     assert not opened, f"밸브가 열렸다: {opened}"
     assert saw_both_req, "동시 요청 인터락(b6)이 한 번도 서지 않았다"
-    assert s.safe_stop, "중대 알람인데 안전 정지가 걸리지 않았다"
+    # 래더: 알람은 P35 에서 래치되고 안전 정지 요구는 다음 스캔 P30 — 한 스캔 뒤를 기다린다
+    assert await wait_until(lambda: s.safe_stop, 1, step=0.01), "중대 알람인데 안전 정지가 걸리지 않았다"
 
 
 # ===================== 알람 =====================
@@ -517,9 +518,11 @@ async def test_pump_start_clears_vent_request(link):
 def _o3_sim(cfg, permit=False):
     """발생기가 켜진 Powder 시뮬레이터(소켓 없이 tick 을 직접 돌린다).
     permit=True 면 펌핑해 공정 밸브 허가(인터락 b4)까지 받는다."""
-    import time as _t
-    from powderald.simulator import PlcSim, AO_O3
-    s = PlcSim(cfg, 1)
+    from powderald.simulator import AO_O3
+    from conftest import FakeSim
+    fs = FakeSim(cfg)
+    s = fs.sim
+    s.fake = fs
     s.write(A.D_PRM_O3_MAX, [16000])
     s.write(A.D_PRM_BASE_PRESS, [16000])      # 진공 판정은 이 시험과 무관 — 걸리지 않게
     s.base_pressure = 1.0                      # 대기압이면 PLC 가 밸브 요청을 지운다
@@ -527,24 +530,15 @@ def _o3_sim(cfg, permit=False):
     s.ao[AO_O3] = 1000
     if permit:
         s.pump_req = s.exh_req = True
-    end = _t.monotonic() + 6
-    while _t.monotonic() < end:
-        s.pc_hb_at = _t.monotonic()            # PC 하트비트는 살아 있는 것으로
-        s.tick()
-        if s.o3_ok_since is not None:
-            s.o3_ok_since -= 10                # 바이패스 5 s 대기를 건너뛴다
+    for _ in range(600):                       # 가짜 시계 — 바이패스 5 s 대기도 그대로 센다
+        fs.step(1, 0.05)
         if s.o3_gen_on and (not permit or A.bit(s.reg[A.D_INTERLOCK], A.ILK_VALVE_OK)):
             return s
-        _t.sleep(0.01)
     raise AssertionError("발생기·허가 준비가 되지 않았다")
 
 
 def _tick(s, n=3):
-    import time as _t
-    for _ in range(n):
-        s.pc_hb_at = _t.monotonic()
-        _t.sleep(0.005)
-        s.tick()
+    s.fake.step(n, 0.005)
 
 
 @pytest.mark.skipif(not DEV.HAS_O3, reason="O3 가 있는 장비만")

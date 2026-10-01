@@ -14,7 +14,7 @@ from peald import paths
 from peald import recipe as R
 from peald.convert import Converters
 
-from conftest import wait_until
+from conftest import o3_line_live, wait_until
 
 
 # ===================== 큰 자료 만들기 =====================
@@ -87,6 +87,7 @@ async def test_heavy_reads_do_not_stall_heartbeat(link):
     assert not (sim.reg[A.D_ALARM0] >> A.ALM0_PC_LINK) & 1, "준비 중에 PC 끊김이 걸렸다"
 
     sim.write(A.RCP_SUM_BASE, _long_recipe_words(cfg))
+    await o3_line_live(sim)              # Powder: 래더는 공정 중 O3 허가가 없으면 중단한다
     assert sim._process_start() == A.RESULT_OK
     beats = []
     orig = lk._write_heartbeat
