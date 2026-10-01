@@ -26,10 +26,14 @@
   var limSig = '';
   var editNo = 0;           // 편집할 때마다 +1 — 저장 요청 뒤에 또 고쳤는지 본다
   var saving = null;        // { name, editNo } — 답을 기다리는 저장
+  var renaming = null;      // { old, new } — 답을 기다리는 이름 바꾸기(답이 ok 일 때만 이름을 바꾼다)
+  var deleting = null;      // 답을 기다리는 삭제의 이름(답이 ok 일 때만 편집기를 비운다)
+  var reqNo = 0;            // 검증 요청 번호 — 마지막 요청의 답만 쓴다(늦게 온 옛 답이 덮지 않게)
   var lastPlcConn = null;
 
   /* ===================== 서버에서 오는 것 ===================== */
   w.app.on('recipe', function (m) {
+    renaming = null; deleting = null;    // 다른 레시피를 열었다 — 기다리던 답은 목록만 갱신
     cur = m.recipe;
     curName = m.name || '';
     dirty = false;
@@ -69,7 +73,36 @@
     drawList(core.state || {});
   });
 
+  /** 이름 바꾸기 결과 — ★ 거절되면 이름을 그대로 둔다(거절된 새 이름으로 다음 저장이 남의 레시피를
+   *  덮어쓰지 않게). 기다리던 요청과 다른 답(다른 화면 · 오래된 답)은 목록만 갱신한다. */
+  w.app.on('recipe_renamed', function (m) {
+    var rn = renaming;
+    if (!rn || rn.old !== m.old || rn.new !== m.new) { drawList(core.state || {}); return; }
+    renaming = null;
+    core.setText('rcSaveMsg', m.ok ? '' : '이름 안 바뀜 — ' + (m.why || ''));
+    if (m.ok && curName === m.old) {
+      curName = m.new;
+      if (cur) cur.name = m.new;
+    }
+    draw();
+  });
+
+  /** 삭제 결과 — ★ ok 일 때만 편집기를 비운다(거절되면 고치던 내용이 남는다). */
+  w.app.on('recipe_deleted', function (m) {
+    var dn = deleting;
+    if (dn == null || dn !== m.name) { drawList(core.state || {}); return; }
+    deleting = null;
+    if (!m.ok) { core.setText('rcSaveMsg', '삭제 안 됨 — ' + (m.why || '')); drawStatus(); return; }
+    core.setText('rcSaveMsg', '');
+    if (curName === m.name) {
+      cur = null; curName = ''; dirty = false;
+      drawEmpty();
+    }
+  });
+
   w.app.on('recipe_check', function (m) {
+    // 요청 번호가 붙은 답은 마지막 요청의 것만 쓴다(번호 없는 답 — 열기 · 서버 쪽 — 은 그대로)
+    if (m.req != null && m.req !== reqNo) return;
     check = m.check || { errors: [], warnings: [] };
     summary = m.summary || {};
     drawStatus();
@@ -83,7 +116,7 @@
     if (sendTimer) clearTimeout(sendTimer);
     sendTimer = setTimeout(function () {
       sendTimer = null;
-      if (cur) w.app.send('recipe_validate', { recipe: cur });
+      if (cur) w.app.send('recipe_validate', { recipe: cur, req: ++reqNo });
     }, 250);
   }
 
@@ -432,9 +465,19 @@
     if (cb && cur) {
       var st = stepOf(cb);
       if (!st) return;
-      if (cb.dataset.rcv) toggleValve(st, cb.dataset.rcv);
-      else if (cb.dataset.rcflag) st[cb.dataset.rcflag] = !st[cb.dataset.rcflag];
-      cb.classList.toggle('on');
+      if (cb.dataset.rcv) {
+        toggleValve(st, cb.dataset.rcv);
+        // ★ 짝 밸브(보조)도 같이 켜질 수 있다 — 그 줄의 밸브 칸을 모두 다시 맞춘다
+        var row = cb.closest('tr') || cb.parentNode;
+        Array.prototype.forEach.call(row.querySelectorAll('.cb[data-rcv]'), function (c) {
+          var on = st.valves.indexOf(c.dataset.rcv) >= 0;
+          c.classList.toggle('on', on);
+          if (c.getAttribute('aria-checked') != null) c.setAttribute('aria-checked', String(on));
+        });
+      } else if (cb.dataset.rcflag) {
+        st[cb.dataset.rcflag] = !st[cb.dataset.rcflag];
+        cb.classList.toggle('on');
+      }
       validateSoon();
       return;
     }
@@ -585,11 +628,12 @@
     }
     if (which === 'rename') {
       if (!curName) { core.toast('먼저 저장하세요', 'warn'); return; }
+      if (renaming) { core.toast('이름 바꾸기 답을 기다리는 중입니다', 'warn'); return; }
       askName('이름 바꾸기', curName, function (nm) {
-        w.app.send('recipe_rename', { name: curName, new_name: nm });
-        curName = nm;
-        cur.name = nm;
-        draw();
+        // ★ 서버 답(recipe_renamed)이 ok 일 때만 이름을 바꾼다
+        if (!w.app.send('recipe_rename', { name: curName, new_name: nm })) return;
+        renaming = { old: curName, new: nm };
+        core.setText('rcSaveMsg', '이름 바꾸는 중…');
       });
       return;
     }
@@ -598,9 +642,10 @@
       core.confirmAsk('레시피를 삭제할까요?',
         '<b>' + core.esc(curName) + '</b> 파일을 지웁니다. 되돌릴 수 없습니다.',
         '삭제', function () {
-          w.app.send('recipe_delete', { name: curName });
-          cur = null; curName = ''; dirty = false;
-          drawEmpty();
+          // ★ 서버 답(recipe_deleted)이 ok 일 때만 편집기를 비운다
+          if (!w.app.send('recipe_delete', { name: curName })) return;
+          deleting = curName;
+          core.setText('rcSaveMsg', '삭제하는 중…');
         });
       return;
     }

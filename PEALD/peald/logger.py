@@ -67,6 +67,22 @@ def configure(log_cfg: dict):
             write(lv, msg)
 
 
+def csv_cell(v):
+    """CSV 수식 주입 막기 — 글자 칸이 = + - @ 탭 CR 로 시작하면 앞에 ' 를 붙인다(엑셀이 수식으로 읽지 않게).
+    숫자(음수 포함)는 그대로. 데이터 로그 · 트렌드 내보내기 등 모든 CSV 쓰기가 이것을 쓴다."""
+    if not isinstance(v, str) or not v or v[0] not in "=+-@\t\r":
+        return v
+    try:
+        float(v)
+        return v                    # '-1.5' 같은 숫자 글자
+    except ValueError:
+        return "'" + v
+
+
+def csv_row(values) -> list:
+    return [csv_cell(v) for v in values]
+
+
 def _cleanup():
     if _cfg["keep"] <= 0 or not _abs_dir:
         return

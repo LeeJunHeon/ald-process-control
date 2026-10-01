@@ -143,15 +143,24 @@ async def event_loop():
         await asyncio.sleep(0.2)
 
 
+def _total_ms(rec) -> int:
+    from . import recipe as R
+    try:
+        return R.total_ms(state.cfg, rec) if rec else 0
+    except Exception:  # noqa: BLE001
+        return 0
+
+
 def _datalog_tick():
     """공정이 시작되면 데이터 로그를 열고, 끝나면 조금 더 남기고 닫는다."""
     dl, runner = state.datalog, state.runner
     if not (dl and runner):
         return
-    prog = runner.progress()
-    dl.follow(bool(prog.get("running")),
+    # ★ 공정 구간(명령 1 처리됨 · 이어받기 ~ 끝 판정)에 묶는다 — '공정 중' 읽기에 묶으면 짧은 PLC 끊김에
+    #   progress() 가 비어 '공정 아님'이 되고, 다시 붙으면 새 파일이 열려 두 파일로 갈라진다
+    dl.follow(bool(runner.active_run),
               lambda: dl.start(runner.active_name, runner.active_recipe, runner.active_table,
-                               prog.get("total_ms") or 0),
+                               _total_ms(runner.active_recipe)),
               lambda: runner.last_result)
     dl.tick((state.cfg.get("log") or {}).get("datalog_interval_s", 1))
 
@@ -173,12 +182,37 @@ async def plc_recipe_loop():
         await asyncio.sleep(5.0)
 
 
+HOUSEKEEP_S = 86400.0             # 로그 · 데이터 로그 · 트렌드 · 내보내기 정리 주기(하루)
+
+
+def housekeeping():
+    """보존 기간이 지난 파일 정리 — 작업 스레드에서. 몇 달 켜 두는 장비라 시작 때만으로는 부족하다."""
+    from .datalog import cleanup as datalog_cleanup
+    from . import trendlog as T
+    lg = state.cfg.get("log") or {}
+    logger._cleanup()
+    datalog_cleanup(lg.get("datalog_keep_days", 180))
+    T.cleanup(lg.get("trend_keep_days", 90))
+    T.cleanup_exports(lg.get("trend_keep_days", 90))
+
+
+async def housekeeping_loop():
+    while True:
+        await asyncio.sleep(HOUSEKEEP_S)
+        try:
+            await asyncio.to_thread(housekeeping)
+            logger.write("info", "하루 정리 — 보존 기간이 지난 로그 · 데이터 로그 · 트렌드 · 내보내기를 지웠습니다")
+        except Exception as e:  # noqa: BLE001
+            logger.write("warn", f"하루 정리 실패(계속 진행): {type(e).__name__}: {e}")
+
+
 def start_all() -> list:
     return [asyncio.create_task(sample_loop()),
             asyncio.create_task(live_loop()),
             asyncio.create_task(event_loop()),
             asyncio.create_task(plc_recipe_loop()),
-            asyncio.create_task(lag_loop())]
+            asyncio.create_task(lag_loop()),
+            asyncio.create_task(housekeeping_loop())]
 
 
 async def stop_all(tasks: list):

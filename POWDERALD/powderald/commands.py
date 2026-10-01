@@ -29,7 +29,7 @@ from .connection import manager, push_state, push_notice, push_log
 # 원격(보기 전용)이 보낼 수 있는 명령. 나머지는 전부 거절한다.
 # 레시피 불러오기 · 검증(요약 포함)은 파일을 바꾸지 않는 읽기라 원격에서도 된다 —
 # 저장 · 올리기 · 삭제 · 이름 바꾸기 · 선택 · 시작은 그대로 거절한다.
-READ_ONLY_CMDS = {"ping", "recipe_load", "recipe_validate"}
+READ_ONLY_CMDS = {"ping", "recipe_load", "recipe_validate", "alarm_history"}
 
 # 배기·알람 계열 — 화면 버튼 하나가 PLC 명령 하나에 대응한다.
 SIMPLE_CMDS = {
@@ -90,6 +90,10 @@ async def handle_command(data: dict, ws=None):
     if code == A.CMD_ABORT and state.runner:
         await _abort(ws)
         return
+    if code in (A.CMD_VENT, A.CMD_PUMP_STOP, A.CMD_ALL_CLOSE) and state.runner:
+        # ★ 베이스 압력 대기 중에 벤트 · 펌핑 정지 · 전체 닫기를 보내면 대기를 먼저 취소한다 —
+        #   대기가 살아 있으면 나중에 누가 펌핑할 때 운전자 없이 공정이 시작된다
+        state.runner.cancel_wait(A.CMD_NAMES.get(code, cmd))
     result = await _send_plc(code, ws)
     if code == A.CMD_STOP_AFTER_CYCLE and result == A.RESULT_OK and state.runner:
         state.runner.note_stop_after_cycle()
@@ -268,6 +272,13 @@ def _check_payload(cfg, recipe) -> dict:
     return {"type": "recipe_check", "check": R.validate(cfg, rec), "summary": R.summarize(cfg, rec)}
 
 
+def _with_req(out: dict, req) -> dict:
+    """화면이 붙인 요청 번호를 그대로 돌려준다 — 화면은 마지막 요청의 답만 쓴다(늦게 온 옛 답 무시).
+    정수(0~2^31)만 받는다."""
+    out["req"] = req if isinstance(req, int) and not isinstance(req, bool) and 0 <= req < 2 ** 31 else None
+    return out
+
+
 def _load_payload(cfg, name):
     """파일 읽기 + 검증 + 요약 — 작업 스레드에서. 열 수 없으면 None."""
     data = storage.load(name)
@@ -284,7 +295,8 @@ async def _cmd_recipe_validate(d, ws):
     meta = manager.active.get(ws)
     if meta is None or "q" not in meta:
         # 대기열이 없는 연결(시험) — 바로 돌려준다
-        await manager.send_to(ws, await asyncio.to_thread(_check_payload, state.cfg, d.get("recipe")))
+        out = await asyncio.to_thread(_check_payload, state.cfg, d.get("recipe"))
+        await manager.send_to(ws, _with_req(out, d.get("req")))
         return
     if meta.get("v_busy"):
         meta["v_next"] = d
@@ -296,7 +308,7 @@ async def _cmd_recipe_validate(d, ws):
 async def _validate_worker(ws, meta, d):
     try:
         while d is not None and not meta.get("closed"):
-            out = await asyncio.to_thread(_check_payload, state.cfg, d.get("recipe"))
+            out = _with_req(await asyncio.to_thread(_check_payload, state.cfg, d.get("recipe")), d.get("req"))
             await manager.send_to(ws, out)
             d = meta.pop("v_next", None)
     except Exception as e:  # noqa: BLE001
@@ -360,49 +372,63 @@ def _save_recipe(name: str, recipe):
 
 
 async def _cmd_recipe_delete(d, ws):
-    name = d.get("name") or ""
+    """삭제. ★ 결과를 그 연결에 recipe_deleted {ok, name, why} 로 돌려준다 — 화면은 ok 일 때만
+    편집기를 비운다(거절되면 고치던 내용을 잃지 않게)."""
+    name = d.get("name") if isinstance(d.get("name"), str) else ""
+    ok, why, level = _delete_recipe(name)
+    await push_notice(f"삭제했습니다: {name}" if ok else why, "ok" if ok else level, ws)
+    await manager.send_to(ws, {"type": "recipe_deleted", "ok": ok, "name": name, "why": "" if ok else why})
+    if ok:
+        await push_log(f"레시피 삭제 [{name}]", "warn")
+        await push_state()
+
+
+def _delete_recipe(name: str):
     why = _flow_block(name)
     if why:
-        await push_notice(why, "warn", ws)
-        return
-    if _running() and state.runner and state.runner.recipe_name == name:
-        await push_notice("실행 중인 레시피는 삭제할 수 없습니다", "warn", ws)
-        return
+        return False, why, "warn"
+    if _running() and state.runner and state.runner.active_name == name:
+        return False, "실행 중인 레시피는 삭제할 수 없습니다", "warn"
     if not storage.delete(name):
-        await push_notice("레시피를 삭제하지 못했습니다", "warn", ws)
-        return
-    await push_log(f"레시피 삭제 [{name}]", "warn")
-    await push_notice(f"삭제했습니다: {name}", "ok", ws)
-    await push_state()
+        return False, "레시피를 삭제하지 못했습니다", "warn"
+    return True, "", "ok"
 
 
 async def _cmd_recipe_rename(d, ws):
-    old, new = d.get("name") or "", (d.get("new_name") or "").strip()
+    """이름 바꾸기. ★ 결과를 그 연결에 recipe_renamed {ok, old, new, why} 로 — 화면은 ok 일 때만
+    이름을 바꾼다(거절된 이름으로 다음 저장이 남의 레시피를 덮지 않게)."""
+    old = d.get("name") if isinstance(d.get("name"), str) else ""
+    new = (d.get("new_name") if isinstance(d.get("new_name"), str) else "").strip()
+    ok, why, level = _rename_recipe(old, new)
+    if ok:
+        await push_log(f"레시피 이름 변경 [{old}] → [{new}]", "info")
+    else:
+        await push_notice(why, level, ws)
+    await manager.send_to(ws, {"type": "recipe_renamed", "ok": ok, "old": old, "new": new,
+                               "why": "" if ok else why})
+    if ok:
+        await push_state()
+
+
+def _rename_recipe(old: str, new: str):
     why = _flow_block(old)
     if why:
-        await push_notice(why, "warn", ws)
-        return
+        return False, why, "warn"
     if not storage.valid_name(new):
-        await push_notice("새 이름에 쓸 수 없는 문자가 있습니다", "warn", ws)
-        return
+        return False, "새 이름에 쓸 수 없는 문자가 있습니다", "warn"
     if storage.exists(new):
-        await push_notice(f"같은 이름이 이미 있습니다: {new}", "warn", ws)
-        return
+        return False, f"같은 이름이 이미 있습니다: {new}", "warn"
     data = storage.load(old)
     if data is None:
-        await push_notice(f"레시피를 열 수 없습니다: {old}", "warn", ws)
-        return
-    if _running() and state.runner and state.runner.recipe_name == old:
-        await push_notice("실행 중인 레시피는 이름을 바꿀 수 없습니다", "warn", ws)
-        return
+        return False, f"레시피를 열 수 없습니다: {old}", "warn"
+    if _running() and state.runner and state.runner.active_name == old:
+        return False, "실행 중인 레시피는 이름을 바꿀 수 없습니다", "warn"
     data["name"] = new
     data["modified"] = time.strftime("%Y-%m-%d %H:%M:%S")
     if not storage.save(new, data):
-        await push_notice("이름을 바꾸지 못했습니다", "err", ws)
-        return
+        return False, "이름을 바꾸지 못했습니다", "err"
     storage.delete(old)
-    await push_log(f"레시피 이름 변경 [{old}] → [{new}]", "info")
-    await push_state()
+    return True, "", "ok"
 
 
 async def _cmd_recipe_select(d, ws):
@@ -500,6 +526,12 @@ def _flow_block(name: str = None) -> str:
     if name is not None and name != r.recipe_name:
         return ""
     return "공정 시작 절차가 진행 중입니다 — 끝나거나 취소한 뒤에 하세요"
+
+
+async def _cmd_alarm_history(d, ws):
+    """알람 이력(읽기 전용 — 원격에서도). live 의 alarm_hist_ver 가 바뀌면 화면이 다시 받는다."""
+    await manager.send_to(ws, {"type": "alarm_history", "items": list(state.alarms.history),
+                               "ver": state.alarms.ver})
 
 
 async def _cmd_process_cancel_wait(d, ws):
@@ -905,6 +937,11 @@ async def o3_finish():
     if _running():
         await push_log("O3 바이패스 라인 닫기 취소 — 공정이 시작됐습니다", "warn")
         return
+    if state.runner and state.runner.busy:
+        # ★ 시작 흐름(올리기 · 베이스 압력 대기 · 시작 명령) 중 — 닫으면 O3 허가가 빠져 시작이 거절되거나
+        #   시작 직후 b3 로 중단된다
+        await push_log("O3 바이패스 라인 닫기 취소 — 공정 시작 절차가 진행 중입니다", "warn")
+        return
 
     def mutate(cur):
         if not (cur["aux"] & O3_LINE_BITS):
@@ -1133,6 +1170,7 @@ _HANDLERS = {
     # 공정
     "process_start": _cmd_process_start,
     "process_cancel_wait": _cmd_process_cancel_wait,
+    "alarm_history": _cmd_alarm_history,
     # 수동
     "manual_unlock": _cmd_manual_unlock,
     "manual_valve": _cmd_manual_valve,

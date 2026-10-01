@@ -59,6 +59,7 @@ class DataLog:
         self.meta = None
         self.end_result = ""
         self._result_fn = None      # 끝을 볼 때 결과가 아직 없으면 닫을 때 다시 묻는다
+        self._down_since = 0.0      # PLC 가 끊긴 시각(끊긴 동안도 같은 파일에 쓴다)
 
     @property
     def active(self) -> bool:
@@ -69,6 +70,7 @@ class DataLog:
         if self.fp:
             self.close()
         self.error = ""
+        self._down_since = 0.0
         try:
             os.makedirs(paths.DATALOG_DIR, exist_ok=True)
             safe = _safe(recipe_name) or "recipe"
@@ -78,7 +80,7 @@ class DataLog:
             # utf-8-sig: 엑셀에서 바로 열린다
             self.fp = open(self.path, "w", encoding="utf-8-sig", newline="")
             self.writer = csv.writer(self.fp)
-            self.writer.writerow(self._header())
+            self.writer.writerow(logger.csv_row(self._header()))
             self.fp.flush()
             self.started = time.monotonic()
             self.stop_at = 0.0
@@ -170,11 +172,22 @@ class DataLog:
         if self.stop_at and now - self.stop_at > TAIL_S:
             self.close()
             return
+        # ★ PLC 가 끊겨도 같은 파일에 이어 쓴다(값 칸은 비우고 상태 칸 'PLC 끊김'). 30 분을 넘으면 닫는다
+        link = self.state.link
+        if link and link.connected:
+            self._down_since = 0.0
+        else:
+            self._down_since = self._down_since or now
+            if now - self._down_since > DOWN_CLOSE_S:
+                self.end_result = "기록 중단(PLC 끊김)"
+                logger.write("warn", f"데이터 로그를 닫습니다 — PLC 끊김이 {DOWN_CLOSE_S / 60:.0f} 분을 넘었습니다")
+                self.close()
+                return
         if now < self._next:
             return
         self._next = now + max(0.2, float(interval_s or 1))
         try:
-            self.writer.writerow(self._row(now))
+            self.writer.writerow(logger.csv_row(self._row(now)))
             self.fp.flush()
             self._rows += 1
         except Exception as e:  # noqa: BLE001
@@ -207,9 +220,14 @@ class DataLog:
     def _row(self, now):
         st = self.state
         link = st.link
-        live = st.live()
         conn = bool(link and link.connected)
-        s = link.status if conn else [0] * A.STATUS_COUNT
+        if not conn:
+            # 값을 지어내지 않는다 — 밸브 워드 0x0000 은 '닫힘'으로 읽히므로 쓰지 않는다
+            n = len(self._header())
+            row = [time.strftime("%Y-%m-%d %H:%M:%S"), f"{now - self.started:.1f}", "PLC 끊김"]
+            return row + [""] * (n - len(row))
+        live = st.live()
+        s = link.status
 
         def num(v, d=1):
             return "" if v is None else f"{float(v):.{d}f}"
@@ -257,6 +275,9 @@ class DataLog:
                 f"0x{s[A.D_ALARM0]:04X}" if conn else "",
                 f"0x{s[A.D_ALARM1]:04X}" if conn else ""]
         return row
+
+
+DOWN_CLOSE_S = 1800.0           # PLC 끊김이 이만큼 이어지면 데이터 로그를 닫는다
 
 
 def _safe(name: str) -> str:

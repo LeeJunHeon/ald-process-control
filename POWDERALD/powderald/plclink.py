@@ -39,6 +39,8 @@ CMD_READ_S = 1.0                # 명령 영역·PRM 영역 되읽기
 ACK_TIMEOUT_S = 1.5             # 명령 응답을 기다리는 최대 시간
 APPLY_SETTLE_S = 0.1            # 명령 12 결과 뒤 반영 영역을 다시 읽기까지(PLC 몇 스캔)
 PLC_HB_STALL_S = 2.0            # PLC 하트비트가 이만큼 안 바뀌면 멈춘 것으로 본다
+FAST_RETRY_S = 0.25             # 와치독 2/3 안에서는 이 간격으로 다시 붙는다
+HB_STALL_TEXT = "PLC 하트비트 멈춤 — PLC 가 STOP 이거나 멈췄습니다 · 명령을 보내지 않습니다"
 RECONNECT_DELAYS = (1.0, 2.0, 5.0)
 GIL_SWITCH_S = 0.001            # 작업 스레드가 돌 때도 루프가 자주 돌게
 
@@ -134,6 +136,8 @@ class PlcLink:
         self.hb_gap_max_ms = 0              # 기동 뒤 최대 간격
         self._plc_hb_val = None
         self._plc_hb_at = 0.0
+        self._connected_at = 0.0            # 연결된 시각(하트비트 멈춤 판정의 출발점)
+        self.last_hb_write_at = 0.0         # 마지막으로 PC 하트비트를 쓴 시각(빠른 재연결 창)
         self._hb = 0
         self._task = None
         self._stop = False
@@ -179,6 +183,11 @@ class PlcLink:
                 await self.client.connect()
             except Exception as e:  # noqa: BLE001
                 self._drop(f"PLC 연결 실패 ({self.addr_text}): {e}")
+                # ★ 마지막 하트비트 뒤 와치독의 2/3 가 지나기 전까지는 0.25 s 간격으로 다시 붙는다 —
+                #   1~2 s 순간 끊김에 다음 시도가 와치독 뒤로 밀려 PC 통신 끊김(안전 정지)이 나지 않게.
+                if self._in_fast_window():
+                    await asyncio.sleep(FAST_RETRY_S)
+                    continue
                 delay = RECONNECT_DELAYS[min(attempt, len(RECONNECT_DELAYS) - 1)]
                 attempt += 1
                 await asyncio.sleep(delay)
@@ -188,6 +197,7 @@ class PlcLink:
             try:
                 await self._on_connect()
                 self.connected = True
+                self._connected_at = time.monotonic()
                 # ★ 막힌 상태(다른 장비·ID 없음)면 '괜찮아진 것'처럼 읽히지 않게 경고로 남긴다
                 if self.id_state == "wrong":
                     self.on_event("warn", f"PLC 연결됨 ({self.addr_text}) — 장비 ID 가 맞지 않아 읽기만 합니다")
@@ -210,9 +220,26 @@ class PlcLink:
             # ★ 끊긴 뒤 첫 재연결은 기다리지 않는다 — 응답 하나를 잃은 것만으로 하트비트 공백이
             #   PC 끊김 판정(3 s)에 닿지 않게. 짧은 사이에 또 끊기면 그때부터 쉰다.
             now = time.monotonic()
-            if now - self._last_drop_at < 5.0:
+            if self._in_fast_window():
+                # 와치독 안 — 바로 다시 붙는다. 붙자마자 또 끊기면(연결은 받고 바로 닫는 경우) 0.25 s 쉰다
+                if now - self._last_drop_at < FAST_RETRY_S:
+                    await asyncio.sleep(FAST_RETRY_S)
+            elif now - self._last_drop_at < 5.0:
                 await asyncio.sleep(RECONNECT_DELAYS[0])
             self._last_drop_at = now
+
+    def _wdt_s(self) -> float:
+        """PC 와치독(초) — PLC 에서 되읽은 값, 없으면 설정값."""
+        v = (self.prm_readback or {}).get(A.D_PRM_PC_WDT_MS) or \
+            (self.cfg.get("params") or {}).get("pc_wdt_ms") or A.PRM_DEFAULTS["pc_wdt_ms"]
+        try:
+            return max(0.1, float(v) / 1000.0)
+        except (TypeError, ValueError):
+            return A.PRM_DEFAULTS["pc_wdt_ms"] / 1000.0
+
+    def _in_fast_window(self) -> bool:
+        return bool(self.last_hb_write_at) and \
+            time.monotonic() - self.last_hb_write_at < self._wdt_s() * 2.0 / 3.0
 
     def _drop(self, msg):
         if self.connected:
@@ -351,6 +378,10 @@ class PlcLink:
             return "PLC 에 연결되어 있지 않습니다"
         if not self.write_ok:
             return ID_BLOCK_TEXT.get(self.id_state, "장비 ID 확인 전입니다")
+        if self.plc_hb_stalled:
+            # ★ STOP 중에 보낸 명령은 RUN 이 되는 순간 P00 첫 스캔이 지운 영역 때문에 실행 없이
+            #   '처리됨(0)'으로 읽힌다 — 보내지 않는다(PC 하트비트 쓰기는 계속)
+            return HB_STALL_TEXT
         return ""
 
     def id_block_text(self) -> str:
@@ -467,6 +498,7 @@ class PlcLink:
         """PC 가 살아 있다는 신호. 값 자체는 의미가 없고 '바뀐다'는 사실만 중요하다."""
         self._hb = (self._hb + 1) & 0xFFFF
         await self.client.write_single(A.D_PC_HB, self._hb)
+        self.last_hb_write_at = time.monotonic()
 
     async def _read_status(self):
         t0 = time.monotonic()
@@ -558,6 +590,14 @@ class PlcLink:
         i = addr - A.CMD_READ_BASE
         if 0 <= i < len(self.cmd_regs):
             self.cmd_regs[i] = int(value) & 0xFFFF
+
+    @property
+    def plc_hb_stalled(self) -> bool:
+        """연결돼 있는데 PLC 하트비트(D00000)가 PLC_HB_STALL_S 넘게 안 바뀐다(STOP 등).
+        연결 직후 첫 변화 전에는 연결 시각부터 센다."""
+        if not self.connected:
+            return False
+        return time.monotonic() - max(self._plc_hb_at, self._connected_at) > PLC_HB_STALL_S
 
     @property
     def plc_hb_ok(self) -> bool:

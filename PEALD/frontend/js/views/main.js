@@ -382,6 +382,8 @@
   }
 
   /* ---------- 잠금 ---------- */
+  var RUN_LOCKED = { pump_stop: 1, vent: 1, all_close: 1 };
+
   function updateLocks(s, t, conn) {
     var local = core.canOperate();
     var msg = '';
@@ -390,6 +392,7 @@
     else if (p.config_error) msg = '🔒 PLC 주소가 없어 연결하지 않았습니다 — 설정 탭에서 이 장비 PLC 주소를 넣으세요';
     else if (p.id_state === 'wrong') msg = '🔒 다른 장비의 PLC 입니다 — 주소를 확인하세요';
     else if (p.id_state === 'missing') msg = '🔒 PLC 장비 ID 가 없습니다(0) — 이 장비 PLC 인지 확인할 수 없습니다';
+    else if (p.stalled) msg = '🔒 PLC 하트비트 멈춤 — PLC 가 STOP 이거나 멈췄습니다 · 명령을 보내지 않습니다';
     else if (!core.canOperate()) msg = '🔒 원격 접속은 보기 전용입니다';
     else if (!conn) msg = '🔒 PLC 연결이 끊겨 명령을 보낼 수 없습니다';
 
@@ -401,7 +404,11 @@
       // 종료는 다른 장비의 PLC 여도 된다(이 PC 에서만). ★ 서버가 끊겨도 마지막 권한이 이 PC 였으면
       //   누를 수 있다 — 끊긴 채 창을 닫는 길(force_close)이 바로 이것이다
       if (c === 'exit') { b.disabled = !core.wasLocal(); return; }
-      b.disabled = !local || !conn;
+      // ★ 공정 중에는 펌핑 정지 · 벤트 · 전체 닫기를 잠근다(PLC 도 거절하지만 누를 수 있게 두지 않는다)
+      var lockRun = RUN_LOCKED[c] && conn && !!(t.process || {}).running;
+      b.disabled = !local || !conn || lockRun;
+      var tip = lockRun ? '공정 중에는 쓸 수 없습니다 — 먼저 중단하세요' : '';
+      if (b.title !== tip && (lockRun || b.title === '공정 중에는 쓸 수 없습니다 — 먼저 중단하세요')) b.title = tip;
     });
     core.setText('lockMsg', msg);
     var lm = core.bind('lockMsg');

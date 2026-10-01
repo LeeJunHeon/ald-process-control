@@ -15,10 +15,10 @@ data/trend/YYYYMMDD.db — 표준 sqlite3, WAL, 5 s 마다 묶어서 커밋한�
 """
 
 import os
+import json
 import csv
 import glob
 import time
-import asyncio
 import shutil
 import sqlite3
 import datetime
@@ -278,11 +278,11 @@ class TrendLog:
         labels = {c[0]: f"{c[4]}{(' ' + c[5]) if c[5] else ''}" for c in COLS}
         with open(path, "w", encoding="utf-8-sig", newline="") as f:
             w = csv.writer(f)
-            w.writerow(["시각"] + [labels[c] for c in COL_NAMES])
+            w.writerow(logger.csv_row(["시각"] + [labels[c] for c in COL_NAMES]))
             n = 0
             for r in self.raw_rows(t0, t1):
                 ts = datetime.datetime.fromtimestamp(r[0]).strftime("%Y-%m-%d %H:%M:%S")
-                w.writerow([ts] + ["" if v is None else v for v in r[1:]])
+                w.writerow(logger.csv_row([ts] + ["" if v is None else v for v in r[1:]]))
                 n += 1
         logger.write("info", f"트렌드 내보내기: {name} ({n}줄)")
         return name
@@ -290,21 +290,31 @@ class TrendLog:
 
     # ===================== 루프에서 부르는 것 =====================
     async def query_async(self, t0, t1, cols=None, max_points: int = MAX_POINTS,
-                          keep_days=90) -> dict:
-        """구간을 자르고 검사한 뒤, 루프에서 flush 하고 조회는 작업 스레드에서 한다."""
+                          keep_days=90, remote: bool = False, as_json: bool = False):
+        """구간을 자르고 검사한 뒤, 루프에서 flush 하고 조회는 '무거운 조회' 문(heavy.gate)을 지나
+        작업 스레드에서 한다. as_json 이면 JSON 바이트까지 스레드에서 만든다. 원격 칸이 차 있으면 heavy.Busy."""
+        from .heavy import gate
         t0, t1, err = clamp_range(t0, t1, keep_days, QUERY_MAX_S, "이력 조회")
         if err:
-            return {"error": err, "t0": t0, "t1": t1, "rows": [], "cols": [], "bucket_s": 1}
+            res = {"error": err, "t0": t0, "t1": t1, "rows": [], "cols": [], "bucket_s": 1}
+            return _json_bytes(res) if as_json else res
         self.flush()
-        return await asyncio.to_thread(self.query, t0, t1, cols, max_points)
+        if as_json:
+            return await gate.run(lambda: _json_bytes(self.query(t0, t1, cols, max_points)), remote=remote)
+        return await gate.run(self.query, t0, t1, cols, max_points, remote=remote)
 
     async def export_async(self, t0, t1, keep_days=90):
-        """(파일 이름, 오류). 오류가 있으면 내보내지 않는다."""
+        """(파일 이름, 오류). 오류가 있으면 내보내지 않는다. 무거운 조회 문을 지난다(로컬 전용 명령)."""
+        from .heavy import gate
         t0, t1, err = clamp_range(t0, t1, keep_days, EXPORT_MAX_S, "내보내기")
         if err:
             return "", err
         self.flush()
-        return await asyncio.to_thread(self.export_csv, t0, t1), ""
+        return await gate.run(self.export_csv, t0, t1), ""
+
+
+def _json_bytes(obj) -> bytes:
+    return json.dumps(obj, ensure_ascii=False, default=lambda o: None).encode("utf-8")
 
 
 def clamp_range(t0, t1, keep_days, max_s, what):
@@ -338,6 +348,23 @@ def _files_between(t0: float, t1: float) -> list:
         if day.isdigit() and a <= day <= z:
             out.append(p)
     return out
+
+
+def cleanup_exports(keep_days):
+    """오래된 내보내기 CSV 정리(트렌드 보존 기간과 같게)."""
+    try:
+        keep = int(keep_days)
+    except (TypeError, ValueError):
+        return
+    if keep <= 0:
+        return
+    cutoff = time.time() - keep * 86400
+    for f in glob.glob(os.path.join(export_dir(), "*.csv")):
+        try:
+            if os.path.getmtime(f) < cutoff:
+                os.remove(f)
+        except OSError:
+            pass
 
 
 def cleanup(keep_days):

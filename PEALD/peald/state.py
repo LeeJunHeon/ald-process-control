@@ -29,9 +29,12 @@ class AlarmTracker:
     def __init__(self):
         self.active = {}        # code -> {code, name, crit, since}
         self.history = []       # 최근이 앞
+        self.ver = 0            # 이력이 바뀔 때마다 +1 — 화면은 live 의 이 번호가 바뀌면 이력을 다시 받는다
 
-    def update(self, w0: int, w1: int):
+    def update(self, w0: int, w1: int) -> list:
+        """새로 선 알람 코드 목록을 돌려준다(알람 창을 띄울지 판단에 쓴다)."""
         seen = set()
+        fresh = []
         for word, defs, tag in ((w0, DEV.ALARMS0, "A0"), (w1, DEV.ALARMS1, "A1")):
             for d in defs:
                 if not (word >> d["bit"]) & 1:
@@ -43,8 +46,10 @@ class AlarmTracker:
                            "since": time.strftime("%H:%M:%S"),
                            "date": time.strftime("%m-%d")}
                     self.active[code] = rec
+                    fresh.append(code)
                     self.history.insert(0, {**rec, "cleared": ""})
                     del self.history[200:]
+                    self.ver += 1
                     sev = "중대" if d["crit"] else "경고"
                     logger.write("err" if d["crit"] else "warn", f"알람 발생 [{code}] {d['name']} ({sev})")
                     logger.alarm_event("발생", code, d["name"], sev)
@@ -55,13 +60,27 @@ class AlarmTracker:
                     if h["code"] == code and not h["cleared"]:
                         h["cleared"] = time.strftime("%H:%M:%S")
                         break
+                self.ver += 1
                 logger.write("ok", f"알람 해제 [{code}] {rec['name']}")
                 logger.alarm_event("해제", code, rec["name"], "중대" if rec["crit"] else "경고")
+        return fresh
 
-    def clear_all(self):
-        """PLC 연결이 끊기면 알람 목록을 비운다 — 옛 값을 현재 알람으로 보여 주면 안 된다."""
+    def clear_all(self, why: str = ""):
+        """PLC 연결이 끊기면 알람 목록을 비운다 — 옛 값을 현재 알람으로 보여 주면 안 된다.
+        ★ 열린 이력 줄을 '해제(연결 끊김) HH:MM:SS' 로 닫는다 — 열린 채 두면 다시 붙을 때 같은 알람이
+          새 줄로 또 생기고 앞 줄은 끝내 열린 채 남는다."""
+        if not self.active:
+            return
+        ts = time.strftime("%H:%M:%S")
         for code in list(self.active):
-            self.active.pop(code)
+            rec = self.active.pop(code)
+            for h in self.history:
+                if h["code"] == code and not h["cleared"]:
+                    h["cleared"] = f"해제(연결 끊김) {ts}" if why == "link" else ts
+                    break
+            if why == "link":
+                logger.alarm_event("해제(연결 끊김)", code, rec["name"], "중대" if rec["crit"] else "경고")
+        self.ver += 1
 
     def list(self):
         return sorted(self.active.values(), key=lambda a: (not a["crit"], a["code"]))
@@ -85,6 +104,7 @@ class State:
         # 새 알람(D00007 0→1)마다 +1 — 원격 화면은 닫을 때의 번호를 기억해 번호가 바뀌면 다시 띄운다
         # (같은 코드의 알람이 풀렸다가 다시 나도 알 수 있게)
         self.alarm_popup_seq = 0
+        self._was_linked = False        # 직전 갱신에 PLC 가 붙어 있었나(연결 직후 첫 갱신 구분)
         self.runner = None              # ProcessRunner (공정 시작 흐름·진행)
         self.datalog = None             # DataLog
         self.recipe_check = {}          # 고른 레시피의 검증 결과
@@ -119,16 +139,26 @@ class State:
 
     # ===================== 주기 갱신 =====================
     def refresh(self):
-        """PLC 링크가 읽어 둔 값으로 알람 추적을 갱신한다(샘플링 루프가 부른다)."""
+        """PLC 링크가 읽어 둔 값으로 알람 추적을 갱신한다(샘플링 루프가 부른다).
+        알람 창을 띄우는 때: D00007 0→1, 또는 새 알람 코드가 섰을 때(확인 전이라 D00007 이 이미 1 인
+        동안 선 새 알람도). 연결 직후 첫 갱신은 D00007 = 1 일 때만(다시 붙을 때마다 뜨지 않게).
+        리셋 뒤 원인이 남아 다시 선 알람은 PC 가 끊김 없이 계속 보므로 새 코드가 아니다."""
         if not (self.link and self.link.connected):
-            self.alarms.clear_all()
+            self.alarms.clear_all("link" if self._was_linked else "")
             self._last_new_alarm = 0
+            self._was_linked = False
             return
         s = self.link.status
-        self.alarms.update(s[A.D_ALARM0], s[A.D_ALARM1])
+        first = not self._was_linked
+        self._was_linked = True
+        fresh = self.alarms.update(s[A.D_ALARM0], s[A.D_ALARM1])
         new = s[A.D_ALARM_NEW]
-        if new and not self._last_new_alarm:
-            self.alarm_popup = True     # 0 → 1 인 순간에만 창을 띄운다
+        if first:
+            pop = bool(new)
+        else:
+            pop = bool(new and not self._last_new_alarm) or bool(fresh)
+        if pop:
+            self.alarm_popup = True
             self.alarm_popup_seq += 1
         self._last_new_alarm = new
 
@@ -171,6 +201,8 @@ class State:
             "plc": {
                 "connected": conn,
                 "hb_ok": bool(link and link.plc_hb_ok),
+                # PLC 하트비트 멈춤(STOP 등) — 화면은 값 · 알람을 '—' 로, 조작을 잠근다
+                "hb_stalled": bool(link and getattr(link, "plc_hb_stalled", False)),
                 "rtt_ms": link.rtt_ms if conn else None,
                 "addr": link.addr_text if link else "",
                 "prm_mismatch": list(link.prm_mismatch) if link else [],
@@ -189,6 +221,7 @@ class State:
             "alarm_new": bool(conn and link.status[A.D_ALARM_NEW]),
             "alarm_popup": self.alarm_popup,
             "alarm_popup_seq": self.alarm_popup_seq,
+            "alarm_hist_ver": self.alarms.ver,
             "process": self.runner.progress() if self.runner else {},
             "manual": self.manual_state(),
             "datalog": {

@@ -146,7 +146,8 @@ PRM_INT_RULES = [
     ("vent_timeout_s", 1, 6553, "0 이면 VV 가 열리기 전에 벤트 시간 초과"),
     ("mfc_timeout_s", 1, 6553, "0 이면 모든 블록 준비에서 MFC 시간 초과"),
     ("mfc_stable_s", 0, 6553, "0 = 안정 대기 없음"),
-    ("valve_min_ms", 0, 65535, "0 = 최소 열림 없음"),
+    # ★ 래더는 이 값을 부호 있는 16비트로 비교한다(P40 최소 열림) — 32768 이상은 음수가 되어 최소 열림이 사라진다
+    ("valve_min_ms", 0, 32767, "0 = 최소 열림 없음"),
 ]
 if DEV.HAS_RF:
     PRM_INT_RULES.append(("rf_ref_ms", 0, 65535, "0 = 반사 초과 즉시 알람"))
@@ -247,6 +248,11 @@ def validate(cfg: dict) -> list:
     try:
         if int(analog.get("raw_max")) <= 0:
             raise ValueError
+        # ★ 래더는 아날로그 원시값 · 그 비교값(베이스 압력 · MFC 허용 편차 · RF/O3 상한 등)을 부호 있는
+        #   16비트로 비교한다 — 32767 을 넘으면 설정 · 비교가 깨진다
+        if int(analog.get("raw_max")) > 32767:
+            p.append(("err", f"analog.raw_max 는 32767 이하여야 합니다(래더의 부호 있는 비교): "
+                             f"{analog.get('raw_max')}"))
     except (TypeError, ValueError):
         p.append(("err", "analog.raw_max 값이 올바르지 않습니다"))
 

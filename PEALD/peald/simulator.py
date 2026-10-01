@@ -77,6 +77,7 @@ FAULTS = [
     {"key": "tc2_comm",  "name": "온도조절기 국번2 통신 끊김"},
     {"key": "tc3_comm",  "name": "온도조절기 국번3 통신 끊김"},
     {"key": "pc_hb_stop", "name": "PC 하트비트 멈춤 (시험)"},
+    {"key": "plc_stop",  "name": "PLC STOP (시험 — 스캔 · PLC 하트비트 멈춤)"},
 ]
 
 
@@ -268,6 +269,8 @@ class PlcSim:
         self._t = now
         if dt <= 0:
             return
+        if self.faults.get("plc_stop"):
+            return                      # STOP — 스캔이 돌지 않는다(PLC 하트비트 그대로, Modbus 는 답한다)
         sdt = dt * self.speed          # 물리 시간(배속)
         # ★ 스텝·블록 준비·래더 타이머는 sim_speed 와 무관한 실제 시간이다 —
         #   화면이 보여 주는 남은 시간과 맞아야 한다. 물리값만 배속을 따른다.
@@ -458,6 +461,10 @@ class PlcSim:
     def _wd(self, addr: int) -> int:
         return A.dword(self._w(addr), self._w(addr + 1))
 
+    def _prm(self, addr: int) -> int:
+        """PRM 을 래더 비교처럼 부호 있는 16비트로 읽는다(타이머 설정값은 이것을 쓰지 않는다)."""
+        return A.to_signed16(self.reg[addr])
+
     def _ws(self, addr: int) -> int:
         """작업본의 한 워드를 래더 비교처럼 부호 있는 16비트로 — 32768 이상은 음수다."""
         return A.to_signed16(self._w(addr))
@@ -585,7 +592,7 @@ class PlcSim:
             self._latch0(A.ALM0_MFC)
             self._process_end("MFC 안정 대기 시간 초과", aborted=True)
             return
-        tol = self.reg[A.D_PRM_MFC_TOL]
+        tol = self._prm(A.D_PRM_MFC_TOL)
         stable_in = True if tol == 0 else self._mfc1_dev() <= tol
         if self.t_mfc_ok.run(stable_in, self.reg[A.D_PRM_MFC_STABLE], now):
             self._load_step()
@@ -600,8 +607,9 @@ class PlcSim:
         flags = self._w(base + A.RCP_STEP_FLAGS)
 
         # 새로 열리는 밸브가 있으면 최소 열림 시간을 보장한다
-        if (valves & ~self.prev_valves) and t < self.reg[A.D_PRM_VALVE_MIN_MS]:
-            t = self.reg[A.D_PRM_VALVE_MIN_MS]
+        vmin = self._prm(A.D_PRM_VALVE_MIN_MS)      # 래더 비교는 부호 있는 16비트
+        if (valves & ~self.prev_valves) and t < vmin:
+            t = vmin
         if t > 60_000:
             t = (t // 100) * 100        # 100 ms 타이머 — 나머지는 버린다
 
@@ -651,7 +659,7 @@ class PlcSim:
 
     def _watch_mfc(self, now):
         """공정 중(블록 준비 제외, 일시정지 포함) MFC1 편차가 10 s 계속되면 중단."""
-        tol = self.reg[A.D_PRM_MFC_TOL]
+        tol = self._prm(A.D_PRM_MFC_TOL)
         if tol == 0:
             self.dev_bad_since = None
             return
@@ -1023,7 +1031,7 @@ class PlcSim:
             if b(i1, A.IN1_RF_ALM):
                 self._latch1(A.ALM1_RF)
             # 반사: DO_RF_ON AND AI_RF_REF > PRM_RF_REF_MAX 가 PRM_RF_REF_MS 이어지면 (한계 > 0 조건 없음)
-            over = self.rf_on and self.reg[A.D_RF_REF_RAW] > self.reg[A.D_PRM_RF_REF_MAX]
+            over = self.rf_on and self.reg[A.D_RF_REF_RAW] > self._prm(A.D_PRM_RF_REF_MAX)
             self.rf_ref_done = self.t_rf_ref.run(over, self.reg[A.D_PRM_RF_REF_MS] / 1000.0, now)
             if self.rf_ref_done:
                 self._latch1(A.ALM1_RF_REF)
@@ -1071,7 +1079,7 @@ class PlcSim:
         pump = b(i0, A.IN0_PUMP_RUN) and not b(i0, A.IN0_PUMP_ALM)
         if pump:
             w |= 1 << A.ILK_PUMP
-        base_raw = self.reg[A.D_PRM_BASE_PRESS]
+        base_raw = self._prm(A.D_PRM_BASE_PRESS)
         cvg_raw = self.conv.cvg.to_raw(self.pressure)
         vac = base_raw > 0 and cvg_raw <= base_raw
         if vac:
@@ -1092,7 +1100,7 @@ class PlcSim:
             rf_max_p = self.conv.cvg.to_torr(self.reg[A.D_PRM_RF_MAX_PRESS]) or 0
             base_p = self.conv.cvg.to_torr(base_raw) or 0
             rf_ok = (valve_ok and b(i1, A.IN1_RF_READY) and not b(i1, A.IN1_RF_ALM)
-                     and self.reg[A.D_PRM_RF_MAX] > 0 and base_p < p <= rf_max_p)
+                     and self._prm(A.D_PRM_RF_MAX) > 0 and base_p < p <= rf_max_p)
             if rf_ok:
                 w |= 1 << A.ILK_RF_OK
         if DEV.HAS_O3:
@@ -1101,7 +1109,7 @@ class PlcSim:
             held = self.t_ivb.run(self.ivb_on, 5.0, now)
             o3_ok = (basic and self.ivb_on and b(i1, A.IN1_BP_RUN) and not b(i1, A.IN1_BP_ALM) and held
                      and not b(i1, A.IN1_O3_ALM) and not b(i1, A.IN1_O3_ROOM)
-                     and self.reg[A.D_PRM_O3_MAX] > 0 and not self.safe_stop)
+                     and self._prm(A.D_PRM_O3_MAX) > 0 and not self.safe_stop)
             self.o3_ok = o3_ok
             if o3_ok:
                 w |= 1 << A.ILK_O3_OK

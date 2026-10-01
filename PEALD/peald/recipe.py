@@ -287,8 +287,10 @@ def effective_step_ms(time_ms: int, has_new_valve: bool, valve_min_ms: int) -> i
     ② 60,000 ms 를 넘으면 100 ms 타이머라 100 ms 미만 나머지는 버린다.
     ★ 화면의 남은 시간이 실제와 맞으려면 이 두 가지를 그대로 따라가야 한다."""
     t = int(time_ms or 0)
-    if has_new_valve and t < int(valve_min_ms or 0):
-        t = int(valve_min_ms or 0)
+    # ★ 래더처럼 부호 있는 16비트로 비교한다 — 32768 이상이면 음수라 늘리지 않는다
+    vmin = A.to_signed16(int(valve_min_ms or 0))
+    if has_new_valve and t < vmin:
+        t = vmin
     if t > LONG_STEP_MS:
         t = (t // 100) * 100
     return t
@@ -579,6 +581,11 @@ def validate(cfg: dict, recipe: dict) -> dict:
             if lim in (None, 0) and rf > 0:
                 _err(out, "RF 상한(params.rf_max_w)이 설정되지 않아 RF 를 쓸 수 없습니다",
                      block=bi, field="rf")
+            # ★ RF 풀스케일(rf.max_w)이 비면 PLC 의 RF 상한이 0 으로 써져 RF 허가가 나지 않는다 —
+            #   래더의 공정 허가에는 RF 조건이 없어 RF 스텝이 RF 없이 끝까지 돈다(알람 없음)
+            if rf > 0 and not (cfg.get("rf") or {}).get("max_w"):
+                _err(out, "RF 풀스케일(rf.max_w)이 설정되지 않아 RF 를 보낼 수 없습니다 — "
+                          "PLC 의 RF 상한이 0 이 되어 RF 없이 돕니다", block=bi, field="rf")
         if DEV.HAS_O3:
             o3 = float(b.get("o3") or 0)
             lim = conv_limits["o3_max"]
@@ -588,6 +595,9 @@ def validate(cfg: dict, recipe: dict) -> dict:
             if lim in (None, 0) and o3 > 0:
                 _err(out, "O3 상한(params.o3_max)이 설정되지 않아 O3 를 쓸 수 없습니다",
                      block=bi, field="o3")
+            if o3 > 0 and not (cfg.get("o3") or {}).get("full"):
+                _err(out, "O3 풀스케일(o3.full)이 설정되지 않아 O3 를 보낼 수 없습니다 — "
+                          "PLC 의 O3 상한이 0 이 되어 O3 허가가 나지 않습니다", block=bi, field="o3")
 
         sets = [_valve_set(s) for s in steps]
         block_has_reactant = any(set(v) & set(DEV.REACTANT_TAGS) for v in sets)

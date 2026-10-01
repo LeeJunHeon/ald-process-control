@@ -93,6 +93,24 @@ QUEUE_MAX = 200             # 연결 하나의 보내기 대기열(live 제외)
 SEND_TIMEOUT_S = 5.0        # send 하나가 이 안에 끝나지 않으면 그 연결을 닫는다
 
 
+# IP 별로 묶는 로그 — 같은 일은 초당 한 줄, 묶여 빠진 건수는 다음 줄에 '같은 일 N건 더'
+_grouped = {}
+
+
+def grouped_log(key, level: str, msg: str):
+    now = time.monotonic()
+    ent = _grouped.get(key)
+    if ent is not None and now - ent[0] < 1.0:
+        ent[1] += 1
+        return
+    extra = f" — 같은 일 {ent[1]}건 더" if ent is not None and ent[1] else ""
+    logger.write(level, msg + extra)
+    _grouped[key] = [now, 0]
+    if len(_grouped) > 2000:                    # 오래된 항목 정리(몇 달 켜 두는 장비)
+        for k in [k for k, v in _grouped.items() if now - v[0] > 60]:
+            _grouped.pop(k, None)
+
+
 def _host_of(ws) -> str:
     return logger.clean(getattr(getattr(ws, "client", None), "host", "?"), 60)
 
@@ -110,10 +128,8 @@ class ConnectionManager:
         local = is_local(ws)
         if not local and self.remote_count() >= REMOTE_MAX:
             await ws.accept()
-            now = time.monotonic()
-            if now - self._full_log_at >= 1.0:
-                self._full_log_at = now
-                logger.write("warn", f"원격 연결 수 한도({REMOTE_MAX}) — 연결을 받지 않았습니다 ({_host_of(ws)})")
+            grouped_log(("remote-full", _host_of(ws)), "warn",
+                        f"원격 연결 수 한도({REMOTE_MAX}) — 연결을 받지 않았습니다 ({_host_of(ws)})")
             try:
                 await ws.close(code=1013)
             except Exception:  # noqa: BLE001
@@ -133,7 +149,7 @@ class ConnectionManager:
             from .admin import admin
             self._enqueue(ws, meta, _dumps(admin.status(ws)))
         else:
-            logger.write("info", f"원격 접속(보기 전용): {meta['host']}")
+            grouped_log(("remote-in", meta["host"]), "info", f"원격 접속(보기 전용): {meta['host']}")
             self._enqueue(ws, meta, _dumps({"type": "notice", "level": "info",
                                             "msg": "원격 접속입니다 — 보기 전용으로 동작합니다"}))
         return True

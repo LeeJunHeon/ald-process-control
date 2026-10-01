@@ -21,9 +21,26 @@
     renderAlarms(s, (s.live || {}).alarms || []);
   }
 
+  // 알람 이력 — live 의 alarm_hist_ver 가 바뀌면 다시 받는다(접속 때 한 번만 받으면 그 뒤 이력이 멈춘다)
+  var histVer = null, histAsked = 0;
+
+  w.app.on('alarm_history', function (m) {
+    histAsked = 0;
+    var s = core.state;
+    if (!s) return;
+    s.alarm_history = m.items || [];
+    histVer = m.ver;
+    renderHistory(s);
+  });
+
   function update(t) {
     var s = core.state;
     if (!s) return;
+    if (!t.offline && t.alarm_hist_ver != null && histVer !== t.alarm_hist_ver &&
+        Date.now() - histAsked > 3000) {
+      if (histVer == null) histVer = t.alarm_hist_ver;      // 접속 스냅샷이 이미 담고 있다
+      else { histAsked = Date.now(); w.app.send('alarm_history'); }
+    }
     renderAlarms(s, t.alarms || []);
     renderNotices(s, t);
     core.renderAlarmModal();

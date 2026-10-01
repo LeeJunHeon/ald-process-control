@@ -10,6 +10,7 @@ logview.py — 데이터 로그 보기 (목록 · 그래프 · 표 · 레시피 
 import os
 import re
 import csv
+import json
 import glob
 import asyncio
 import datetime
@@ -204,6 +205,59 @@ def chart(name: str, max_points: int = MAX_POINTS):
             "cols": [{"label": h, "group": g} for _i, h, g in cols],
             "rows": out, "segments": segs,
             "recipe": (rec or {}).get("recipe") if isinstance(rec, dict) else None}
+
+
+# 그래프 결과 캐시 — (경로, 크기, 수정 시각) 이 같으면 다시 풀지 않는다(쓰는 중인 파일은 빼고)
+from .heavy import ResultCache            # noqa: E402
+chart_cache = ResultCache(4)
+
+
+def _dumps(obj) -> bytes:
+    return json.dumps(obj, ensure_ascii=False, default=lambda o: None).encode("utf-8")
+
+
+def chart_json(name: str):
+    """그래프 응답 JSON 바이트(작업 스레드에서 부른다). 목록에 없으면 None."""
+    path = safe_path(name)
+    if path is None:
+        return None
+    try:
+        st = os.stat(path)
+        key = (path, st.st_size, st.st_mtime_ns)
+    except OSError:
+        key = None
+    if key and name != _writing:
+        hit = chart_cache.get(key)
+        if hit is not None:
+            return hit
+    res = chart(name)
+    if res is None:
+        return None
+    out = _dumps(res)
+    if key and name != _writing:
+        chart_cache.put(key, out)
+    return out
+
+
+def chart_json_cached(name: str):
+    """캐시에 있으면 그 바이트(파일 상태만 본다 — 루프에서 불러도 가볍다), 없으면 None."""
+    path = safe_path(name)
+    if path is None or name == _writing:
+        return None
+    try:
+        st = os.stat(path)
+    except OSError:
+        return None
+    return chart_cache.get((path, st.st_size, st.st_mtime_ns))
+
+
+def table_json(name: str, offset: int = 0):
+    res = table(name, offset)
+    return None if res is None else _dumps(res)
+
+
+def list_json():
+    return _dumps({"items": list_logs()})
 
 
 async def list_async():

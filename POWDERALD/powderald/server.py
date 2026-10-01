@@ -18,7 +18,8 @@ import logging
 import contextlib
 
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
-from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, PlainTextResponse
+from fastapi import Request
+from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, PlainTextResponse, Response
 from fastapi.staticfiles import StaticFiles
 
 from . import paths
@@ -34,7 +35,9 @@ from .plclink import PlcLink
 from .process import ProcessRunner
 from .simulator import PlcSim, SimServer
 from .state import state
-from .connection import manager, host_ok, origin_ok
+from . import connection as CN
+from .connection import manager, host_ok, origin_ok, grouped_log
+from .heavy import gate, Busy, BUSY_TEXT
 from .commands import handle_command
 from .trend_buffer import trend
 from . import trendlog as trendlog_mod
@@ -53,7 +56,10 @@ def uvicorn_config(app, host: str, port: int):
     log_config=None: uvicorn 자체 로깅 dictConfig 를 타지 않는다(창 전용 exe 에서 죽는다)."""
     import uvicorn
     return uvicorn.Config(app, host=host, port=port, log_level="warning", log_config=None,
-                          ws_max_size=WS_MAX_SIZE)
+                          ws_max_size=WS_MAX_SIZE,
+                          # ★ 압축을 끈다 — 같은 PC · LAN 화면이라 필요 없고, 작은 프레임이 서버에서 큰
+                          #   메시지로 풀려 폭주 비용을 키운다(창 · headless · 자체 점검 공통 설정)
+                          ws_per_message_deflate=False)
 
 _ASSET_FILES = ["css/tokens.css", "css/style.css", "js/fmt.js", "js/core.js", "js/app.js",
                 "js/views/main.js", "js/views/schematic.js", "js/views/trend.js",
@@ -204,54 +210,91 @@ def _routes(app: FastAPI):
         return JSONResponse({"ok": True, "device": DEV.KEY, "name": DEV.NAME,
                              "version": version.APP_VERSION})
 
+    def _json(b: bytes, status: int = 200) -> Response:
+        return Response(content=b, media_type="application/json", status_code=status)
+
+    def _busy() -> Response:
+        return JSONResponse({"error": BUSY_TEXT}, status_code=429)
+
+    async def _heavy(request: Request, fn, *args):
+        """무거운 조회 문(heavy.gate)을 지나 작업 스레드에서 — 원격 칸이 차 있으면 None(→ 429)."""
+        try:
+            return await gate.run(fn, *args, remote=not CN.is_local(request))
+        except Busy:
+            return None
+
     @app.get("/api/trend")
-    async def api_trend(sec: int = 120):
+    async def api_trend(request: Request, sec: int = 120):
         # 범위 밖의 값은 잘라낸다 — sec=999999 로 전체 버퍼를 매번 직렬화하면
         # 서버가 그 시간만큼 다른 일을 못 한다.
         sec = max(10, min(int(sec or 120), 3600))
-        return JSONResponse(trend.series(sec, time.monotonic()))
+        now = time.monotonic()
+
+        def build():
+            return json.dumps(trend.series(sec, now), ensure_ascii=False).encode("utf-8")
+        if CN.is_local(request):
+            # 로컬은 문을 거치지 않는다 — 실시간 트렌드가 줄을 서지 않게(작업 스레드에서만)
+            return _json(await asyncio.to_thread(build))
+        out = await _heavy(request, build)
+        return _busy() if out is None else _json(out)
 
     # ---- 이력 · 데이터 로그 (읽기 전용 — 원격 보기에서도 된다) ----
+    # ★ 모두 '무거운 조회' 문을 지난다: 서버 전체 동시 2개, 원격은 합쳐서 1개(차 있으면 바로 429)
     @app.get("/api/trend/history")
-    async def api_trend_history(t0: float, t1: float, cols: str = "", points: int = 2000):
-        # ★ 조회는 작업 스레드에서 — 루프를 붙잡으면 PC 하트비트가 멈춰 공정이 선다
+    async def api_trend_history(request: Request, t0: float, t1: float, cols: str = "", points: int = 2000):
         cl = [c for c in cols.split(",") if c] or None
         points = max(10, min(int(points or 2000), 2000))
         loops.note_work("트렌드 이력 조회")
         keep = (state.cfg.get("log") or {}).get("trend_keep_days", 90)
-        res = await trendlog_mod.trendlog.query_async(t0, t1, cl, points, keep)
-        return JSONResponse(res, status_code=400 if res.get("error") else 200)
+        try:
+            out = await trendlog_mod.trendlog.query_async(t0, t1, cl, points, keep,
+                                                          remote=not CN.is_local(request), as_json=True)
+        except Busy:
+            return _busy()
+        return _json(out, 400 if out.startswith(b'{"error"') else 200)
 
     @app.get("/api/datalog/list")
-    async def api_datalog_list():
+    async def api_datalog_list(request: Request):
         loops.note_work("데이터 로그 목록")
-        return JSONResponse({"items": await logview.list_async()})
+        out = await _heavy(request, logview.list_json)
+        return _busy() if out is None else _json(out)
 
     @app.get("/api/datalog/chart")
-    async def api_datalog_chart(name: str):
+    async def api_datalog_chart(request: Request, name: str):
         loops.note_work("데이터 로그 그래프")
-        res = await logview.chart_async(name)
-        if res is None:
+        hit = logview.chart_json_cached(name)
+        if hit is not None:
+            return _json(hit)               # 같은 파일 두 번째 — 문을 거치지 않는다(이미 만든 바이트)
+        try:
+            out = await gate.run(logview.chart_json, name, remote=not CN.is_local(request))
+        except Busy:
+            return _busy()
+        if out is None:
             return JSONResponse({"error": "목록에 없는 파일입니다"}, status_code=404)
-        return JSONResponse(res)
+        return _json(out)
 
     @app.get("/api/datalog/rows")
-    async def api_datalog_rows(name: str, offset: int = 0):
+    async def api_datalog_rows(request: Request, name: str, offset: int = 0):
         loops.note_work("데이터 로그 표")
-        res = await logview.table_async(name, offset)
-        if res is None:
+        try:
+            out = await gate.run(logview.table_json, name, offset, remote=not CN.is_local(request))
+        except Busy:
+            return _busy()
+        if out is None:
             return JSONResponse({"error": "목록에 없는 파일입니다"}, status_code=404)
-        return JSONResponse(res)
+        return _json(out)
 
     @app.websocket("/ws")
     async def ws_endpoint(ws: WebSocket):
         host = ws.headers.get("host")
         origin = ws.headers.get("origin")
         if not host_ok(host) or not origin_ok(origin, host):
-            # ★ 다른 출처의 웹 페이지·도메인 Host 는 연결 자체를 받지 않는다
-            logger.write("warn", "WebSocket 연결 거절 — 출처 "
-                         + logger.clean(origin if origin is not None else "(없음)", 80)
-                         + " · Host " + logger.clean(host or "(없음)", 60))
+            # ★ 다른 출처의 웹 페이지·도메인 Host 는 연결 자체를 받지 않는다.
+            #   로그는 IP 별 초당 한 줄로 묶는다(계속 열어 로그를 부풀리지 못하게)
+            ip = logger.clean(getattr(ws.client, "host", "?") if ws.client else "?", 60)
+            grouped_log(("ws-reject", ip), "warn", "WebSocket 연결 거절 — 출처 "
+                        + logger.clean(origin if origin is not None else "(없음)", 80)
+                        + " · Host " + logger.clean(host or "(없음)", 60) + f" ({ip})")
             await ws.close(code=1008)
             return
         if not await manager.connect(ws):

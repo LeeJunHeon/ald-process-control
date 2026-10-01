@@ -57,6 +57,16 @@ class ProcessRunner:
         self._stop_reserved = False     # 사이클 후 정지 예약(명령 4 처리됨)
         self._last_pos = None           # 공정 중 마지막으로 본 (블록, 스텝, 사이클)
         self._cancel = False
+        self._cancel_why = "운전자"
+        # 데이터 로그 · 끝 판정의 공정 구간 — 명령 1 처리됨(또는 이어받기)부터 끝 판정까지.
+        # ★ '공정 중' 읽기에 묶으면 짧은 PLC 끊김에 데이터 로그가 두 파일로 갈라진다.
+        self.active_run = False
+        self._run_started_mono = 0.0
+        # RF 스텝 감시 — {(블록, 스텝): 이번 스텝에서 RF 출력을 봤는가}, 경고한 것
+        self._rf_watch = None
+        self._rf_warned = set()
+        # 히터 안정 — 채널마다 ±band 안에 들어온 시각(monotonic)
+        self._hr_since = {}
 
     # ===================== 시작 조건 =====================
     def start_checks(self) -> list:
@@ -131,19 +141,61 @@ class ProcessRunner:
         hr = (cfg.get("process") or {}).get("heater_ready") or {}
         if hr.get("enabled"):
             band = float(hr.get("band_c") or 2.0)
+            need = float(hr.get("stable_s") or 0)
             bad = []
+            now = time.monotonic()
             for h in cfg.get("heaters") or []:
                 if not h.get("enabled"):
                     continue
-                i = h["ch"] - 1
-                pv = _temp(s[A.D_HEATER_PV + i])
-                sv_raw = link.cmd_reg(A.D_HEATER_SV + i)
-                sv = _temp(sv_raw) if sv_raw is not None else None
-                if sv is None or abs(pv - sv) > band:
-                    bad.append(f"CH{h['ch']} {h['name']}")
-            out.append({"key": "heater", "label": f"히터 안정 (±{band:g} ℃)", "ok": not bad,
+                ch = h["ch"]
+                if not _tc_ok(s, h):
+                    bad.append(f"CH{ch} {h['name']} 통신 없음")
+                    continue
+                since = self._hr_since.get(ch)
+                if since is None:
+                    bad.append(f"CH{ch} {h['name']}")
+                elif now - since < need:
+                    bad.append(f"CH{ch} {h['name']} 안정 {now - since:.0f}/{need:g} s")
+            out.append({"key": "heater", "label": f"히터 안정 (±{band:g} ℃ · {need:g} s)", "ok": not bad,
                         "detail": " · ".join(bad) if bad else "모든 사용 채널이 설정 안"})
+        if DEV.HAS_RF and _uses_rf(self.recipe):
+            # ★ 래더의 공정 허가에는 RF 조건이 없다 — RF 가 안 나오면 RF 스텝이 RF 없이 끝까지 돈다.
+            #   레시피가 RF 를 쓰면 RF 준비 · RF 알람 없음 · PLC 의 RF 상한(되읽기) > 0 을 시작 조건에 넣는다
+            i1 = s[A.D_INPUT1]
+            rf_max = (getattr(link, "prm_readback", {}) or {}).get(A.D_PRM_RF_MAX) or 0
+            miss = []
+            if not A.bit(i1, A.IN1_RF_READY):
+                miss.append("RF 준비 입력 꺼짐")
+            if A.bit(i1, A.IN1_RF_ALM):
+                miss.append("RF 알람 입력")
+            if rf_max <= 0:
+                miss.append("PLC 의 RF 상한(PRM_RF_MAX) 0")
+            out.append({"key": "rf", "label": "RF 준비", "ok": not miss,
+                        "detail": " · ".join(miss) if miss else "준비됨"})
         return out
+
+    def _track_heaters(self, s):
+        """샘플링 루프에서 — 채널마다 ±band 안에 들어온 시각을 기록한다(heater_ready.stable_s 용)."""
+        cfg = self.state.cfg
+        hr = (cfg.get("process") or {}).get("heater_ready") or {}
+        if not hr.get("enabled"):
+            self._hr_since = {}
+            return
+        band = float(hr.get("band_c") or 2.0)
+        link = self.state.link
+        now = time.monotonic()
+        for h in cfg.get("heaters") or []:
+            if not h.get("enabled"):
+                continue
+            ch = h["ch"]
+            i = ch - 1
+            sv_raw = link.cmd_reg(A.D_HEATER_SV + i)
+            inband = (_tc_ok(s, h) and sv_raw is not None
+                      and abs(_temp(s[A.D_HEATER_PV + i]) - _temp(sv_raw)) <= band)
+            if inband:
+                self._hr_since.setdefault(ch, now)
+            else:
+                self._hr_since.pop(ch, None)
 
     def _valve_ok_detail(self, s) -> str:
         miss = []
@@ -277,6 +329,12 @@ class ProcessRunner:
         # ★ 공정이 시작되면 수동 밸브 잠금을 다시 채운다 — 화면을 열어 둔 채로
         #   공정 중에 잘못 누르는 일을 막는다.
         st.manual_unlock_until = 0.0
+        # ★ Powder: O3 끄기 뒤 바이패스 라인 닫기 예약이 시작 흐름 중에 터지면 O3 허가가 빠진다 — 취소
+        if getattr(st, "o3_off_task", None) is not None:
+            from .commands import _cancel_o3_timer
+            _cancel_o3_timer()
+            await push_log("O3 바이패스 라인 닫기 예약을 취소했습니다 — 공정 시작 절차", "warn")
+        self._cancel_why = "운전자"
         self._cancel = False
         self._abort_sent = False
         self._abort_pending = False
@@ -311,8 +369,8 @@ class ProcessRunner:
         while True:
             await asyncio.sleep(0.2)
             if self._cancel:
-                await push_log("베이스 압력 대기 취소 (운전자)", "warn")
-                return False, "베이스 압력 대기를 취소했습니다"
+                await push_log(f"베이스 압력 대기 취소 — {self._cancel_why}", "warn")
+                return False, f"베이스 압력 대기를 취소했습니다 ({self._cancel_why})"
             stop_why = self._wait_broken()
             if stop_why:
                 await push_log(f"베이스 압력 대기 중단 — {stop_why}", "err")
@@ -353,6 +411,10 @@ class ProcessRunner:
             self.run = prev_run
         if result == A.RESULT_OK:
             self.started_at = time.time()
+            self.active_run = True              # 데이터 로그 · 끝 판정 구간 시작
+            self._run_started_mono = time.monotonic()
+            self._rf_watch = None
+            self._rf_warned = set()
             # ★ '공정 중'으로 본 적이 있다는 표시(_was_running)는 여기서 세우지 않는다.
             #   PLC 상태는 100 ms 주기로 읽어 오므로, 명령이 처리된 직후에도 아직 '대기'로
             #   읽힌다. 그 한 번을 종료로 오해해 '정상 종료' 로그가 먼저 찍힌다.
@@ -400,20 +462,31 @@ class ProcessRunner:
                 f"블록 첫/끝 스텝 · 그룹 범위 · 반복 값을 확인하세요")
 
     def _wait_broken(self):
-        """대기 중 그만둬야 하는 사유. 없으면 빈 문자열."""
+        """대기 중 그만둬야 하는 사유. 없으면 빈 문자열.
+        ★ 입력으로도 본다 — 원격 · 판넬에서 벤트 · 펌핑 정지를 해도 대기가 살아 남지 않게."""
         link = self.state.link
         if not (link and link.connected):
             return "PLC 연결이 끊겼습니다"
         s = link.status
         if A.bit(s[A.D_INTERLOCK], A.ILK_SAFE_STOP_REQ):
             return "안전 정지 요구가 생겼습니다"
+        i0 = s[A.D_INPUT0]
+        if not A.bit(i0, A.IN0_PUMP_RUN):
+            return "펌프 운전 입력이 꺼졌습니다"
+        if not A.bit(i0, A.IN0_IVE_OPEN):
+            return "IV-E 열림 입력이 꺼졌습니다(배기 격리 닫힘 · 벤트)"
+        if A.bit(i0, A.IN0_ATM):
+            return "챔버 대기압 입력이 켜졌습니다"
+        if s[A.D_STATE] != A.STATE_IDLE:
+            return f"장비 상태가 대기가 아닙니다({A.STATE_NAMES.get(s[A.D_STATE], s[A.D_STATE])})"
         crit = [a["name"] for a in self.state.alarms.list() if a["crit"]]
         if crit:
             return "중대 알람: " + " · ".join(crit)
         return ""
 
-    def cancel_wait(self):
+    def cancel_wait(self, why: str = "운전자"):
         if self.phase == BASE_WAIT:
+            self._cancel_why = why
             self._cancel = True
             return True
         return False
@@ -426,8 +499,10 @@ class ProcessRunner:
         if not (link and link.connected):
             return
         s = link.status
+        self._track_heaters(s)
         running = s[A.D_STATE] in RUNNING_STATES
         if running:
+            self._watch_rf(s, push_log_sync)
             self._was_running = True
             if not self.started_at:
                 self.started_at = time.time()
@@ -437,9 +512,15 @@ class ProcessRunner:
                 self._last_pos = (s[A.D_SEQ_BLOCK], s[A.D_SEQ_STEP],
                                   A.dword(s[A.D_SEQ_BLOCK_PASS], s[A.D_SEQ_BLOCK_PASS + 1]))
             return
+        # ★ 시작 직후 '공정 중'을 한 번도 못 보고 끝난 경우(아주 짧은 공정 · 바로 중단)도 끝을 기록한다
+        #   — 명령 1 직후의 '대기' 읽기(상태 영역은 최대 한 주기 늦다)는 1.5 s 동안 끝으로 보지 않는다.
+        if (not self._was_running and self.active_run
+                and time.monotonic() - self._run_started_mono > 1.5):
+            self._was_running = True
         if self._was_running:
             self._was_running = False
             self.ended_at = time.time()
+            self._watch_rf(None, push_log_sync)
             end = (list(s), self.ended_at, push_log_sync)
             if self._abort_pending:
                 # 즉시 중단 결과를 아직 모른다 — 결과가 오면(abort_result) 기록한다
@@ -457,6 +538,42 @@ class ProcessRunner:
         self._abort_sent = False
         self._stop_reserved = False
         self._end_deferred = None
+        self.active_run = False                 # 데이터 로그 구간 끝(끝 판정과 같은 순간)
+
+    def _watch_rf(self, s, push_log_sync):
+        """공정 중 RF 스텝(500 ms 이상)이 끝날 때까지 RF 출력(보조 b8)이 한 번도 안 켜지면 경고 한 줄.
+        같은 블록 · 스텝은 공정마다 한 번만. s=None 이면 공정이 끝났다(마지막 스텝을 마감)."""
+        if not DEV.HAS_RF:
+            return
+        cur = None
+        if s is not None:
+            rec = self.active_recipe or {}
+            blocks = rec.get("blocks") or []
+            bno, gstep = s[A.D_SEQ_BLOCK], s[A.D_SEQ_STEP]
+            if 1 <= bno <= len(blocks) and s[A.D_SEQ_STATE] == 4:
+                base = sum(len(b.get("steps") or []) for b in blocks[:bno - 1])
+                steps = blocks[bno - 1].get("steps") or []
+                k = gstep - base - 1
+                if 0 <= k < len(steps):
+                    st = steps[k]
+                    if st.get("rf") and int(st.get("time_ms") or 0) >= 500 \
+                            and float(blocks[bno - 1].get("rf_w") or 0) > 0:
+                        cur = (bno, gstep)
+        w = self._rf_watch
+        if w is not None and (cur is None or cur[:2] != w["key"]
+                              or A.dword(s[A.D_SEQ_BLOCK_PASS], s[A.D_SEQ_BLOCK_PASS + 1]) != w["cycle"]):
+            if not w["on"] and w["key"] not in self._rf_warned:
+                self._rf_warned.add(w["key"])
+                push_log_sync("warn", f"RF 스텝에서 RF 가 한 번도 켜지지 않았습니다 — 블록 {w['key'][0]} · "
+                                      f"스텝 {w['key'][1]} · RF 허가(인터락 b8) {w['ilk']} · CVG {w['cvg']} Torr")
+            w = self._rf_watch = None
+        if cur is not None:
+            cyc = A.dword(s[A.D_SEQ_BLOCK_PASS], s[A.D_SEQ_BLOCK_PASS + 1])
+            if w is None:
+                w = self._rf_watch = {"key": cur, "cycle": cyc, "on": False, "ilk": 0, "cvg": "—"}
+            w["on"] = w["on"] or A.bit(s[A.D_AUX_OUT], A.AUX_RF)
+            w["ilk"] = int(A.bit(s[A.D_INTERLOCK], A.ILK_RF_OK))
+            w["cvg"] = _torr(self.state.conv.cvg.to_torr(s[A.D_CVG_RAW])) if self.state.conv else "—"
 
     def where_text(self) -> str:
         if not self._last_pos:
@@ -608,9 +725,31 @@ class ProcessRunner:
                            f"로컬 레시피가 없어 이름 없이 표시합니다", "warn")
         self._was_running = True
         self.started_at = time.time()
+        self.active_run = True                  # 이어받은 공정도 데이터 로그 구간
+        self._run_started_mono = time.monotonic()
 
 
 # ===================== 작은 도우미 =====================
+def _tc_ok(s, h) -> bool:
+    """그 채널 온도조절기 국번의 통신 정상 비트(D00054)."""
+    station = int(h.get("station") or ((int(h["ch"]) - 1) // 4 + 1))
+    return A.bit(s[A.D_TC_COMM], station - 1)
+
+
+def _uses_rf(recipe) -> bool:
+    """RF 스텝(rf 켬)이 있고 그 블록 RF 전력이 0 보다 큰가(PEALD)."""
+    if not (DEV.HAS_RF and isinstance(recipe, dict)):
+        return False
+    for b in recipe.get("blocks") or []:
+        try:
+            if isinstance(b, dict) and float(b.get("rf_w") or 0) > 0 and \
+                    any(isinstance(st, dict) and st.get("rf") for st in b.get("steps") or []):
+                return True
+        except (TypeError, ValueError):
+            continue
+    return False
+
+
 def _uses_o3(recipe) -> bool:
     """O3 설정이 0 보다 큰 블록이 있는가(Powder)."""
     if not (DEV.HAS_O3 and isinstance(recipe, dict)):
