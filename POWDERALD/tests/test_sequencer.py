@@ -52,6 +52,23 @@ def loaded(cfg, blocks, groups=None, stable_s=0, tol_raw=0, vmin=0):
     return sim, r
 
 
+def run_ladder(sim, ms=4000, step_ms=10):
+    """입력 · P30 · P35 · P40 순서로(래더 스캔 순서) — 안전 정지 요구 · 알람 공개가 필요한 시험.
+    v0.4.10: MFC 시간 초과 · 편차는 P40 이 바로 끝내지 않고 P35(b12) → 다음 스캔 P30 안전 정지로 끝난다."""
+    t = time.monotonic()
+    for _ in range(int(ms / step_ms)):
+        t += step_ms / 1000.0
+        sim._inputs(t)
+        sim._interlocks(t)
+        sim._alarms(t)
+        sim._sequencer(step_ms / 1000.0, t)
+        sim._publish_seq()
+        sim._state()
+        if not sim.running:
+            return True
+    return False
+
+
 def run(sim, ms=4000, step_ms=10, watch=None):
     """시퀀서만 가짜 시계로 돌린다. watch(sim) 가 있으면 매 tick 부른다."""
     t = time.monotonic()
@@ -302,6 +319,7 @@ def test_recipe_value_error_aborts(cfg):
     sim._load_step()
     assert not sim.running
     assert "레시피 값 오류" in sim.end_reason
+    sim._alarms(time.monotonic())               # v0.4.10 래더: b13(P40 래치)은 다음 P35 에서 공개
     assert (sim.reg[A.D_ALARM0] >> A.ALM0_RECIPE) & 1
 
 
@@ -324,6 +342,7 @@ def test_bad_group_on_advance_aborts(cfg):
     sim.work[g2 + 2] = 0                                   # 그룹 2 반복 0
     run(sim, ms=500, step_ms=10)
     assert not sim.running and "레시피 값 오류" in sim.end_reason
+    sim._alarms(time.monotonic())               # v0.4.10 래더: 다음 P35 에서 공개
     assert (sim.reg[A.D_ALARM0] >> A.ALM0_RECIPE) & 1
 
 
@@ -344,7 +363,7 @@ def test_block_prep_timeout_alarms_and_aborts(cfg):
     sim.faults["mfc1_stuck"] = True
     sim.mfc_pv[0] = 0.0
     sim._process_start()
-    run(sim, ms=2000, step_ms=10)
+    run_ladder(sim, ms=2000, step_ms=10)        # v0.4.10: P35 b12 → 다음 스캔 P30 안전 정지 → P40 중단
     assert not sim.running
     assert (sim.reg[A.D_ALARM0] >> A.ALM0_MFC) & 1
     assert "MFC 안정 대기 시간 초과" in sim.end_reason
@@ -360,7 +379,8 @@ def test_mfc_deviation_during_run_aborts(cfg):
     assert sim.running and sim.seq_state == 4, "블록 준비를 통과하지 못했다"
     sim.reg[A.D_MFC_PV] = 0                 # 설정과 크게 벌어진 상태를 만든다
     sim.ao[1] = 8000
-    run(sim, ms=11_000, step_ms=50)
+    sim.faults["mfc1_stuck"] = True         # v0.4.10: 입력 · P30 · P35 도 돌린다 — MFC1 현재값이 0 에 머물게
+    run_ladder(sim, ms=11_000, step_ms=50)
     assert not sim.running
     assert (sim.reg[A.D_ALARM0] >> A.ALM0_MFC) & 1
     assert "MFC 편차" in sim.end_reason

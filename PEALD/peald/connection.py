@@ -98,17 +98,38 @@ _grouped = {}
 
 
 def grouped_log(key, level: str, msg: str):
+    """[마지막으로 쓴 시각, 묶여 빠진 건수, 마지막 글, 수준, 남은 건수 쓰기 예약]"""
     now = time.monotonic()
     ent = _grouped.get(key)
     if ent is not None and now - ent[0] < 1.0:
         ent[1] += 1
+        ent[2], ent[3] = msg, level
+        if ent[4] is None:
+            # ★ 마지막 묶음 뒤 다음 일이 없으면 'N건 더'가 영영 안 남는다 — 1 s 뒤 남은 건수를 한 줄로
+            try:
+                ent[4] = asyncio.get_running_loop().call_later(max(0.0, ent[0] + 1.0 - now),
+                                                               _grouped_flush, key)
+            except RuntimeError:
+                pass                            # 루프 밖(시험) — 다음 일이 올 때 붙인다
         return
+    if ent is not None and ent[4] is not None:
+        ent[4].cancel()
     extra = f" — 같은 일 {ent[1]}건 더" if ent is not None and ent[1] else ""
     logger.write(level, msg + extra)
-    _grouped[key] = [now, 0]
+    _grouped[key] = [now, 0, msg, level, None]
     if len(_grouped) > 2000:                    # 오래된 항목 정리(몇 달 켜 두는 장비)
         for k in [k for k, v in _grouped.items() if now - v[0] > 60]:
             _grouped.pop(k, None)
+
+
+def _grouped_flush(key):
+    ent = _grouped.get(key)
+    if ent is None:
+        return
+    ent[4] = None
+    if ent[1]:
+        logger.write(ent[3], f"{ent[2]} — 같은 일 {ent[1]}건 더")
+        ent[0], ent[1] = time.monotonic(), 0
 
 
 def _host_of(ws) -> str:

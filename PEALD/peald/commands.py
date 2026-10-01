@@ -113,12 +113,14 @@ async def _abort(ws):
         if cur not in RUNNING_STATES:
             return {"refused": True, "text": "진행 중인 공정이 없습니다 (이미 끝났습니다)"}
         runner.abort_begin()
-        done = False
+        done = unknown = False
         try:
             result, text = await link.send_command(A.CMD_ABORT)
             done = result == A.RESULT_OK
+            # 보냈지만 결과를 못 받았다(응답 없음 · 보낸 뒤 통신 오류) — 끝 기록에 '결과 확인 안 됨'
+            unknown = result is None and ("응답 없음" in text or "받았을 수" in text)
         finally:
-            runner.abort_result(done)
+            runner.abort_result(done, unknown)
         return {"result": result, "text": text}
 
     await _send_plc(A.CMD_ABORT, ws, sender=sender)

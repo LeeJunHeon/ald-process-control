@@ -8,6 +8,8 @@ heavy.py — '무거운 조회' 하나의 문(데이터 로그 목록 · 그래�
   - 로컬은 줄을 선다.
 """
 
+import json
+import math
 import asyncio
 import threading
 from collections import OrderedDict
@@ -86,3 +88,25 @@ class ResultCache:
     def clear(self):
         with self._lock:
             self._d.clear()
+
+
+SIG = 5                 # 그래프 · 이력 값 유효 숫자(화면 · 커서 표시에 충분 — JSON 크기를 줄인다)
+
+
+def _sig(v):
+    return v if v is None or v == 0 or not math.isfinite(v) else float(f"{v:.{SIG}g}")
+
+
+def rows_json(res: dict) -> bytes:
+    """rows 가 [[t, [최소, 최대, 평균] | None, …], …] 인 조회 결과(데이터 로그 그래프 · 트렌드 이력)의 JSON.
+    ★ C 인코더는 한 번 부르는 동안 GIL 을 놓지 않는다(3.8 MB 에 약 60 ms). 값을 유효 숫자 5 자리로 줄이고, 줄을 200 개씩 나눠 인코딩한다(사이마다 루프가 차례를 받는다)."""
+    rows = res["rows"]
+    head = {k: v for k, v in res.items() if k != "rows"}
+    parts = []
+    for i in range(0, len(rows), 200):
+        chunk = [[round(r[0], 3)] + [None if c is None else [_sig(c[0]), _sig(c[1]), _sig(c[2])] for c in r[1:]]
+                 for r in rows[i:i + 200]]
+        parts.append(json.dumps(chunk, ensure_ascii=False)[1:-1])
+    # {...} — 끝의 } 앞에 rows 를 붙인다
+    body = json.dumps(head, ensure_ascii=False, default=lambda o: None).encode("utf-8")
+    return body[:-1] + b', "rows": [' + ", ".join(p for p in parts if p).encode("utf-8") + b"]}"

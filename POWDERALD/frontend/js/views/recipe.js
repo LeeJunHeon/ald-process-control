@@ -28,6 +28,8 @@
   var saving = null;        // { name, editNo } — 답을 기다리는 저장
   var renaming = null;      // { old, new } — 답을 기다리는 이름 바꾸기(답이 ok 일 때만 이름을 바꾼다)
   var deleting = null;      // 답을 기다리는 삭제의 이름(답이 ok 일 때만 편집기를 비운다)
+  var pendingAt = 0;       // 이름 바꾸기 · 삭제를 보낸 시각 — 5 s 안에 답이 없으면 풀고 '답 없음'
+  var PENDING_MS = 5000;
   var reqNo = 0;            // 검증 요청 번호 — 마지막 요청의 답만 쓴다(늦게 온 옛 답이 덮지 않게)
   var lastPlcConn = null;
 
@@ -79,6 +81,7 @@
     var rn = renaming;
     if (!rn || rn.old !== m.old || rn.new !== m.new) { drawList(core.state || {}); return; }
     renaming = null;
+    update((core.state || {}).live || {});
     core.setText('rcSaveMsg', m.ok ? '' : '이름 안 바뀜 — ' + (m.why || ''));
     if (m.ok && curName === m.old) {
       curName = m.new;
@@ -92,6 +95,7 @@
     var dn = deleting;
     if (dn == null || dn !== m.name) { drawList(core.state || {}); return; }
     deleting = null;
+    update((core.state || {}).live || {});
     if (!m.ok) { core.setText('rcSaveMsg', '삭제 안 됨 — ' + (m.why || '')); drawStatus(); return; }
     core.setText('rcSaveMsg', '');
     if (curName === m.name) {
@@ -133,7 +137,27 @@
     limSig = sig;
   }
 
+  /** 기다리던 이름 바꾸기 · 삭제 답이 5 s 안에 안 오거나 서버가 끊기면 푼다(남아 있으면 계속 막힌다). */
+  function pendingCheck() {
+    if (!(renaming || deleting)) return;
+    if (!core.offline && Date.now() - pendingAt < PENDING_MS) return;
+    var what = renaming ? '이름 바꾸기' : '삭제';
+    renaming = null;
+    deleting = null;
+    core.setText('rcSaveMsg', '답 없음 — ' + what + ' 결과를 목록에서 확인하세요' +
+      (core.offline ? ' (서버 연결 끊김)' : ''));
+    drawList(core.state || {});
+    update((core.state || {}).live || {});
+  }
+
+  function sentPending() {
+    pendingAt = Date.now();
+    setTimeout(pendingCheck, PENDING_MS + 50);
+    update((core.state || {}).live || {});
+  }
+
   function update(t) {
+    pendingCheck();
     var p = t.process || {};
     // 실행 중에는 저장·삭제·올리기를 막는다(PLC 는 작업본으로 돌지만 화면이 헷갈린다).
     var run = !!p.running;
@@ -143,6 +167,8 @@
       var b = core.bind(k);
       if (!b) return;
       var block = !core.canOperate() || ((run || flow) && k !== 'rcSaveAs');
+      // 이름 바꾸기 · 삭제 답을 기다리는 동안 저장 · 이름 바꾸기 · 삭제를 잠근다
+      if ((renaming || deleting) && k !== 'rcUpload' && k !== 'rcStart') block = true;
       if (k === 'rcUpload' || k === 'rcStart') block = block || !core.plcOk();
       b.disabled = block;
     });
@@ -634,6 +660,7 @@
         if (!w.app.send('recipe_rename', { name: curName, new_name: nm })) return;
         renaming = { old: curName, new: nm };
         core.setText('rcSaveMsg', '이름 바꾸는 중…');
+        sentPending();
       });
       return;
     }
@@ -646,6 +673,7 @@
           if (!w.app.send('recipe_delete', { name: curName })) return;
           deleting = curName;
           core.setText('rcSaveMsg', '삭제하는 중…');
+          sentPending();
         });
       return;
     }

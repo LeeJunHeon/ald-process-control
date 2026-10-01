@@ -78,6 +78,9 @@ FAULTS = [
     {"key": "tc3_comm",  "name": "온도조절기 국번3 통신 끊김"},
     {"key": "pc_hb_stop", "name": "PC 하트비트 멈춤 (시험)"},
     {"key": "plc_stop",  "name": "PLC STOP (시험 — 스캔 · PLC 하트비트 멈춤)"},
+    {"key": "ive_stuck", "name": "IV-E 리미트 입력 안 따라옴 (5 s 뒤 알람1 b0)"},
+    {"key": "pump_nofb", "name": "펌프 운전 피드백 없음 (10 s 뒤 알람0 b5)"},
+    {"key": "bp_nofb",   "name": "바이패스 펌프 운전 피드백 없음 (10 s 뒤 알람1 b5)", "dev": "powderald"},
 ]
 
 
@@ -205,7 +208,6 @@ class PlcSim:
         self.rf_step = False
         self.pause_req = False      # 일시정지 예약 (취소 명령 없음)
         self.stop_req = False       # 사이클 후 정지 예약 (취소 명령 없음)
-        self.dev_bad_since = None
         self.end_reason = ""
 
         # --- 명령·통신 ---
@@ -234,6 +236,21 @@ class PlcSim:
         self.pump_to_done = False   # P45 펌핑 시간 초과 타이머 출력(알람 리셋 뒤 다시 세우는 원인)
         self.rf_ref_done = False    # P35 RF 반사 타이머 출력
         self.blink = False          # PLC 1 s 클록(0.5 s 켜짐 · 0.5 s 꺼짐)
+        # ★ 알람 워드는 내부 래치(M 워드)다. 스캔 어디서든 래치되지만 D00005 · D00006 · 새 알람(D00007)은
+        #   P35 의 복사(행 26~36)에서만 바뀐다 — P35 뒤(P40 · P45 · P60)에 선 알람은 다음 스캔에 보인다.
+        self.alm0 = 0
+        self.alm1 = 0
+        self.prev_alm0 = 0          # 앞 스캔 알람 워드(P35 가 복사 — 새 알람 판단)
+        self.prev_alm1 = 0
+        self.ack_req = False        # 명령 6 — P35 행 끝에서 D00007 = 0
+        self.reset_req = False      # 명령 7 — P35 첫 행에서 알람 워드 = 0
+        self.t_mfc_dev = TON()      # P40 T0032 공정 중 MFC1 편차 10 s
+        self.mfc_to_done = False    # P40 T0024 출력 → 다음 스캔 P35 가 b12
+        self.mfc_dev_done = False   # P40 T0032 출력 → 다음 스캔 P35 가 b12
+        self.t_ive = TON()          # P35 T0026 IV-E 동작 이상 5.0 s(고정)
+        self.t_pump_fb = TON()      # P45 T0025 펌프 운전 피드백 없음 10 s
+        self.t_bp_fb = TON()        # P45 T0031 바이패스 펌프 운전 피드백 없음 10 s (Powder)
+        self._stopped = False       # PLC STOP 결함 중이었다 — 풀리면 P00 첫 스캔
 
         # 안전 정지 요구(P30 이 알람 워드로 정한다)
         self.safe_stop = False
@@ -269,9 +286,17 @@ class PlcSim:
         self._t = now
         if dt <= 0:
             return
-        if self.faults.get("plc_stop"):
-            return                      # STOP — 스캔이 돌지 않는다(PLC 하트비트 그대로, Modbus 는 답한다)
         sdt = dt * self.speed          # 물리 시간(배속)
+        if self.faults.get("plc_stop"):
+            # STOP — 스캔이 돌지 않는다(상태 영역 · PLC 하트비트 그대로, Modbus 는 답한다). 출력은 꺼지고
+            # 물리만 돈다
+            self._stopped = True
+            self._outputs_off(now)
+            self._physics(sdt, now)
+            return
+        if self._stopped:
+            self._stopped = False
+            self._first_scan(now)       # STOP → RUN: P00 첫 스캔, 그 스캔의 나머지 프로그램은 이어서 돈다
         # ★ 스텝·블록 준비·래더 타이머는 sim_speed 와 무관한 실제 시간이다 —
         #   화면이 보여 주는 남은 시간과 맞아야 한다. 물리값만 배속을 따른다.
         self._physics(sdt, now)         # 시뮬레이터 전용 — 앞 스캔 출력으로 물리값
@@ -288,6 +313,64 @@ class PlcSim:
         self._publish()
         self._publish_seq()
         self._recipe_check(now)
+
+    # ---------- STOP · P00 ----------
+    def _outputs_off(self, now):
+        """STOP 중 — 출력(디지털 · 아날로그 · 히터 전원)이 꺼진다."""
+        if self.ive_out:
+            self.ive_out = False
+            self.ive_moved_at = now
+        self.pump_on = False
+        self.pump_run_at = None
+        self.vv_on = False
+        self.valve_out = 0
+        self.aux_out = 0
+        self.rf_on = False
+        self.o3_gen_on = False
+        self.ivb_on = False
+        self.bypass_pump_on = False
+        self.heater_power = 0
+        self.ao = [0] * A.DISPLAY_COUNT
+
+    def _first_scan(self, now):
+        """P00 첫 스캔(STOP → RUN · 전원) — 출력 워드 M0120~M0123 0(히터 전원 포함), AO D04120 ×12 0,
+        내부 M0001 ×9 0(PC 링크 OK · 트립 · 요청 · 인터락 · 시퀀서 · 알람 워드), D04000 ×54 0(시퀀서 ·
+        수동 마스크 · 마지막 명령 번호 · 앞 알람 워드 · 수동 보조), D00001 ×80 0(D00000 그대로),
+        D01001 → D04020 · D00002, D01000 → D04021, 0 인 PRM 만 기본값, D00001 = 1, 타이머 초기화.
+        ★ 공정은 사라지고 PC 링크는 PC 하트비트가 바뀔 때까지 OK 가 아니다. STOP 중에 쓴 명령은
+          실행 없이 D00002 = 그 번호 · D00003 = 0 이 된다."""
+        self._outputs_off(now)
+        self.man_valve = self.man_aux = 0
+        self.pc_link_ok = self.pc_trip = False
+        self.pump_req = self.exh_req = self.vent_req = False
+        self.pause_req = self.stop_req = False
+        self.running = False
+        self.seq_state = 0
+        self.blk = self.step_no = self.cycle = self.group_idx = self.group_pass = 0
+        self.step_ms = 0.0
+        self.step_dur = 0
+        self.seq_valves = self.prev_valves = 0
+        self.rf_step = False
+        self.alm0 = self.alm1 = self.prev_alm0 = self.prev_alm1 = 0
+        self.ack_req = self.reset_req = False
+        self.safe_stop = self.both_req = False
+        self.air_bad = self.n2_bad = self.o3_ok = False
+        self.vac_done = self.pump_to_done = self.rf_ref_done = False
+        self.mfc_to_done = self.mfc_dev_done = False
+        self.end_reason = "PLC 재시작(STOP → RUN)"
+        for a in range(1, 81):
+            self.reg[a] = 0
+        self.last_cmd_no = self.reg[A.D_CMD_NO]
+        self.reg[A.D_ACK_NO] = self.last_cmd_no
+        self.hb_seen = self.reg[A.D_PC_HB]
+        for addr, val in A.PRM_PLC_DEFAULTS.items():
+            if self.reg[addr] == 0:
+                self.reg.pc_set(addr, val)
+        self.reg[A.D_STATE] = A.STATE_IDLE
+        for name in ("t_wdt", "t_air", "t_n2", "t_ivb", "t_rf_ref", "t_mfc_to", "t_mfc_ok", "t_pump_to",
+                     "t_vent_to", "t_mfc_dev", "t_ive", "t_pump_fb", "t_bp_fb"):
+            setattr(self, name, TON())
+        self.recipe_check_at = 0.0
 
     # ---------- 하트비트 ----------
     def _plc_heartbeat(self, now):
@@ -377,10 +460,10 @@ class PlcSim:
             return A.RESULT_OK          # 멈춰 있으면 아무것도 안 하고 0
 
         if code == A.CMD_ALARM_ACK:
-            self.reg[A.D_ALARM_NEW] = 0
+            self.ack_req = True         # P35 행 끝에서 D00007 = 0
             return A.RESULT_OK
         if code == A.CMD_ALARM_RESET:
-            self._alarm_reset()
+            self.reset_req = True       # P35 첫 행에서 알람 워드 = 0
             return A.RESULT_OK
 
         if code == A.CMD_PUMP_START:
@@ -481,7 +564,7 @@ class PlcSim:
         self.pause_req = False
         self.stop_req = False
         self.end_reason = ""
-        self.dev_bad_since = None
+        self.t_mfc_dev = TON()
         self.group_pass = 1
         self.prev_valves = 0
         # PLC 는 공정을 시작하면 수동 밸브 반영을 스스로 지운다(내부 사본만).
@@ -491,21 +574,10 @@ class PlcSim:
             self.man_aux = 0
         why = (self._group_error(1) if self.group_idx else "") or self._block_error(1)
         if why:
-            base = A.D_RCP_BLOCK_BASE
-            self.blk = 1
-            self.step_no = self._w(base + A.RCP_BLOCK_FIRST)
-            self.cycle = 1
-            for no in range(1, DEV.MFC_COUNT + 1):
-                self.ao[ao_mfc(no)] = 0
-            if DEV.HAS_RF:
-                self.ao[AO_RF] = 0
-            if DEV.HAS_PCV:
-                self.ao[AO_PCV] = self._w(base + A.RCP_BLOCK_PCV)
-            self.running = False
-            self.seq_state = 8
-            self.seq_valves = 0
-            self.rf_step = False
-            self.end_reason = f"레시피 값 오류 — {why}"
+            # 블록 1 을 정상 적재와 같은 함수로 적재한 뒤 끝낸다 — PCV · O3 AO 는 블록 1 값이 남는다
+            self._load_block_values(1)
+            self.group_pass = 1
+            self._process_end(f"레시피 값 오류 — {why}", aborted=True)
             self._latch0(A.ALM0_RECIPE)
             return A.RESULT_RECIPE
         self.running = True
@@ -546,26 +618,30 @@ class PlcSim:
             self.blk = n
             self._process_end("정상 종료")
             return
+        # ★ 래더(P40 행 130/132)는 블록 위치 · AO 를 먼저 쓰고 검사한다 — 걸리면 그 값이 남은 채 중단
+        self._load_block_values(n)
         why = self._block_error(n)
         if why:
             self._recipe_error(why)
             return
+        self.seq_state = 3          # 블록 준비
+
+    def _load_block_values(self, n: int):
+        """블록 n 의 위치(D00021 · D00022 · D00024 = 1)와 AO(MFC · PCV · RF · O3)를 쓴다.
+        RF · O3 는 상한(PRM)보다 크면 상한 — 래더처럼 부호 있는 16비트로 비교한다."""
         base = A.D_RCP_BLOCK_BASE + (n - 1) * A.RCP_BLOCK_STRIDE
         first = self._w(base + A.RCP_BLOCK_FIRST)
         last = self._w(base + A.RCP_BLOCK_LAST)
         repeat = self._wd(base + A.RCP_BLOCK_REPEAT_LO)
-
-        # MFC·장비 전용 AO 를 블록 값으로 바꾼다 (RF·O3 는 상한으로 자른다)
         for no in range(1, DEV.MFC_COUNT + 1):
             self.ao[ao_mfc(no)] = self._w(base + A.RCP_BLOCK_MFC + no - 1)
         if DEV.HAS_PCV:
             self.ao[AO_PCV] = self._w(base + A.RCP_BLOCK_PCV)
         if DEV.HAS_RF:
             # 상한이 0 이면 RF 금지
-            self.ao[AO_RF] = min(self._w(base + A.RCP_BLOCK_RF), self.reg[A.D_PRM_RF_MAX])
+            self.ao[AO_RF] = self._capped(self._w(base + A.RCP_BLOCK_RF), A.D_PRM_RF_MAX)
         if DEV.HAS_O3:
-            self.ao[AO_O3] = min(self._w(base + A.RCP_BLOCK_O3), self.reg[A.D_PRM_O3_MAX])
-
+            self.ao[AO_O3] = self._capped(self._w(base + A.RCP_BLOCK_O3), A.D_PRM_O3_MAX)
         self.blk = n
         self.cycle = 1
         self.step_no = first
@@ -575,7 +651,11 @@ class PlcSim:
         self.seq_valves = 0
         self.prev_valves = 0        # 블록 준비 뒤에는 직전 출력이 전부 닫힘
         self.rf_step = False
-        self.seq_state = 3          # 블록 준비
+
+    def _capped(self, raw: int, prm_addr: int) -> int:
+        """설정값이 상한(PRM)보다 크면 상한 — 부호 있는 16비트 비교, 결과는 원래 워드."""
+        lim = self.reg[prm_addr]
+        return lim if A.to_signed16(raw) > A.to_signed16(lim) else raw
 
     @property
     def block_rf_raw(self) -> int:
@@ -588,9 +668,10 @@ class PlcSim:
         """블록 준비(시퀀서 3) — 래더 P40.
         시간 초과 타이머(PRM_MFC_TO_S)는 허용 오차와 상관없이 상태 3 이면 잰다. 오차 0 이면 안정 판정은
         안정 시간만 기다리지만, 안정 시간 ≥ 시간 초과면 시간 초과가 먼저 나 b12 로 중단한다."""
-        if self.t_mfc_to.run(True, self.reg[A.D_PRM_MFC_TIMEOUT], now):
-            self._latch0(A.ALM0_MFC)
-            self._process_end("MFC 안정 대기 시간 초과", aborted=True)
+        # ★ 래더: T0024(P40 행 105) 출력 → 다음 스캔 P35 행 19~20 이 b12 → 그 다음 스캔 P30 안전 정지
+        #   요구로 P40 이 중단(장비 상태 6). P40 이 바로 끝내지 않는다
+        self.mfc_to_done = self.t_mfc_to.run(True, self.reg[A.D_PRM_MFC_TIMEOUT], now)
+        if self.mfc_to_done:
             return
         tol = self._prm(A.D_PRM_MFC_TOL)
         stable_in = True if tol == 0 else self._mfc1_dev() <= tol
@@ -627,10 +708,16 @@ class PlcSim:
             # 블록 준비가 아니면 준비 타이머는 꺼진다(입력이 꺼지면 바로 꺼지는 TON)
             self.t_mfc_to.run(False, 0, now)
             self.t_mfc_ok.run(False, 0, now)
+            self.mfc_to_done = False
+        if not (self.running and self.seq_state in (4, 7)):
+            self.t_mfc_dev.run(False, 0, now)
+            self.mfc_dev_done = False
         if not self.running:
             return
         if self.safe_stop:
-            self._process_end("안전 정지 요구", aborted=True)
+            why = ("MFC 안정 대기 시간 초과 — 안전 정지" if self.mfc_to_done else
+                   "공정 중 MFC 편차 — 안전 정지" if self.mfc_dev_done else "안전 정지 요구")
+            self._process_end(why, aborted=True)
             return
         if self.seq_state == 3:
             self._prep_tick(now)
@@ -660,17 +747,8 @@ class PlcSim:
     def _watch_mfc(self, now):
         """공정 중(블록 준비 제외, 일시정지 포함) MFC1 편차가 10 s 계속되면 중단."""
         tol = self._prm(A.D_PRM_MFC_TOL)
-        if tol == 0:
-            self.dev_bad_since = None
-            return
-        if self._mfc1_dev() > tol:
-            if self.dev_bad_since is None:
-                self.dev_bad_since = now
-            elif now - self.dev_bad_since >= MFC_DEV_ABORT_S:
-                self._latch0(A.ALM0_MFC)
-                self._process_end("공정 중 MFC 편차", aborted=True)
-        else:
-            self.dev_bad_since = None
+        # T0032(P40 행 108) — 출력은 다음 스캔 P35 가 b12 로 래치, 그 다음 스캔 안전 정지로 중단
+        self.mfc_dev_done = self.t_mfc_dev.run(tol != 0 and self._mfc1_dev() > tol, MFC_DEV_ABORT_S, now)
 
     def _step_done(self):
         last_of_block = (self.step_no >= self.block_last)
@@ -717,6 +795,10 @@ class PlcSim:
             self.group_pass = 1
             why = self._group_error(self.group_idx)
             if why:
+                # ★ 래더: 그룹 진입이 거절돼도 다음 블록으로 넘어가 그 블록을 적재한 뒤 중단한다
+                #   (D00021 = 새 블록 · D00022 = 그 첫 스텝 · D00023 = 1 · D00024 = 1 · PCV · O3 AO = 그 블록 값)
+                if self.blk + 1 <= self._w(A.D_RCP_BLOCK_COUNT):
+                    self._load_block_values(self.blk + 1)
                 self._recipe_error(why)
                 return
         self._load_block(self.blk + 1)              # ⑤ 넘으면 _load_block 이 종료 처리
@@ -752,7 +834,7 @@ class PlcSim:
         ★ 비상정지는 래치된 알람이 아니라 입력(D00008 b0)을 본다."""
         if self.faults["emo"]:
             return True
-        a0 = self.reg[A.D_ALARM0]
+        a0 = self.alm0
         return any((a0 >> b) & 1 for b in (A.ALM0_PUMP, A.ALM0_AIR, A.ALM0_CW))
 
     # ---------- 물리 ----------
@@ -828,6 +910,16 @@ class PlcSim:
             self.vac_done = True
         self.pump_to_done = self.t_pump_to.run(self.exh_req and self.ive_out and not self.vac_done,
                                                self.reg[A.D_PRM_PUMP_TIMEOUT], now)
+        # 펌프 운전 피드백(T0025, 행 23): 펌프 출력 AND 운전 입력 꺼짐 10 s → 알람0 b5.
+        # 다음 스캔 펌프 요청이 지워진다(행 16~19 — _pump_blocking)
+        if self.t_pump_fb.run(self.pump_on and not (i0 >> A.IN0_PUMP_RUN) & 1, 10.0, now):
+            self._latch0(A.ALM0_PUMP)
+        if DEV.HAS_O3:
+            # 바이패스 펌프 운전 피드백(T0031, 행 39): 출력 AND 운전 입력 꺼짐 10 s → 알람1 b5.
+            # IV-B 는 운전 입력이 없으면 바로 닫힌다(행 40 — P60 DO_IVB)
+            i1 = self.reg[A.D_INPUT1]
+            if self.t_bp_fb.run(self.bypass_pump_on and not (i1 >> A.IN1_BP_RUN) & 1, 10.0, now):
+                self._latch1(A.ALM1_BYPASS_PUMP)
 
     def _vent_ok(self) -> bool:
         """벤트 허가(인터락 b5) = 시퀀서 동작 아님(공정 준비 포함) · IV-E 닫힘 입력 ·
@@ -839,6 +931,9 @@ class PlcSim:
 
     def _p60(self, now):
         """P60 — 출력. 밸브 요청 = (시퀀서 동작 중이면 시퀀서 마스크, 아니면 D04012) AND 밸브 마스크."""
+        # ★ 동시 요청(행 0~9, 13): 밸브 요청 = 공정 중이면 시퀀스 마스크, 아니면 수동 마스크(P50 이 이번
+        #   스캔에 지운 뒤) & 허용 마스크. ILK_PR_CONFLICT(D00004 b6)는 여기서 정하고 같은 P60 행 13 이
+        #   D00004 로 내보낸다(그 스캔에 보인다). 알람0 b15 는 여기서 SET — 공개는 다음 스캔 P35
         if self.running:
             req = self.seq_valves & DEV.MANUAL_VALVE_MASK
         else:
@@ -846,6 +941,10 @@ class PlcSim:
         pre = any((req >> b) & 1 for b in DEV.PRECURSOR_VALVE_BITS)
         rea = any((req >> b) & 1 for b in DEV.REACTANT_VALVE_BITS)
         self.both_req = pre and rea
+        if self.both_req:
+            self.reg[A.D_INTERLOCK] |= 1 << A.ILK_BOTH_REQ
+        else:
+            self.reg[A.D_INTERLOCK] &= ~(1 << A.ILK_BOTH_REQ) & 0xFFFF
         ilk = self.reg[A.D_INTERLOCK]
         if self.both_req:
             # 전구체와 반응물이 함께 요청되면 동시 요청 — 모든 밸브 출력 0 + 알람0 b15
@@ -881,7 +980,7 @@ class PlcSim:
                 out |= 1 << PV_B_BIT
         self.valve_out = out
         # 히터: 과온 알람 래치 중에는 매 스캔 전원 묶음 = 0
-        if (self.reg[A.D_ALARM0] >> A.ALM0_OT) & 1:
+        if (self.alm0 >> A.ALM0_OT) & 1:
             self.heater_power = 0
 
     def _p70(self, now):
@@ -890,7 +989,7 @@ class PlcSim:
         G = SEQ_RUN AND NOT 일시정지. Y = (NOT SEQ_RUN AND NOT ALM_ANY) OR (일시정지 AND 깜빡임).
         부저 = D00007 = 1. 깜빡임은 PLC 1 s 클록(0.5 s 켜짐 · 0.5 s 꺼짐). DP N2 는 DP 운전 출력을 따른다."""
         self.blink = (now % 1.0) < 0.5
-        alm_any = bool(self.reg[A.D_ALARM0] or self.reg[A.D_ALARM1])
+        alm_any = bool(self.alm0 or self.alm1)
         new = bool(self.reg[A.D_ALARM_NEW])
         paused = self.running and self.seq_state == 7
         w = 0
@@ -942,12 +1041,12 @@ class PlcSim:
         if self.pressure >= ATM_INPUT_TORR:
             w |= 1 << A.IN0_ATM
         pump_run = self.pump_on and self.pump_run_at is not None and (now - self.pump_run_at) >= 1.0
-        if pump_run and not f["pump_alm"]:
+        if pump_run and not f["pump_alm"] and not f["pump_nofb"]:
             w |= 1 << A.IN0_PUMP_RUN
         if f["pump_alm"]:
             w |= 1 << A.IN0_PUMP_ALM
         settled = self.ive_moved_at is None or (now - self.ive_moved_at) >= 1.0
-        if settled:
+        if settled and not f["ive_stuck"]:
             w |= (1 << A.IN0_IVE_OPEN) if self.ive_out else (1 << A.IN0_IVE_CLOSE)
         if f["leak"]:
             w |= 1 << A.IN0_LEAK
@@ -970,7 +1069,7 @@ class PlcSim:
             if f["o3_room"]:
                 w1 |= 1 << A.IN1_O3_ROOM
             # 바이패스 펌프 운전 입력 = 출력 AND 펌프 알람 아님
-            if self.bypass_pump_on and not f["bp_alm"]:
+            if self.bypass_pump_on and not f["bp_alm"] and not f.get("bp_nofb"):
                 w1 |= 1 << A.IN1_BP_RUN
             if f["bp_alm"]:
                 w1 |= 1 << A.IN1_BP_ALM
@@ -978,14 +1077,11 @@ class PlcSim:
 
     # ---------- 알람 ----------
     def _latch0(self, b):
-        if not (self.reg[A.D_ALARM0] >> b) & 1:
-            self.reg[A.D_ALARM0] |= 1 << b
-            self.reg[A.D_ALARM_NEW] = 1
+        """내부 알람 워드에 래치 — D00005 · D00007 은 P35 의 복사에서만 바뀐다."""
+        self.alm0 |= 1 << b
 
     def _latch1(self, b):
-        if not (self.reg[A.D_ALARM1] >> b) & 1:
-            self.reg[A.D_ALARM1] |= 1 << b
-            self.reg[A.D_ALARM_NEW] = 1
+        self.alm1 |= 1 << b
 
     def _over_temp(self) -> bool:
         """과온 = 과온 스위치 입력 OR (CH1~6 중 한계>0 이고 현재값>한계).
@@ -999,11 +1095,24 @@ class PlcSim:
         return False
 
     def _alarms(self, now):
-        """P35 — 원인(입력 · 다 찬 타이머 · 트립 · 공정 중 조건)이 있으면 래치한다.
-        알람 리셋이 워드를 0 으로 만든 같은 스캔에도 여기서 다시 선다."""
+        """P35. 첫 행: 리셋(명령 7)이면 알람 워드 둘 = 0(PC 통신 트립은 PC_LINK_OK 일 때만 푼다).
+        그다음 원인(입력 · 다 찬 타이머 · 트립 · 공정 중 조건)이 있으면 래치 — 원인이 남은 알람은 같은 스캔에
+        다시 선다. 끝(행 26~36): D00005 · D00006 = 워드, 새 알람 = 워드 & ~앞 스캔 워드 → D00007 = 1,
+        앞 워드 = 워드, 확인 · 리셋이면 D00007 = 0 — 원인이 남은 채 리셋하면 D00007 = 0(부저 끔 · 적색 켜짐)."""
+        if self.reset_req:
+            self.alm0 = self.alm1 = 0
+            if self.pc_link_ok:
+                self.pc_trip = False
         i0, i1 = self.reg[A.D_INPUT0], self.reg[A.D_INPUT1]
         ilk = self.reg[A.D_INTERLOCK]
         b = lambda w, n: bool((w >> n) & 1)  # noqa: E731
+        if self.mfc_to_done or self.mfc_dev_done:       # 행 19~20 — P40 의 T0024 · T0032(앞 스캔)
+            self._latch0(A.ALM0_MFC)
+        # IV-E 동작 이상(T0026 5.0 s): (출력 AND 열림 입력 꺼짐) OR (출력 꺼짐 AND 닫힘 입력 꺼짐)
+        ive_bad = ((self.ive_out and not b(i0, A.IN0_IVE_OPEN))
+                   or (not self.ive_out and not b(i0, A.IN0_IVE_CLOSE)))
+        if self.t_ive.run(ive_bad, 5.0, now):
+            self._latch1(A.ALM1_IVE)
         if not b(i0, A.IN0_EMO):
             self._latch0(A.ALM0_EMO)
         if self.air_bad:
@@ -1022,8 +1131,6 @@ class PlcSim:
             self._latch0(A.ALM0_PC_LINK)
         if self.pump_to_done:
             self._latch0(A.ALM0_BASE_TIMEOUT)
-        if b(ilk, A.ILK_BOTH_REQ):
-            self._latch0(A.ALM0_BOTH_OPEN)
         # 리드: SEQ_RUN(시작 순간부터 끝까지 — 블록 준비 포함) AND NOT 리드 닫힘
         if self.running and not b(i0, A.IN0_LID):
             self._latch0(A.ALM0_LID)
@@ -1046,28 +1153,32 @@ class PlcSim:
             # 공정 중 안전 정지(어떤 중대 알람이든) · 허가만 빠져도 b3 → 중대 → 다음 스캔에 중단
             if self.running and not b(ilk, A.ILK_O3_OK):
                 self._latch1(A.ALM1_O3_GEN)
+        self._publish_alarms()
+
+    def _publish_alarms(self):
+        """P35 행 26~36 — 알람 워드 공개 · 새 알람 판단 · 확인 · 리셋."""
+        self.reg[A.D_ALARM0] = self.alm0
+        self.reg[A.D_ALARM1] = self.alm1
+        if (self.alm0 & ~self.prev_alm0) or (self.alm1 & ~self.prev_alm1):
+            self.reg[A.D_ALARM_NEW] = 1
+        self.prev_alm0, self.prev_alm1 = self.alm0, self.alm1
+        if self.ack_req or self.reset_req:
+            self.reg[A.D_ALARM_NEW] = 0
+        self.ack_req = self.reset_req = False
 
     def _critical(self) -> bool:
-        return bool((self.reg[A.D_ALARM0] & DEV.CRITICAL_MASK0) or self.reg[A.D_ALARM1])
-
-    def _alarm_reset(self):
-        """명령 7 — 래더처럼 알람 워드를 모두 0 으로. 원인이 남은 알람은 같은 스캔의 P35 가 다시 세운다.
-        PC 통신 트립은 PC_LINK_OK 일 때만 푼다."""
-        self.reg[A.D_ALARM0] = 0
-        self.reg[A.D_ALARM1] = 0
-        self.reg[A.D_ALARM_NEW] = 0
-        if self.pc_link_ok:
-            self.pc_trip = False
+        return bool((self.alm0 & DEV.CRITICAL_MASK0) or self.alm1)
 
     # ---------- 인터락 ----------
     def _interlocks(self, now=None):
-        """P30. 안전 정지 요구 = 알람 워드(앞 스캔까지 래치된 것)에 중대 알람."""
+        """P30. 안전 정지 요구(행 5~9) = 비상정지 입력 꺼짐 OR PC 통신 트립 OR (알람0 & 0xD27F) ≠ 0
+        OR 알람1 ≠ 0 — 비상정지를 누른 채 리셋해도 6 이 유지된다."""
         now = self._clock() if now is None else now
         i0 = self.reg[A.D_INPUT0]
         i1 = self.reg[A.D_INPUT1]
         b = lambda w, n: bool((w >> n) & 1)  # noqa: E731
         w = 0
-        self.safe_stop = self._critical()
+        self.safe_stop = (not b(i0, A.IN0_EMO)) or self.pc_trip or self._critical()
         # 공압 · N2: 정상 입력이 꺼진 상태가 1 s 이어져야(100 ms 타이머 10) 빠진다 — 짧은 떨림은 무시
         self.air_bad = self.t_air.run(not b(i0, A.IN0_AIR), 1.0, now)
         self.n2_bad = self.t_n2.run(not b(i0, A.IN0_N2), 1.0, now)
@@ -1114,12 +1225,7 @@ class PlcSim:
             if o3_ok:
                 w |= 1 << A.ILK_O3_OK
 
-        # 동시 요청 감지 — 지금의 밸브 요청(시퀀서 동작 중이면 시퀀서, 아니면 수동 반영)
-        req = (self.seq_valves if self.running else self.man_valve) & DEV.MANUAL_VALVE_MASK
-        self.both_req = (any((req >> x) & 1 for x in DEV.PRECURSOR_VALVE_BITS)
-                         and any((req >> x) & 1 for x in DEV.REACTANT_VALVE_BITS))
-        if self.both_req:
-            w |= 1 << A.ILK_BOTH_REQ
+        # 동시 요청(b6)은 P60 이 정해 같은 스캔에 내보낸다
         start_ok = valve_ok and vac and self.pc_link_ok and bool(self.reg[A.D_RECIPE_OK])
         if DEV.HAS_O3:
             start_ok = start_ok and o3_ok

@@ -3,7 +3,7 @@ plclink.py — PLC 링크. 백그라운드 태스크 하나가 소켓을 가진�
 
 주기 (plc.poll_ms · plc.heartbeat_ms 로 바꿀 수 있다)
   100 ms  상태 영역 D00000~D00080 을 한 번에 읽어 스냅샷 교체
-  500 ms  D01000(PC 하트비트) +1 쓰기
+  250 ms  D01000(PC 하트비트) +1 쓰기
   500 ms  PLC 반영 영역 D04012~D04131 읽기 (수동 반영 + 실제로 출력 중인 설정값)
     1 s   명령 영역 D01000~D01042 · PRM 영역 D01100~D01124 되읽기 (히터 목표·전원 표시, PRM 확인)
 
@@ -33,13 +33,14 @@ from .modbus import ModbusClient, ModbusError, ModbusTimeout
 log = logging.getLogger(__name__)
 
 POLL_S = 0.100
-HEARTBEAT_S = 0.500
+HEARTBEAT_S = 0.250
 DISPLAY_S = 0.500
 CMD_READ_S = 1.0                # 명령 영역·PRM 영역 되읽기
 ACK_TIMEOUT_S = 1.5             # 명령 응답을 기다리는 최대 시간
 APPLY_SETTLE_S = 0.1            # 명령 12 결과 뒤 반영 영역을 다시 읽기까지(PLC 몇 스캔)
 PLC_HB_STALL_S = 2.0            # PLC 하트비트가 이만큼 안 바뀌면 멈춘 것으로 본다
-FAST_RETRY_S = 0.25             # 와치독 2/3 안에서는 이 간격으로 다시 붙는다
+FAST_RETRY_S = 0.25             # 와치독 안에서 연결이 바로 거절되면 이만큼 쉬고 다시 붙는다
+FAST_CONNECT_S = 0.3            # 와치독 안의 연결 시간 초과(시간 초과로 실패하면 쉬지 않고 바로 다시)
 HB_STALL_TEXT = "PLC 하트비트 멈춤 — PLC 가 STOP 이거나 멈췄습니다 · 명령을 보내지 않습니다"
 RECONNECT_DELAYS = (1.0, 2.0, 5.0)
 GIL_SWITCH_S = 0.001            # 작업 스레드가 돌 때도 루프가 자주 돌게
@@ -179,14 +180,17 @@ class PlcLink:
             return
         attempt = 0
         while not self._stop:
+            fast = self._in_fast_window()
             try:
-                await self.client.connect()
+                await self.client.connect(FAST_CONNECT_S if fast else None)
             except Exception as e:  # noqa: BLE001
-                self._drop(f"PLC 연결 실패 ({self.addr_text}): {e}")
-                # ★ 마지막 하트비트 뒤 와치독의 2/3 가 지나기 전까지는 0.25 s 간격으로 다시 붙는다 —
-                #   1~2 s 순간 끊김에 다음 시도가 와치독 뒤로 밀려 PC 통신 끊김(안전 정지)이 나지 않게.
+                self._drop(f"PLC 연결 실패 ({self.addr_text}): {type(e).__name__} {e}")
+                # ★ 마지막 하트비트 쓰기 뒤 와치독(PRM_PC_WDT_MS)이 지나기 전까지는 PLC 가 트립하지 않는다 —
+                #   그 안의 시도는 모두 공정을 살릴 수 있다. 케이블 · 스위치 끊김(SYN 무응답)은 0.3 s 시간
+                #   초과로 끊고 바로 다시, 바로 거절된 경우에만 0.25 s 쉰다. 창이 지난 뒤에만 1 → 2 → 5 s.
                 if self._in_fast_window():
-                    await asyncio.sleep(FAST_RETRY_S)
+                    if not isinstance(e, (asyncio.TimeoutError, TimeoutError)):
+                        await asyncio.sleep(FAST_RETRY_S)
                     continue
                 delay = RECONNECT_DELAYS[min(attempt, len(RECONNECT_DELAYS) - 1)]
                 attempt += 1
@@ -238,8 +242,9 @@ class PlcLink:
             return A.PRM_DEFAULTS["pc_wdt_ms"] / 1000.0
 
     def _in_fast_window(self) -> bool:
+        """마지막 PC 하트비트 쓰기 뒤 와치독 시간 안인가(이 안에서는 PLC 가 아직 트립하지 않는다)."""
         return bool(self.last_hb_write_at) and \
-            time.monotonic() - self.last_hb_write_at < self._wdt_s() * 2.0 / 3.0
+            time.monotonic() - self.last_hb_write_at < self._wdt_s()
 
     def _drop(self, msg):
         if self.connected:

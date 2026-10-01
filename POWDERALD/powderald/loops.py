@@ -76,18 +76,26 @@ def _log_sync(level, msg):
     _pending_events.append((level, msg))
 
 
+def sample_once():
+    """샘플링 한 번 — 알람 · 끝 판정 · 데이터 로그 · 트렌드."""
+    state.refresh()
+    if state.runner:
+        state.runner.tick(_log_sync)
+    _datalog_tick()
+    live = state.live()
+    # ★ PLC 하트비트 멈춤(STOP 등) 동안 live 에 남은 값은 굳은 옛 값이다 — 트렌드 버퍼 ·
+    #   트렌드 기록에 넣지 않는다(실제 값처럼 남지 않게). 끊김과 같다
+    if not (live.get("plc") or {}).get("hb_stalled"):
+        trend.record(time.monotonic(), live)
+        trendlog.record(live)
+    _admin_on_process_start(live)
+
+
 async def sample_loop():
     period = 1.0 / SAMPLE_HZ
     while True:
         try:
-            state.refresh()
-            if state.runner:
-                state.runner.tick(_log_sync)
-            _datalog_tick()
-            live = state.live()
-            trend.record(time.monotonic(), live)
-            trendlog.record(live)
-            _admin_on_process_start(live)
+            sample_once()
         except Exception as e:  # noqa: BLE001
             logger.write("err", f"샘플링 루프 오류(계속 진행): {type(e).__name__}: {e}")
         await asyncio.sleep(period)
@@ -171,15 +179,24 @@ async def plc_recipe_loop():
     ★ 화면이 '편집 중인 것'과 '장비가 들고 있는 것'을 나란히 보여 주려면 이 값이
       필요하다. 공정 중에는 읽지 않는다 — 통신을 공정 감시에 쓴다.
     """
-    from .commands import refresh_plc_recipe
     while True:
         try:
-            link = state.link
-            if link and link.connected and not (state.runner and state.runner.progress().get("running")):
-                await refresh_plc_recipe()
+            await plc_recipe_once()
         except Exception as e:  # noqa: BLE001
             logger.write("warn", f"PLC 레시피 되읽기 실패(계속 진행): {e}")
         await asyncio.sleep(5.0)
+
+
+async def plc_recipe_once():
+    from .commands import refresh_plc_recipe
+    from .connection import push_state
+    link = state.link
+    if link and link.connected and not (state.runner and state.runner.progress().get("running")):
+        before = state.plc_recipe
+        await refresh_plc_recipe()
+        if state.plc_recipe != before:
+            # ★ 레시피 탭의 '지금 PLC' 줄 — 바뀌었을 때만 상태를 보낸다(옛 값이 남지 않게)
+            await push_state()
 
 
 HOUSEKEEP_S = 86400.0             # 로그 · 데이터 로그 · 트렌드 · 내보내기 정리 주기(하루)

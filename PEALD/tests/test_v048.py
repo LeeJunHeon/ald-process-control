@@ -191,8 +191,13 @@ def test_zero_mfc_timeout_aborts_every_block_prep(cfg):
     s.write(A.D_PRM_MFC_TOL, [0])
     s.write(A.RCP_SUM_BASE, table(cfg)["words"])
     assert s._process_start() == A.RESULT_OK
+    # v0.4.10 래더: 스캔 1 P40 T0024 → 스캔 2 P35 b12 → 스캔 3 P30 안전 정지 요구로 P40 중단(장비 상태 6)
     fs.step(1)
-    assert alm0(s, A.ALM0_MFC) and s.reg[A.D_SEQ_STATE] == 8
+    assert not alm0(s, A.ALM0_MFC) and s.mfc_to_done
+    fs.step(1)
+    assert alm0(s, A.ALM0_MFC) and s.reg[A.D_SEQ_STATE] == 3
+    fs.step(1)
+    assert s.reg[A.D_SEQ_STATE] == 8 and s.reg[A.D_STATE] == A.STATE_SAFE_STOP
 
 
 # ===================== 5 · 펌핑 시간 초과 =====================
@@ -379,12 +384,12 @@ def test_pc_link_trip_rules(cfg):
     assert s.pc_link_ok
     fs.step(30)                                  # 0.6 s 멈춤 → 트립
     assert alm0(s, A.ALM0_PC_LINK) and s.pc_trip and not s.pc_link_ok
-    s._alarm_reset()                             # PC_LINK_OK 아님 — 트립은 남고 P35 가 다시 세운다
+    s._execute(A.CMD_ALARM_RESET)                # PC_LINK_OK 아님 — 트립은 남고 P35 가 다시 세운다
     fs.step(1)
     assert alm0(s, A.ALM0_PC_LINK)
     s.write(A.D_PC_HB, [77])
     fs.step(1)
-    s._alarm_reset()
+    s._execute(A.CMD_ALARM_RESET)                # (v0.4.10: 리셋은 P35 첫 행 — 명령으로 요청)
     fs.step(1)
     assert not alm0(s, A.ALM0_PC_LINK) and not s.pc_trip
 
@@ -422,8 +427,10 @@ def test_mfc_prep_timeout_even_with_zero_tolerance(cfg, stable, timeout, aborts)
             break
     took = fs.t[0] - t0
     if aborts:
+        # v0.4.10 래더: T0024 출력 뒤 두 스캔(P35 b12 → P30 안전 정지) 늦게 중단 — 한 스캔 0.02 s
         assert alm0(s, A.ALM0_MFC) and s.reg[A.D_SEQ_STATE] == 8
-        assert timeout <= took <= timeout + 0.05, took
+        assert s.reg[A.D_STATE] == A.STATE_SAFE_STOP
+        assert timeout + 0.04 - 1e-6 <= took <= timeout + 0.05 + 0.04, took
     else:
         assert not alm0(s, A.ALM0_MFC) and s.seq_state == 4
         assert stable <= took <= stable + 0.05, took

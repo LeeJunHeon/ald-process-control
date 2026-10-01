@@ -10,7 +10,7 @@
     "unit_id": 1,
     "timeout_ms": 1000,
     "poll_ms": 100,
-    "heartbeat_ms": 500,
+    "heartbeat_ms": 250,
     "simulate": true,
     "require_device_id": false,
     "sim_port": 15201,

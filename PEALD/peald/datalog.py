@@ -174,13 +174,14 @@ class DataLog:
             return
         # ★ PLC 가 끊겨도 같은 파일에 이어 쓴다(값 칸은 비우고 상태 칸 'PLC 끊김'). 30 분을 넘으면 닫는다
         link = self.state.link
-        if link and link.connected:
+        if link and link.connected and not getattr(link, "plc_hb_stalled", False):
             self._down_since = 0.0
         else:
             self._down_since = self._down_since or now
             if now - self._down_since > DOWN_CLOSE_S:
-                self.end_result = "기록 중단(PLC 끊김)"
-                logger.write("warn", f"데이터 로그를 닫습니다 — PLC 끊김이 {DOWN_CLOSE_S / 60:.0f} 분을 넘었습니다")
+                self.end_result = "기록 중단(PLC 끊김)" if not (link and link.connected) else "기록 중단(PLC 멈춤)"
+                logger.write("warn", f"데이터 로그를 닫습니다 — PLC 끊김 · 멈춤이 {DOWN_CLOSE_S / 60:.0f} 분을 "
+                                     "넘었습니다")
                 self.close()
                 return
         if now < self._next:
@@ -221,10 +222,13 @@ class DataLog:
         st = self.state
         link = st.link
         conn = bool(link and link.connected)
-        if not conn:
-            # 값을 지어내지 않는다 — 밸브 워드 0x0000 은 '닫힘'으로 읽히므로 쓰지 않는다
+        stalled = conn and getattr(link, "plc_hb_stalled", False)
+        if not conn or stalled:
+            # 값을 지어내지 않는다 — 밸브 워드 0x0000 은 '닫힘'으로 읽히므로 쓰지 않는다.
+            # ★ 하트비트 멈춤(STOP 등)이면 읽은 값이 굳은 옛 값이다 — 끊김과 같게 비운다
             n = len(self._header())
-            row = [time.strftime("%Y-%m-%d %H:%M:%S"), f"{now - self.started:.1f}", "PLC 끊김"]
+            row = [time.strftime("%Y-%m-%d %H:%M:%S"), f"{now - self.started:.1f}",
+                   "PLC 멈춤" if stalled else "PLC 끊김"]
             return row + [""] * (n - len(row))
         live = st.live()
         s = link.status

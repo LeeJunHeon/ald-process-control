@@ -929,9 +929,9 @@ def test_simulator_aborts_sequencer_in_same_scan(cfg):
     for _ in range(3):
         fs.step(1)
         seen.append((sim.reg[A.D_STATE], sim.reg[A.D_SEQ_STATE], (sim.reg[A.D_ALARM0] >> A.ALM0_EMO) & 1))
-    # 스캔 1: 알람만(아직 공정 중) · 스캔 2: 안전 정지 + 시퀀서 8 — 6 + 4 는 한 번도 없다
-    assert seen[0][2] == 1 and seen[0][0] != A.STATE_SAFE_STOP, seen
-    assert seen[1][0] == A.STATE_SAFE_STOP and seen[1][1] == 8, seen
+    # v0.4.10 래더(P30 행 5~9): 안전 정지 요구는 비상정지 '입력'도 본다 — 입력이 꺼진 그 스캔에
+    # P30 안전 정지 요구 → 같은 스캔 P40 중단, 알람은 같은 스캔 P35 가 래치 · 공개. 6 + 4 는 한 번도 없다
+    assert seen[0][2] == 1 and seen[0][0] == A.STATE_SAFE_STOP and seen[0][1] == 8, seen
     assert not any(st == A.STATE_SAFE_STOP and q == 4 for st, q, _a in seen), seen
 
 

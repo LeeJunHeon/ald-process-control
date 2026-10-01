@@ -61,10 +61,12 @@ class ModbusClient:
     def connected(self) -> bool:
         return self._writer is not None and not self._writer.is_closing()
 
-    async def connect(self):
+    async def connect(self, timeout: float = None):
+        """timeout: 연결 시간 초과(s). 없으면 요청 시간 초과와 같다 — PLC 링크는 와치독 안의 빠른
+        재연결에서 짧게 준다(SYN 에 답이 없는 끊김에 한 시도가 오래 매달리지 않게)."""
         self.close_sync()
         self._reader, self._writer = await asyncio.wait_for(
-            asyncio.open_connection(self.host, self.port), timeout=self.timeout)
+            asyncio.open_connection(self.host, self.port), timeout=timeout or self.timeout)
         self._tid = 0
         self.drop_reason = ""
 

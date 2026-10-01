@@ -276,7 +276,8 @@ class TrendLog:
                 f"{datetime.datetime.fromtimestamp(t1).strftime('%Y%m%d_%H%M%S')}.csv")
         path = os.path.join(export_dir(), name)
         labels = {c[0]: f"{c[4]}{(' ' + c[5]) if c[5] else ''}" for c in COLS}
-        with open(path, "w", encoding="utf-8-sig", newline="") as f:
+        # 1 MiB 버퍼 — 8 KB 마다 쓰기(GIL 놓기 · 다시 잡기)로 루프가 차례를 놓치지 않게
+        with open(path, "w", encoding="utf-8-sig", newline="", buffering=1 << 20) as f:
             w = csv.writer(f)
             w.writerow(logger.csv_row(["시각"] + [labels[c] for c in COL_NAMES]))
             n = 0
@@ -293,14 +294,14 @@ class TrendLog:
                           keep_days=90, remote: bool = False, as_json: bool = False):
         """구간을 자르고 검사한 뒤, 루프에서 flush 하고 조회는 '무거운 조회' 문(heavy.gate)을 지나
         작업 스레드에서 한다. as_json 이면 JSON 바이트까지 스레드에서 만든다. 원격 칸이 차 있으면 heavy.Busy."""
-        from .heavy import gate
+        from .heavy import gate, rows_json
         t0, t1, err = clamp_range(t0, t1, keep_days, QUERY_MAX_S, "이력 조회")
         if err:
             res = {"error": err, "t0": t0, "t1": t1, "rows": [], "cols": [], "bucket_s": 1}
             return _json_bytes(res) if as_json else res
         self.flush()
         if as_json:
-            return await gate.run(lambda: _json_bytes(self.query(t0, t1, cols, max_points)), remote=remote)
+            return await gate.run(lambda: rows_json(self.query(t0, t1, cols, max_points)), remote=remote)
         return await gate.run(self.query, t0, t1, cols, max_points, remote=remote)
 
     async def export_async(self, t0, t1, keep_days=90):

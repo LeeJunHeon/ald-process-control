@@ -168,7 +168,7 @@ async def test_heavy_queries_keep_plc_heartbeat(rig):
     codes = sorted(r[0] for r in res)
     print(f"\n큰 CSV {size / 1e6:.1f} MB × 9 요청 {took:.1f} s — 응답 {codes} · PLC 쪽 하트비트 최대 공백 {gap} ms")
     assert set(codes) <= {200, 429} and 200 in codes
-    assert not trip and gap < 1500, gap
+    assert not trip and gap < 700, gap                    # v0.4.10 A2 기준
 
 
 # ===================== A2 로그 묶음 =====================
@@ -572,14 +572,15 @@ async def test_short_cut_reconnects_before_watchdog(relay_rig):
     assert not trip and gap < 2000, gap
 
 
-def test_fast_window_uses_watchdog_two_thirds(cfg, monkeypatch):
+def test_fast_window_uses_whole_watchdog(cfg, monkeypatch):
+    """v0.4.10 A1: 빠른 재연결 창 = 와치독 전체(v0.4.9 의 2/3 에서 넓힘 — PLC 는 그때까지 트립하지 않는다)."""
     from powderald.convert import Converters
     lk = plclink.PlcLink(cfg, Converters(cfg))
     assert not lk._in_fast_window()                       # 하트비트를 쓴 적이 없다
     lk.prm_readback = {A.D_PRM_PC_WDT_MS: 3000}
-    lk.last_hb_write_at = time.monotonic() - 1.9
-    assert lk._in_fast_window()
     lk.last_hb_write_at = time.monotonic() - 2.1
+    assert lk._in_fast_window()
+    lk.last_hb_write_at = time.monotonic() - 3.1
     assert not lk._in_fast_window()
     assert plclink.FAST_RETRY_S == 0.25
 
@@ -596,8 +597,9 @@ async def test_hb_stall_blocks_commands_and_shows_in_live(wired):
         assert "하트비트 멈춤" in lk.blocked_reason()
         live = state.live()
         assert live["plc"]["hb_stalled"] is True
-        r = await lk.send_command(A.CMD_ALARM_ACK)
-        assert r != A.RESULT_OK
+        # v0.4.10: send_command 는 (결과, 글) — 튜플과 비교하면 늘 참이었다. 보내지 않았으니 결과 None
+        result, text = await lk.send_command(A.CMD_ALARM_ACK)
+        assert result is None and "하트비트 멈춤" in text, (result, text)
     finally:
         sim.set_fault("plc_stop", False)
     assert await wait_until(lambda: not lk.plc_hb_stalled and lk.blocked_reason() == "", 5)

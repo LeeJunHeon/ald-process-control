@@ -95,6 +95,9 @@
       try { VIEWS[k].render(s); } catch (e) { console.error('render ' + k, e); }
     }
     if (s.live) applyLive(s.live);
+    // 조작판이 열려 있으면 스위치를 다시 그린다(누른 뒤 서버가 보낸 상태로 — 열 때만 그리면 그대로 남는다)
+    var sm = d.getElementById('simModal');
+    if (sm && !sm.hidden) renderSimPanel();
   }
 
   /** PLC 하트비트 멈춤(STOP 등) — 연결은 돼 있어도 PLC 값은 멈춘 옛 값이다. 화면에는 끊김처럼 '—' 로
@@ -492,7 +495,7 @@
       return;
     }
     var sw = ev.target.closest('[data-fault]');
-    if (sw && !sw.classList.contains('dis') && canOperate()) {
+    if (sw && !sw.classList.contains('dis') && simOperate()) {
       w.app.send('sim_fault', { key: sw.dataset.fault, on: !sw.classList.contains('on') });
     }
   });
@@ -501,7 +504,7 @@
     var box = bind('simList');
     if (!box) return;
     var list = (lastState || {}).sim_faults || [];
-    var op = canOperate();
+    var op = simOperate();
     box.innerHTML = list.map(function (f) {
       return '<div class="row2"><span>' + esc(f.name) + '</span>' +
         '<span class="sw' + (f.on ? ' on' : '') + (op ? '' : ' dis') + '" tabindex="' + (op ? 0 : -1) +
@@ -553,6 +556,12 @@
 
   /* ===================== 공개 ===================== */
   // ★ 다른 장비의 PLC 에 붙어 있거나 서버가 끊겼으면 이 PC 에서도 조작하지 못한다
+  /** 시뮬레이터 조작판 — 시뮬레이터 모드 · 이 PC 면 늘 쓸 수 있다. ★ PLC STOP 결함으로 화면이
+   *  잠겨도(하트비트 멈춤) 조작판까지 잠기면 STOP 을 풀 수 없다. */
+  function simOperate() {
+    return !offline && !!(lastState && (lastState.access || {}).local) && !!(lastState.sim_faults || []).length;
+  }
+
   function canOperate() {
     if (offline) return false;
     if (!(lastState && (lastState.access || {}).local)) return false;

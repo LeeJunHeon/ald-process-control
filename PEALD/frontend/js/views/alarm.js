@@ -11,14 +11,14 @@
 (function (w, d) {
   'use strict';
 
-  var lastSig = '';
+  var lastSig = null;       // null = 아직 안 그림(빈 알람 목록 '' 과 구분 — 처음 열 때 '—' · 빈 표가 남지 않게)
 
   function render(s) {
     renderHistory(s);
     renderLogs(s);
     renderNotices(s, (s.live || {}));
-    lastSig = '';
-    renderAlarms(s, (s.live || {}).alarms || []);
+    lastSig = null;
+    renderAlarms(s, s.live || {});
   }
 
   // 알람 이력 — live 의 alarm_hist_ver 가 바뀌면 다시 받는다(접속 때 한 번만 받으면 그 뒤 이력이 멈춘다)
@@ -41,19 +41,32 @@
       if (histVer == null) histVer = t.alarm_hist_ver;      // 접속 스냅샷이 이미 담고 있다
       else { histAsked = Date.now(); w.app.send('alarm_history'); }
     }
-    renderAlarms(s, t.alarms || []);
+    renderAlarms(s, t);
     renderNotices(s, t);
     core.renderAlarmModal();
   }
 
   /* ---------- 현재 알람 ---------- */
-  function renderAlarms(s, alarms) {
+  function renderAlarms(s, t) {
     var tbl = core.bind('alarmTbl');
     if (!tbl) return;
-    var sig = alarms.map(function (a) { return a.code; }).join('|');
+    var alarms = t.alarms || [];
+    // ★ 서버 · PLC 가 끊겼거나 PLC 하트비트가 멈췄으면 지금 알람을 모른다 — '없습니다' · '중대 0' 이 아니라
+    //   '알 수 없음'(머리말 '알람 —' 과 같게). 멈춤이면 core 가 live 를 끊김 모양(plc.stalled)으로 바꿔 준다
+    var p = t.plc || {};
+    var known = !t.offline && !!p.connected;
+    var sig = (known ? 'k' : 'u:' + (t.offline ? 's' : p.stalled ? 'h' : 'p')) + '|' +
+      alarms.map(function (a) { return a.code; }).join('|');
     if (sig === lastSig) return;
     lastSig = sig;
 
+    if (!known) {
+      core.setText('alarmCount', '알 수 없음');
+      var why = t.offline ? '서버 연결이 끊겨' : p.stalled ? 'PLC 하트비트가 멈춰' : 'PLC 연결이 끊겨';
+      tbl.innerHTML = '<tbody><tr><td class="empty" colspan="4">' + why +
+        ' 지금 알람을 알 수 없습니다</td></tr></tbody>';
+      return;
+    }
     var crit = alarms.filter(function (a) { return a.crit; }).length;
     core.setText('alarmCount', '중대 ' + crit + ' · 경고 ' + (alarms.length - crit));
 

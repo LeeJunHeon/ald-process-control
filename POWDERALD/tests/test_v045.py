@@ -166,6 +166,7 @@ def test_simulator_reads_group_repeat_signed(cfg):
         else:
             break
     assert not sim.running
+    fs.step(1, 0.005)                        # v0.4.10 래더: P40 에서 선 b13 은 다음 스캔 P35 에서 공개
     assert sim.reg[A.D_SEQ_STATE] == 8 and A.bit(sim.reg[A.D_ALARM0], A.ALM0_RECIPE)
     assert "그룹 2" in sim.end_reason
     assert (1, 2) in passes and not any(b == 2 for b, _ in passes), passes
