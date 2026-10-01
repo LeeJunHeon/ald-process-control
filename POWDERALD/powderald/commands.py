@@ -262,28 +262,58 @@ def _running() -> bool:
 
 
 # ===================== 레시피 =====================
+def _check_payload(cfg, recipe) -> dict:
+    """검증 + 요약 — 작업 스레드에서 돈다(이벤트 루프를 붙잡지 않게)."""
+    rec = R.upgrade(recipe or {})
+    return {"type": "recipe_check", "check": R.validate(cfg, rec), "summary": R.summarize(cfg, rec)}
+
+
+def _load_payload(cfg, name):
+    """파일 읽기 + 검증 + 요약 — 작업 스레드에서. 열 수 없으면 None."""
+    data = storage.load(name)
+    if data is None:
+        return None
+    return {"type": "recipe", "name": name, "recipe": data,
+            "check": R.validate(cfg, data), "summary": R.summarize(cfg, data)}
+
+
 async def _cmd_recipe_validate(d, ws):
-    """편집할 때마다 불린다 — 계산·검증은 서버 한 곳에서만 한다."""
-    rec = R.upgrade(d.get("recipe") or {})
-    res = R.validate(state.cfg, rec)
-    await manager.send_to(ws, {
-        "type": "recipe_check", "check": res,
-        "summary": R.summarize(state.cfg, rec),
-    })
+    """편집할 때마다 불린다 — 계산·검증은 서버 한 곳에서만 한다.
+    ★ 작업 스레드에서 돌리고, 한 연결에서는 한 번에 하나만. 도는 동안 온 요청은 가장 최근 것 하나만
+      남긴다(편집기는 마지막 결과만 쓴다) — 쏟아지는 검증 요청이 루프·스레드를 붙잡지 못하게."""
+    meta = manager.active.get(ws)
+    if meta is None or "q" not in meta:
+        # 대기열이 없는 연결(시험) — 바로 돌려준다
+        await manager.send_to(ws, await asyncio.to_thread(_check_payload, state.cfg, d.get("recipe")))
+        return
+    if meta.get("v_busy"):
+        meta["v_next"] = d
+        return
+    meta["v_busy"] = True
+    asyncio.create_task(_validate_worker(ws, meta, d))
+
+
+async def _validate_worker(ws, meta, d):
+    try:
+        while d is not None and not meta.get("closed"):
+            out = await asyncio.to_thread(_check_payload, state.cfg, d.get("recipe"))
+            await manager.send_to(ws, out)
+            d = meta.pop("v_next", None)
+    except Exception as e:  # noqa: BLE001
+        logger.write("err", f"레시피 검증 오류: {type(e).__name__}: {logger.clean(e, 200)}")
+    finally:
+        meta["v_busy"] = False
+        meta.pop("v_next", None)
 
 
 async def _cmd_recipe_load(d, ws):
-    name = d.get("name") or ""
-    data = storage.load(name)
-    if data is None:
-        await push_notice(f"레시피를 열 수 없습니다: {name} (다른 장비의 형식일 수 있습니다)",
+    name = d.get("name") if isinstance(d.get("name"), str) else ""
+    out = await asyncio.to_thread(_load_payload, state.cfg, name)
+    if out is None:
+        await push_notice(f"레시피를 열 수 없습니다: {logger.clean(name, 80)} (다른 장비의 형식일 수 있습니다)",
                           "warn", ws)
         return
-    await manager.send_to(ws, {
-        "type": "recipe", "name": name, "recipe": data,
-        "check": R.validate(state.cfg, data),
-        "summary": R.summarize(state.cfg, data),
-    })
+    await manager.send_to(ws, out)
 
 
 async def _cmd_recipe_save(d, ws):

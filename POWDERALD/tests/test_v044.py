@@ -88,7 +88,7 @@ def test_domain_host_rejected_http_and_ws():
 
 
 async def test_large_ws_message_closes_connection():
-    """uvicorn ws_max_size(256 KiB)를 넘는 메시지는 연결을 닫는다(실제 uvicorn 으로)."""
+    """uvicorn ws_max_size 를 넘는 메시지는 연결을 닫는다(실제 uvicorn 으로)."""
     import uvicorn
     import websockets
     from powderald.server import uvicorn_config, WS_MAX_SIZE
@@ -104,12 +104,12 @@ async def test_large_ws_message_closes_connection():
             await asyncio.sleep(0.05)
         async with websockets.connect(f"ws://127.0.0.1:{port}/ws", max_size=None) as ws:
             await ws.recv()
-            await ws.send(json.dumps({"cmd": "recipe_validate", "recipe": {"x": "a" * (300 * 1024)}}))
+            await ws.send(json.dumps({"cmd": "recipe_validate", "recipe": {"x": "a" * (WS_MAX_SIZE + 1024)}}))
             with pytest.raises(websockets.ConnectionClosed) as ei:
                 for _ in range(50):
                     await asyncio.wait_for(ws.recv(), 2)
             assert ei.value.rcvd is None or ei.value.rcvd.code in (1009, 1011, 1006)
-        assert WS_MAX_SIZE == 256 * 1024
+        assert WS_MAX_SIZE == 64 * 1024              # v0.4.7 — 가장 큰 올바른 레시피 명령의 약 2배
     finally:
         server.should_exit = True
         th.join(5)

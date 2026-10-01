@@ -82,6 +82,9 @@ class State:
         self.alarms = AlarmTracker()
         self._last_new_alarm = 0
         self.alarm_popup = False        # D00007 이 0→1 이 되면 화면에 알람 창을 띄운다
+        # 새 알람(D00007 0→1)마다 +1 — 원격 화면은 닫을 때의 번호를 기억해 번호가 바뀌면 다시 띄운다
+        # (같은 코드의 알람이 풀렸다가 다시 나도 알 수 있게)
+        self.alarm_popup_seq = 0
         self.runner = None              # ProcessRunner (공정 시작 흐름·진행)
         self.datalog = None             # DataLog
         self.recipe_check = {}          # 고른 레시피의 검증 결과
@@ -126,6 +129,7 @@ class State:
         new = s[A.D_ALARM_NEW]
         if new and not self._last_new_alarm:
             self.alarm_popup = True     # 0 → 1 인 순간에만 창을 띄운다
+            self.alarm_popup_seq += 1
         self._last_new_alarm = new
 
     # ===================== 화면용 스냅샷 =====================
@@ -184,6 +188,7 @@ class State:
             "alarms": self.alarms.list(),
             "alarm_new": bool(conn and link.status[A.D_ALARM_NEW]),
             "alarm_popup": self.alarm_popup,
+            "alarm_popup_seq": self.alarm_popup_seq,
             "process": self.runner.progress() if self.runner else {},
             "manual": self.manual_state(),
             "datalog": {
@@ -369,8 +374,9 @@ class State:
                          "match": r == w})
         return rows
 
-    def snapshot(self, access_local: bool = True) -> dict:
-        """접속할 때와 구조가 바뀔 때 보내는 전체 스냅샷."""
+    def snapshot(self, access_local: bool = True, recipes=None) -> dict:
+        """접속할 때와 구조가 바뀔 때 보내는 전체 스냅샷.
+        recipes: 레시피 목록(파일 읽기)을 작업 스레드에서 미리 읽어 왔으면 그것을 쓴다."""
         return {
             "type": "state",
             "device": self.device_info(),
@@ -381,13 +387,14 @@ class State:
             "alarm_history": list(self.alarms.history),
             "logs": list(self.logs),
             "sim_faults": self.sim_faults(),
-            "recipes": storage.list_recipes(),
+            "recipes": recipes if recipes is not None else storage.list_recipes(),
             "recipe_limits": {
                 "step_max": R.STEP_MAX, "block_max": R.BLOCK_MAX, "group_max": R.GROUP_MAX,
                 "step_ms_min": R.STEP_MS_MIN, "step_ms_max": R.STEP_MS_MAX,
                 "block_repeat_max": R.BLOCK_REPEAT_MAX, "group_repeat_max": R.GROUP_REPEAT_MAX,
                 "recipe_valves": DEV.RECIPE_VALVES, "assist_pair": DEV.ASSIST_PAIR,
                 "mfc_count": DEV.MFC_COUNT, "format": DEV.RECIPE_FORMAT,
+                "name_max": R.NAME_MAX, "memo_max": R.MEMO_MAX, "label_max": R.LABEL_MAX,
             },
             "plc_recipe": self.plc_recipe,
             "config_fields": _config_fields(),

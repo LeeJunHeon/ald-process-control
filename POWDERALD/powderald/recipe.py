@@ -38,6 +38,11 @@ BLOCK_REPEAT_MAX = 1_000_000
 #   읽혀 그 그룹을 불러오는 순간 레시피 오류로 증착이 중간에 선다. 한계는 표 정의 옆 상수 하나다.
 GROUP_REPEAT_MAX = A.RCP_GROUP_REPEAT_MAX     # 32767
 LONG_STEP_MS = 60_000                   # 이 값을 넘으면 100 ms 타이머
+# 글자 길이 한도 — 레시피 이름은 저장 규칙(storage.valid_name 80자)과 같게. 화면 입력 칸 maxlength 도
+# 같은 값(state.recipe_limits). ★ 레시피 명령 크기의 상한(server.WS_MAX_SIZE)이 이 값들에서 나온다.
+NAME_MAX = 80
+MEMO_MAX = 500
+LABEL_MAX = 40                          # 블록 이름 · 스텝 이름
 
 
 # ===================== 기본 골격 =====================
@@ -149,12 +154,14 @@ def shape_errors(recipe) -> list:
         if key in obj and not isinstance(obj[key], bool):
             bad(f"{label}은(는) 참/거짓이어야 합니다 (현재 {_show(obj[key])})", block, step, field)
 
-    def text(obj, key, label, block=None, step=None, field=None):
+    def text(obj, key, label, block=None, step=None, field=None, limit=None):
         if key in obj and not isinstance(obj[key], str):
             bad(f"{label}은(는) 문자열이어야 합니다 (현재 {_show(obj[key])})", block, step, field)
+        elif limit is not None and key in obj and len(obj[key]) > limit:
+            bad(f"{label}이(가) 너무 깁니다 (최대 {limit}자, 현재 {len(obj[key])}자)", block, step, field)
 
-    for key in ("format", "name", "memo", "created", "modified"):
-        text(recipe, key, f"'{key}'", field=key)
+    for key, lim in (("format", 40), ("name", NAME_MAX), ("memo", MEMO_MAX), ("created", 40), ("modified", 40)):
+        text(recipe, key, {"name": "레시피 이름", "memo": "메모"}.get(key, f"'{key}'"), field=key, limit=lim)
 
     blocks = recipe.get("blocks")
     if not isinstance(blocks, list):
@@ -164,7 +171,7 @@ def shape_errors(recipe) -> list:
         if not isinstance(b, dict):
             bad("블록 형식이 올바르지 않습니다 (사전이 아님)", block=bi)
             continue
-        text(b, "name", "블록 이름", bi, field="name")
+        text(b, "name", "블록 이름", bi, field="name", limit=LABEL_MAX)
         num(b, "repeat", "블록 반복", bi, field="repeat", integer=True, required=True)
         mfc = b.get("mfc_sccm", [])
         if not isinstance(mfc, list):
@@ -189,7 +196,7 @@ def shape_errors(recipe) -> list:
             if not isinstance(st, dict):
                 bad("스텝 형식이 올바르지 않습니다 (사전이 아님)", bi, si)
                 continue
-            text(st, "name", "스텝 이름", bi, si, "name")
+            text(st, "name", "스텝 이름", bi, si, "name", limit=LABEL_MAX)
             num(st, "time_ms", "스텝 시간", bi, si, "time", integer=True, required=True)
             vs = st.get("valves", [])
             if not isinstance(vs, list) or not all(isinstance(x, str) for x in vs):

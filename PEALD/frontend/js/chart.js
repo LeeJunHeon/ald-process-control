@@ -30,7 +30,7 @@
   'use strict';
 
   var PAD_L = 52, PAD_R = 196, PAD_T = 10, PAD_B = 30;
-  var ROW_H = 13, ROW_MIN = 10, LEAD_W = 14;
+  var ROW_H = 13, ROW_MIN = 12, LEAD_W = 14;     // 줄 간격은 12 px 아래로 줄이지 않는다(글자 10 px)
   var PALETTE_N = 12;
 
   function cssVar(n) { return getComputedStyle(d.documentElement).getPropertyValue(n).trim(); }
@@ -385,8 +385,11 @@
       });
       out.forEach(function (e) {
         if (e.group.length < 2) return;
-        var words = e.label.split(' ');
-        var tail = words.length > 1 ? ' ' + words[words.length - 1] : '';
+        // 꼬리 말('현재' · '설정')은 묶인 이름 모두에 공통일 때만 — 아니면 'CH1–CH12' 만
+        //   ('CH1 Stage·챔버' … 'CH12 예비 12' 를 묶으며 'Stage·챔버' 가 붙던 것)
+        var last = function (x) { var w = x.label.split(' '); return w.length > 1 ? w[w.length - 1] : ''; };
+        var lw = last(e);
+        var tail = lw && e.group.every(function (x) { return last(x) === lw; }) ? ' ' + lw : '';
         e.full = e.group.map(function (x) { return x.label; }).join(' · ');
         e.label = runs(e.group.map(function (x) { return x.label.split(' ')[0]; })) + tail;
         e.want = e.group.reduce(function (s, x) { return s + x.want; }, 0) / e.group.length;

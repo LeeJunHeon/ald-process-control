@@ -44,6 +44,12 @@
   w.app.on('recipe_saved', function (m) {
     var sv = saving;
     saving = null;
+    if (!sv) {
+      // ★ 기다리던 저장이 없다(그사이 [새로] · 다른 레시피 열기) — 편집 중인 레시피 · 이름 · dirty 는
+      //   건드리지 않고 목록만 갱신한다
+      drawList(core.state || {});
+      return;
+    }
     if (!m.ok) {
       // 거절 — 편집은 그대로(dirty 유지), 이유는 서버 알림과 함께 여기에도 남긴다
       dirty = true;
@@ -108,7 +114,7 @@
     core.setText('rcRunNote', !core.canOperate() ? '보기 전용 — 저장 · 올리기는 이 PC 에서만'
       : run ? '공정 중입니다 — 저장·올리기는 공정이 끝난 뒤에 하세요'
         : (flow ? '시작 절차 진행 중 — 끝나거나 대기 취소 뒤에 바꿀 수 있습니다' : ''));
-    var conn = core.plcOk();
+    var conn = core.plcOk() + '|' + core.offline;           // PLC 끊김 ↔ 서버 끊김도 다시 그린다
     if (conn !== lastPlcConn) { lastPlcConn = conn; drawPlcRow(core.state || {}); }
     var nb = d.querySelector('[data-rcbtn="new"]');
     if (nb) nb.disabled = false;
@@ -138,7 +144,7 @@
     var conn = core.plcOk();
     var row = e.closest('.plcrow');
     if (row) row.classList.toggle('stale', !conn);
-    var pre = conn ? '' : core.chip('PLC 끊김', 'off') + ' <span class="dim">마지막으로 읽은 것:</span> ';
+    var pre = conn ? '' : core.chip(core.downText(), 'off') + ' <span class="dim">마지막으로 읽은 것:</span> ';
     if (!p.number) { core.html(e, pre + '<span class="dim">PLC 레시피 정보를 아직 읽지 않았습니다</span>'); return; }
     core.html(e, pre + core.chip(p.plc_ok ? '✓ PLC 검사 통과' : '✕ PLC 검사 미통과', p.plc_ok ? 'ok' : 'warn') +
       ' <b>' + core.esc(p.name || '(이름 모름)') + '</b>' +
@@ -169,8 +175,10 @@
 
     var html =
       '<div class="rc-head">' +
-      '<label>이름<input type="text" data-rcf="name" value="' + core.esc(cur.name || '') + '"></label>' +
-      '<label class="grow">메모<input type="text" data-rcf="memo" value="' + core.esc(cur.memo || '') + '"></label>' +
+      '<label>이름<input type="text" data-rcf="name" maxlength="' + core.esc(lim.name_max || 80) +
+      '" value="' + core.esc(cur.name || '') + '"></label>' +
+      '<label class="grow">메모<input type="text" data-rcf="memo" maxlength="' + core.esc(lim.memo_max || 500) +
+      '" value="' + core.esc(cur.memo || '') + '"></label>' +
       '</div>' +
       '<div class="rc-tabs">' + blocks.map(function (b, i) {
         return '<button class="rc-btab' + (i + 1 === sel.block ? ' on' : '') +
@@ -192,7 +200,8 @@
     var mfc = arr(b.mfc_sccm);
     var h = '<div class="rc-block">' +
       '<div class="rc-brow">' +
-      '<label>블록 이름<input type="text" data-rcb="name" value="' + core.esc(b.name || '') + '"></label>' +
+      '<label>블록 이름<input type="text" data-rcb="name" maxlength="' + core.esc(lim.label_max || 40) +
+      '" value="' + core.esc(b.name || '') + '"></label>' +
       '<label>반복(사이클)<input type="number" min="1" max="' + core.esc(lim.block_repeat_max || 1000000) +
       '" data-rcb="repeat" value="' + attr(b.repeat) + '"></label>';
     for (var i = 0; i < (lim.mfc_count || 0); i++) {
@@ -225,7 +234,8 @@
       st = st || {};
       h += '<tr data-rcstep="' + (i + 1) + '">' +
         '<td class="mono">' + (i + 1) + '</td>' +
-        '<td class="l"><input type="text" data-rcs="name" value="' + core.esc(st.name || '') + '"></td>' +
+        '<td class="l"><input type="text" data-rcs="name" maxlength="' + core.esc(lim.label_max || 40) +
+        '" value="' + core.esc(st.name || '') + '"></td>' +
         '<td><input type="number" class="ms" min="' + core.esc(lim.step_ms_min || 20) + '" max="' +
         core.esc(lim.step_ms_max || 3276700) + '" data-rcs="time_ms" value="' + attr(st.time_ms) + '"></td>' +
         valves.map(function (v) {
@@ -627,7 +637,7 @@
   function askName(title, initial, cb) {
     core.confirmAsk(title,
       '<label class="onelabel">이름<input type="text" id="rcAskName" value="' +
-      core.esc(initial) + '" maxlength="80"></label>' +
+      core.esc(initial) + '" maxlength="' + core.esc(lim.name_max || 80) + '"></label>' +
       '<div class="hint">\\ / : * ? " &lt; &gt; | 는 쓸 수 없습니다.</div>',
       '확인', function () {
         var e = d.getElementById('rcAskName');

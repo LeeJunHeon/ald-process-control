@@ -283,7 +283,7 @@
 
     var box = core.bind('ilks');
     if (!box) return;
-    if (!conn) { core.html(box, '<span class="chip off">PLC 끊김</span>'); return; }
+    if (!conn) { core.html(box, '<span class="chip off">' + core.downText() + '</span>'); return; }
     var str = s.structure || {};
     var out = [];
     (str.interlocks || []).forEach(function (k) {
@@ -399,14 +399,15 @@
     Array.prototype.forEach.call(d.querySelectorAll('[data-cmd]'), function (b) {
       if (b.closest('.procbar')) return;
       var c = b.dataset.cmd;
-      // 종료는 다른 장비의 PLC 여도 된다(이 PC 에서만)
-      if (c === 'exit') { b.disabled = !core.isLocal(); return; }
+      // 종료는 다른 장비의 PLC 여도 된다(이 PC 에서만). ★ 서버가 끊겨도 마지막 권한이 이 PC 였으면
+      //   누를 수 있다 — 끊긴 채 창을 닫는 길(force_close)이 바로 이것이다
+      if (c === 'exit') { b.disabled = !core.wasLocal(); return; }
       b.disabled = !local || !conn;
     });
     core.setText('lockMsg', msg);
     var lm = core.bind('lockMsg');
     if (lm && lm.title !== msg) lm.title = msg;           // 한 줄 말줄임 — 마우스를 올리면 전체
-    core.setText('schemNote', !conn ? 'PLC 끊김 — 값 없음'
+    core.setText('schemNote', !conn ? core.downText() + ' — 값 없음'
       : (t.state ? t.state.name : ''));
   }
 

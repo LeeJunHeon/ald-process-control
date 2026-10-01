@@ -42,8 +42,10 @@ from . import logview
 
 log = logging.getLogger(__name__)
 
-# WebSocket 메시지 크기 상한 — 가장 큰 레시피 저장 명령의 몇 배. 넘으면 uvicorn 이 연결을 닫는다.
-WS_MAX_SIZE = 256 * 1024
+# WebSocket 메시지 크기 상한 — 가장 큰 올바른 레시피 저장 명령(스텝 100 · 블록 10 · 그룹 5 · 모든 글자
+# 최대 · 한글, 약 31 KiB — tests/test_v047.py 가 계산한다)의 약 2배. 넘으면 uvicorn 이 연결을 닫는다(1009).
+# ★ 메시지가 클수록 이벤트 루프 위의 처리(JSON 풀기)가 길어진다 — 원격이 하트비트를 밀지 못하게 작게.
+WS_MAX_SIZE = 64 * 1024
 
 
 def uvicorn_config(app, host: str, port: int):
@@ -140,6 +142,8 @@ def create_app(config_path: str = "", single_instance: bool = True,
             if state.runner:
                 with contextlib.suppress(Exception):
                     await state.runner.stop_task()
+            with contextlib.suppress(Exception):
+                await manager.close_all()
             if state.datalog:
                 state.datalog.close()
             with contextlib.suppress(Exception):
@@ -250,10 +254,21 @@ def _routes(app: FastAPI):
                          + " · Host " + logger.clean(host or "(없음)", 60))
             await ws.close(code=1008)
             return
-        await manager.connect(ws)
+        if not await manager.connect(ws):
+            return                      # 원격 연결 수 한도 — 1013 으로 닫았다
         try:
             while True:
                 raw = await ws.receive_text()
+                if ws not in manager.active:
+                    break               # 보내기 쪽이 닫았다(응답 없음 · 대기열 넘침)
+                # ★ 원격 속도 한도 — JSON 을 풀기 전에 버린다(로컬은 한도 없음)
+                verdict = manager.admit(ws)
+                if verdict == "drop":
+                    continue
+                if verdict == "kick":
+                    manager.disconnect(ws)
+                    await ws.close(code=1008)
+                    break
                 try:
                     data = json.loads(raw)
                 except Exception:  # noqa: BLE001
@@ -269,11 +284,14 @@ def _routes(app: FastAPI):
                                             f"{type(e).__name__}: {logger.clean(e, 300)}")
                         from .connection import push_notice
                         await push_notice(f"명령을 처리하지 못했습니다 — {type(e).__name__}", "err", ws)
+                # ★ 메시지 하나마다 루프에 차례를 넘긴다 — 쌓인 메시지를 한 번에 몰아 처리하지 않게
+                await asyncio.sleep(0)
         except WebSocketDisconnect:
             manager.disconnect(ws)
         except Exception:  # noqa: BLE001
             manager.disconnect(ws)
         finally:
+            manager.disconnect(ws)
             from .admin import admin
             admin.forget(ws)
 

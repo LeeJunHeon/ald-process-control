@@ -6,6 +6,8 @@
  * ★ 잠겨 있으면 모든 입력을 막는다. 잠금 해제는 이 PC 에서만 되고, 10 분 동안 조작이
  *   없거나 공정이 시작되거나 [잠금]을 누르면 다시 잠긴다(서버가 판단한다).
  * ★ 편집 중에 스냅샷이 다시 와도 고친 값을 잃지 않는다(edits 에 따로 둔다).
+ * ★ 상태를 받을 때마다 통째로 다시 그리지 않는다 — 설정 · 칸 정의 · 장비 · 권한이 바뀔 때만 다시 만들고
+ *   (그때도 편집 중이던 칸의 포커스 · 커서를 되돌린다), 나머지는 값만 고친다(update).
  * ============================================================ */
 (function (w, d) {
   'use strict';
@@ -15,6 +17,7 @@
   var edits = {};           // path → 화면 값
   var pinMode = '';
   var lastPreview = null;
+  var builtSig = '';
 
   /* ===================== 값 도우미 ===================== */
   function getVal(cfg, path) {
@@ -44,6 +47,24 @@
   function render(s) {
     var L = core.bind('setupLeft'), R = core.bind('setupRight');
     if (!L || !R) return;
+    var sig = JSON.stringify([s.config, s.config_fields, s.device, s.unconfirmed, (s.access || {}).local]);
+    if (sig === builtSig && L.firstChild) { update(s.live || {}); return; }
+    builtSig = sig;
+    // 다시 만들기 전에 편집 중이던 칸(포커스 · 커서)을 기억했다가 되돌린다
+    var fa = d.activeElement && d.activeElement.closest && d.activeElement.closest('[data-cfg]');
+    var fpath = fa ? fa.dataset.cfg : null;
+    var fsel = fa && fa.selectionStart != null ? [fa.selectionStart, fa.selectionEnd] : null;
+    build(s, L, R);
+    if (fpath) {
+      var back = d.querySelector('[data-cfg="' + fpath + '"]');
+      if (back) {
+        back.focus();
+        if (fsel && back.setSelectionRange) { try { back.setSelectionRange(fsel[0], fsel[1]); } catch (e) { /* 숫자 칸 */ } }
+      }
+    }
+  }
+
+  function build(s, L, R) {
     var c = s.config || {};
     var dev = s.device || {};
     var F = fieldMap();
@@ -176,7 +197,10 @@
   function update(t) {
     var conn = !!(t.plc && t.plc.connected);
     core.setText('dgRtt', conn && t.plc.rtt_ms != null ? t.plc.rtt_ms + ' ms' : fmt.DASH);
-    core.setText('dgScan', conn && t.scan_max_ms != null ? t.scan_max_ms + ' ms' : fmt.DASH);
+    core.setText('dgScan', conn && t.scan_max_ms != null ? core.scanText(t.scan_max_ms) : fmt.DASH);
+    var sc = core.bind('dgScan');
+    var stip = conn && t.scan_max_ms === 0 ? 'PLC 가 아직 쓰지 않음(D00080 = 0)' : '';
+    if (sc && sc.title !== stip) sc.title = stip;
     core.setText('dgHb', !conn ? fmt.DASH : (t.plc.hb_ok ? '정상' : '멈춤'));
     core.setText('dgHbGap', conn && t.plc.hb_gap_max_ms != null
       ? t.plc.hb_gap_ms + ' ms (최대 ' + t.plc.hb_gap_max_ms + ' ms)' : fmt.DASH);
@@ -211,7 +235,7 @@
           '<td>' + core.chip(r.match ? '✓ 일치' : '✕ 불일치', r.match ? 'ok' : 'stop') + '</td></tr>';
       }).join(''));
     } else if (body && !conn) {
-      core.html(body, '<tr><td class="l dim" colspan="5">PLC 끊김 — 값 없음</td></tr>');
+      core.html(body, '<tr><td class="l dim" colspan="5">' + core.downText() + ' — 값 없음</td></tr>');
     }
     var pc = core.bind('prmChip');
     if (pc) {
@@ -326,7 +350,7 @@
     var c = ev.target.closest('[data-cfgact]');
     if (c && !c.disabled) {
       var act = c.dataset.cfgact;
-      if (act === 'revert') { edits = {}; render(core.state); }
+      if (act === 'revert') { edits = {}; builtSig = ''; render(core.state); }
       else if (act === 'review') w.app.send('config_preview', { token: adm.token, edits: edits });
       else if (act === 'backup' && core.canOperate()) w.app.send('open_folder', { which: 'backup' });
       return;

@@ -21,7 +21,7 @@
   var confirmCb = null;
   var confirmKey = '';
   var offline = false;
-  var alarmDismissed = null;      // 원격에서 닫은 알람 창 — 그때의 알람 코드들
+  var alarmDismissed = null;      // 원격에서 닫은 알람 창 — { seq: 그때의 알람 번호, codes: 그때의 코드들 }
 
   /* ===================== DOM 도우미 ===================== */
   function bind(name, root) { return (root || d).querySelector('[data-bind="' + name + '"]'); }
@@ -115,12 +115,15 @@
     if (t.alarm_popup && !t.offline && (t.alarms || []).length && !dismissedStill(t)) showAlarmModal();
   }
 
-  /** 원격에서 닫은 알람 창은 새 알람(그때 없던 코드)이 오기 전까지 다시 띄우지 않는다. */
+  /** 원격에서 닫은 알람 창은 새 알람이 오기 전까지 다시 띄우지 않는다.
+   *  새 알람 = 서버의 알람 번호(alarm_popup_seq — D00007 0→1 마다 +1)가 바뀌었거나 그때 없던 코드.
+   *  ★ 번호로 본다 — 같은 코드의 알람이 풀렸다가 다시 나도(비상정지 → 리셋 → 다시 비상정지) 다시 뜬다. */
   function dismissedStill(t) {
     if (!alarmDismissed) return false;
     var now = (t.alarms || []).map(function (a) { return a.code; });
-    var fresh = now.some(function (c) { return alarmDismissed.indexOf(c) < 0; });
-    if (fresh || !now.length) alarmDismissed = null;     // 모두 풀리면 다음에 다시 뜬다
+    var fresh = (t.alarm_popup_seq != null && t.alarm_popup_seq !== alarmDismissed.seq) ||
+      now.some(function (c) { return alarmDismissed.codes.indexOf(c) < 0; });
+    if (fresh) alarmDismissed = null;
     return !fresh;
   }
 
@@ -222,9 +225,15 @@
       'PLC ' + (plc.addr || fmt.DASH) + (plc.connected ? ' 연결됨' : ' 연결 안 됨'),
       plc.connected ? (plc.hb_ok ? '하트비트 정상' : '하트비트 멈춤') : '',
       plc.connected && plc.rtt_ms != null ? '응답 ' + plc.rtt_ms + ' ms' : '',
-      t.scan_max_ms != null ? '최대 스캔 ' + t.scan_max_ms + ' ms' : ''
+      t.scan_max_ms != null ? '최대 스캔 ' + scanText(t.scan_max_ms) : ''
     ].filter(Boolean).join(' · '));
+    var sb = bind('sbText');
+    var tip = t.scan_max_ms === 0 ? '최대 스캔: PLC 가 아직 쓰지 않음(D00080 = 0)' : '';
+    if (sb && sb.title !== tip) sb.title = tip;
   }
+
+  /** D00080(스캔 최대)은 래더가 아직 쓰지 않아 실장비에서 늘 0 — 0 이면 '—'. */
+  function scanText(v) { return v ? v + ' ms' : fmt.DASH; }
 
   /** 장비 ID 때문에 쓰기가 막힌 상태 — 다른 장비(wrong) 또는 ID 필수인데 0(missing). */
   function idBlocked(p) { return !!p && (p.id_state === 'wrong' || p.id_state === 'missing'); }
@@ -345,7 +354,10 @@
   function closeAlarm() {
     hideModal('alarmModal');
     if (canOperate()) w.app.send('alarm_popup_close');
-    else alarmDismissed = (((lastState || {}).live || {}).alarms || []).map(function (a) { return a.code; });
+    else {
+      var lv = (lastState || {}).live || {};
+      alarmDismissed = { seq: lv.alarm_popup_seq, codes: (lv.alarms || []).map(function (a) { return a.code; }) };
+    }
   }
 
   function renderAlarmModal() {
@@ -485,6 +497,11 @@
     canOperate: canOperate,
     /** 이 PC(로컬) 접속인가 — 종료 단추처럼 PLC 와 무관한 것만 이걸로 판단한다 */
     isLocal: function () { return !offline && !!(lastState && (lastState.access || {}).local); },
+    /** 마지막으로 받은 권한이 이 PC 였는가 — 서버가 끊겨도 '프로그램 종료'(force_close)는 누를 수 있게 */
+    wasLocal: function () { return !!(lastState && (lastState.access || {}).local); },
+    scanText: scanText,
+    /** 끊김을 말하는 글자 — 서버가 끊겼으면 '서버 끊김'(운전자가 PLC 를 보러 가지 않게) */
+    downText: function () { return offline ? '서버 끊김' : 'PLC 끊김'; },
     idText: idText,
     idBlocked: idBlocked,
     plcOk: function () {
