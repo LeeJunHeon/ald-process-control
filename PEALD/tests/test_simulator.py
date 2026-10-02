@@ -332,6 +332,7 @@ def test_vent_permit_not_during_prep(cfg):
     """벤트 허가는 공정 준비(블록 준비) 중에도 서지 않는다."""
     from peald.simulator import PlcSim
     s = PlcSim(cfg, 1)
+    s._inputs(s._clock())                        # v0.4.10 래더(S2): 벤트 허가는 입력 이미지(IV-E 닫힘 · 비상정지)로
     assert s._vent_ok()
     s.running, s.seq_state = True, 3
     assert not s._vent_ok()
@@ -560,6 +561,7 @@ def test_pv_b_follows_generator_and_pv_r(cfg):
     s.man_valve = pv1 | pvr
     _tick(s, 1)
     assert s.reg[A.D_VALVE_OUT] == pvb, f"(나) {s.reg[A.D_VALVE_OUT]:#06x}"
+    _tick(s, 1)                                  # v0.4.10 래더(C3): P60 에서 선 b15 는 다음 스캔 P35 에서 공개
     assert (s.reg[A.D_ALARM0] >> A.ALM0_BOTH_OPEN) & 1
     # (다) 허가 있음 + PV-R → PV-R 출력, PV-B 닫힘
     s = _o3_sim(cfg, permit=True)

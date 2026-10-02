@@ -191,11 +191,12 @@ def test_zero_mfc_timeout_aborts_every_block_prep(cfg):
     s.write(A.D_PRM_MFC_TOL, [0])
     s.write(A.RCP_SUM_BASE, table(cfg)["words"])
     assert s._process_start() == A.RESULT_OK
-    # v0.4.10 래더: 스캔 1 P40 T0024 → 스캔 2 P35 b12 → 스캔 3 P30 안전 정지 요구로 P40 중단(장비 상태 6)
+    # v0.4.10 래더: 스캔 1 P40 T0024 → 스캔 2 P35 b12 → 스캔 3 P30 안전 정지 요구로 P40 중단(장비 상태 6).
+    # 안정 시간 0 = 시간 초과 0 이라 스캔 1 에서 스텝도 적재한다(행 112 — 시간 초과로 먼저 돌아가지 않는다)
     fs.step(1)
-    assert not alm0(s, A.ALM0_MFC) and s.mfc_to_done
+    assert not alm0(s, A.ALM0_MFC) and s.mfc_to_done and s.reg[A.D_SEQ_STATE] == 4
     fs.step(1)
-    assert alm0(s, A.ALM0_MFC) and s.reg[A.D_SEQ_STATE] == 3
+    assert alm0(s, A.ALM0_MFC) and s.reg[A.D_SEQ_STATE] == 4
     fs.step(1)
     assert s.reg[A.D_SEQ_STATE] == 8 and s.reg[A.D_STATE] == A.STATE_SAFE_STOP
 
@@ -248,11 +249,12 @@ def lamps(s):
 
 
 def at_blink(fs, on):
-    """다음 스캔이 깜빡임 켜짐(on) · 꺼짐 칸에 오게 시계를 맞춰 한 스캔."""
+    """다음 두 스캔이 깜빡임 켜짐(on) · 꺼짐 칸에 오게 시계를 맞춰 두 스캔.
+    v0.4.10 래더(S8): 램프 · 부저 비트는 P70 이 정한 것을 다음 스캔 P60 이 D00014 로 내보낸다(한 스캔 늦다)."""
     t = fs.t[0]
     base = int(t) + 1
-    fs.t[0] = base + (0.1 if on else 0.6) - 0.02
-    fs.step(1)
+    fs.t[0] = base + (0.1 if on else 0.6) - 0.04
+    fs.step(2)
     return lamps(fs.sim)
 
 
@@ -337,8 +339,11 @@ def test_start_result_3_when_block1_load_fails(cfg):
     s.write(A.D_CMD_NO, [s.last_cmd_no + 1])
     s.write(A.D_PC_HB, [99])
     fs.step(1)
-    assert s.reg[A.D_ACK_RESULT] == A.RESULT_RECIPE and alm0(s, A.ALM0_RECIPE)
+    # v0.4.10 래더(S1 · C3): 시작은 P40 에서 평가 — 결과 3 은 그 스캔, b13 은 다음 스캔 P35 에서 공개
+    assert s.reg[A.D_ACK_RESULT] == A.RESULT_RECIPE and not alm0(s, A.ALM0_RECIPE)
     assert s.reg[A.D_SEQ_STATE] == 8
+    fs.step(1)
+    assert alm0(s, A.ALM0_RECIPE)
     assert s.reg[A.D_SEQ_BLOCK] == 1 and s.reg[A.D_SEQ_STEP] == first
     assert s.reg[A.D_SEQ_GROUP_PASS] == 1 and A.dword(s.reg[A.D_SEQ_BLOCK_PASS], s.reg[A.D_SEQ_BLOCK_PASS + 1]) == 1
     assert s.man_valve == 0
@@ -421,19 +426,25 @@ def test_mfc_prep_timeout_even_with_zero_tolerance(cfg, stable, timeout, aborts)
     s.write(A.RCP_SUM_BASE, table(cfg)["words"])
     assert s._process_start() == A.RESULT_OK
     t0 = fs.t[0]
+    left_prep, saw4 = None, False
     for _ in range(400):
         fs.step()
-        if s.seq_state != 3:
+        if s.seq_state != 3 and left_prep is None:
+            left_prep = fs.t[0] - t0
+        saw4 = saw4 or s.seq_state == 4
+        if not s.running or (not aborts and left_prep is not None):
             break
     took = fs.t[0] - t0
     if aborts:
-        # v0.4.10 래더: T0024 출력 뒤 두 스캔(P35 b12 → P30 안전 정지) 늦게 중단 — 한 스캔 0.02 s
+        # v0.4.10 래더: T0024 출력 뒤 두 스캔(P35 b12 → P30 안전 정지) 늦게 중단 — 한 스캔 0.02 s.
+        # 안정 시간 = 시간 초과면 같은 스캔에 스텝을 적재해 두 스캔 돈 뒤 중단(S6), 안정 > 시간 초과면 준비에서 중단
         assert alm0(s, A.ALM0_MFC) and s.reg[A.D_SEQ_STATE] == 8
         assert s.reg[A.D_STATE] == A.STATE_SAFE_STOP
         assert timeout + 0.04 - 1e-6 <= took <= timeout + 0.05 + 0.04, took
+        assert saw4 == (stable <= timeout), (stable, timeout, saw4)
     else:
         assert not alm0(s, A.ALM0_MFC) and s.seq_state == 4
-        assert stable <= took <= stable + 0.05, took
+        assert stable <= left_prep <= stable + 0.05, left_prep
 
 
 # ===================== 13 · D00080 =====================

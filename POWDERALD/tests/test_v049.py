@@ -462,6 +462,7 @@ class Relay:
         self.down_until = 0.0
         self.stop = False
         self.lsock = None
+        self.lock = threading.Lock()
         self._listen()
         threading.Thread(target=self._accept, daemon=True).start()
 
@@ -473,19 +474,28 @@ class Relay:
         s.settimeout(0.05)
         self.lsock = s
 
+    def _down(self):
+        return time.monotonic() < self.down_until
+
     def _accept(self):
         while not self.stop:
-            if time.monotonic() < self.down_until:
-                if self.lsock:
-                    self.lsock.close()
-                    self.lsock = None
+            with self.lock:
+                if self._down():
+                    ls = None
+                else:
+                    if self.lsock is None:
+                        self._listen()
+                    ls = self.lsock
+            if ls is None:
                 time.sleep(0.01)
                 continue
-            if self.lsock is None:
-                self._listen()
             try:
-                c, _ = self.lsock.accept()
+                c, _ = ls.accept()
             except (socket.timeout, OSError):
+                continue
+            if self._down():
+                # ★ 끊김 직전 · 중에 받아진 연결은 바로 닫는다(끊김 중에 새로 붙은 것이 되지 않게)
+                c.close()
                 continue
             u = socket.create_connection(("127.0.0.1", self.target))
             self.conns += [c, u]
@@ -509,7 +519,15 @@ class Relay:
                 pass
 
     def cut(self, s):
-        self.down_until = time.monotonic() + s
+        # ★ 듣기 소켓을 바로 닫는다 — accept 대기(0.05 s) 틈에 PC 가 바로 다시 붙으면 끊김이 없던 것이 된다
+        with self.lock:
+            self.down_until = time.monotonic() + s
+            if self.lsock is not None:
+                try:
+                    self.lsock.close()
+                except OSError:
+                    pass
+                self.lsock = None
         for c in self.conns:
             try:
                 c.shutdown(socket.SHUT_RDWR)

@@ -60,7 +60,8 @@
     });
     box.innerHTML = list.map(function (it) {
       var res = it.result || '';
-      var lvl = /정상/.test(res) ? 'ok' : (/중단|알 수 없음|기록 중단/.test(res) ? 'warn' : 'off');
+      // 서버가 정한 수준(이벤트 로그와 같은 규칙) — 옛 서버면 글로 짐작
+      var lvl = it.level || (/정상/.test(res) ? 'ok' : (/중단|알 수 없음|기록 중단/.test(res) ? 'warn' : 'off'));
       return '<div class="dl-item' + (it.name === cur ? ' on' : '') + '" tabindex="0" data-dlname="' + core.esc(it.name) + '">' +
         '<div class="a"><span class="mono">' + core.esc((it.started || '').slice(0, 16)) + '</span>' +
         core.chip(res || '진행 중?', lvl) + '</div>' +
@@ -85,7 +86,7 @@
       var m = js.meta || {};
       var box = core.bind('dlMeta');
       if (box) {
-        box.innerHTML = core.chip(m.result || '—', /정상/.test(m.result || '') ? 'ok' : 'warn') + ' ' +
+        box.innerHTML = core.chip(m.result || '—', m.level || (/정상/.test(m.result || '') ? 'ok' : 'warn')) + ' ' +
           '<span class="dim">' + core.esc(m.recipe || '') + (m.number != null ? ' #' + core.esc(m.number) : '') +
           ' · ' + (m.took_s != null ? fmt.hms(m.took_s) : fmt.DASH) + ' · ' + (m.rows != null ? core.esc(m.rows) + '줄' : '') +
           (m.guessed ? ' · 메타 없음(CSV 로 추정)' : '') + '</span>';

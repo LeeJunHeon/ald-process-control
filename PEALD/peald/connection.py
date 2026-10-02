@@ -128,7 +128,9 @@ def _grouped_flush(key):
         return
     ent[4] = None
     if ent[1]:
-        logger.write(ent[3], f"{ent[2]} — 같은 일 {ent[1]}건 더")
+        # 마지막 글을 한 줄로 보이고, 'N건 더'는 그 줄을 뺀 수
+        more = ent[1] - 1
+        logger.write(ent[3], ent[2] + (f" — 같은 일 {more}건 더" if more else ""))
         ent[0], ent[1] = time.monotonic(), 0
 
 

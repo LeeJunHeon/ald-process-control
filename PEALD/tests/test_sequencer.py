@@ -52,18 +52,42 @@ def loaded(cfg, blocks, groups=None, stable_s=0, tol_raw=0, vmin=0):
     return sim, r
 
 
-def run_ladder(sim, ms=4000, step_ms=10):
-    """입력 · P30 · P35 · P40 순서로(래더 스캔 순서) — 안전 정지 요구 · 알람 공개가 필요한 시험.
-    v0.4.10: MFC 시간 초과 · 편차는 P40 이 바로 끝내지 않고 P35(b12) → 다음 스캔 P30 안전 정지로 끝난다."""
+def _ladder_scan(sim, t, dt, seq=True):
+    sim._inputs(t)
+    sim._interlocks(t)
+    sim._alarms(t)
+    if seq:
+        sim._sequencer(dt, t)
+    if DEV.HAS_O3:
+        sim.aux_copy = sim.man_aux          # P45 의 D04050 복사(바이패스 펌프 · IV-B)
+        sim._p60(t)                         # O3 라인 출력(발생기 · IV-B · 바이패스 펌프)
+    sim._publish_seq()
+    sim._state()
+
+
+def o3_permit(sim):
+    """O3 가 있는 장비: O3 라인을 켜 O3 허가(인터락 b9)를 세운다 — 래더는 공정 중 허가가 없으면 알람1 b3 로
+    끝낸다(test_simulator 의 _o3_sim(permit=True) 와 같은 방법). 바이패스 5 s 대기도 같은 시계로 센다."""
+    if not DEV.HAS_O3:
+        return
+    sim.man_aux |= (1 << A.AUX_BYPASS_PUMP) | (1 << A.AUX_IVB) | (1 << A.AUX_O3_GEN)
     t = time.monotonic()
+    for _ in range(600):
+        t += 0.01
+        _ladder_scan(sim, t, 0.01, seq=False)
+        if A.bit(sim.reg[A.D_INTERLOCK], A.ILK_O3_OK) and sim.o3_gen_on:
+            sim._lt = t
+            return
+    raise AssertionError("O3 허가가 서지 않았다")
+
+
+def run_ladder(sim, ms=4000, step_ms=10):
+    """입력 · P30 · P35 · P40 (O3 장비는 P60 까지) 순서로(래더 스캔 순서) — 안전 정지 요구 · 알람 공개가
+    필요한 시험. v0.4.10: MFC 시간 초과 · 편차는 P40 이 바로 끝내지 않고 P35(b12) → 다음 스캔 P30 안전 정지로 끝난다."""
+    t = max(getattr(sim, "_lt", 0.0), time.monotonic())
     for _ in range(int(ms / step_ms)):
         t += step_ms / 1000.0
-        sim._inputs(t)
-        sim._interlocks(t)
-        sim._alarms(t)
-        sim._sequencer(step_ms / 1000.0, t)
-        sim._publish_seq()
-        sim._state()
+        _ladder_scan(sim, t, step_ms / 1000.0)
         if not sim.running:
             return True
     return False
@@ -362,6 +386,7 @@ def test_block_prep_timeout_alarms_and_aborts(cfg):
     sim.write(A.D_PRM_MFC_TIMEOUT, [1])
     sim.faults["mfc1_stuck"] = True
     sim.mfc_pv[0] = 0.0
+    o3_permit(sim)                          # v0.4.10: Powder 는 O3 허가를 세운 채로(아니면 b3 로 먼저 끝난다)
     sim._process_start()
     run_ladder(sim, ms=2000, step_ms=10)        # v0.4.10: P35 b12 → 다음 스캔 P30 안전 정지 → P40 중단
     assert not sim.running
@@ -372,6 +397,7 @@ def test_block_prep_timeout_alarms_and_aborts(cfg):
 def test_mfc_deviation_during_run_aborts(cfg):
     """공정 중 MFC1 편차가 10 s 계속되면 중단한다."""
     sim, _r = loaded(cfg, [mkblock("A", 1000, [mkstep("a", 50)])], stable_s=0, tol_raw=100)
+    o3_permit(sim)                          # v0.4.10: Powder 는 O3 허가를 세운 채로(아니면 b3 로 먼저 끝난다)
     sim._process_start()
     # 블록 준비를 통과하려면 먼저 MFC 가 맞아야 한다 (편차는 MFC1 AO 사본 기준)
     sim.reg[A.D_MFC_PV] = sim.ao[1]

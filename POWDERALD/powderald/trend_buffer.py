@@ -25,8 +25,10 @@ class _Ring:
         self.buf.append(row)
 
     def since(self, sec: float, now: float) -> list:
+        """★ 작업 스레드에서도 불린다(/api/trend) — 샘플링 루프가 그사이 deque 에 넣으면 파이썬 반복은
+        'deque mutated during iteration' 이 난다. C 수준으로 한 번 복사(list)한 뒤 거른다(행 dict 는 넣은 뒤 바뀌지 않는다)."""
         cut = now - sec
-        return [r for r in self.buf if r["t"] >= cut]
+        return [r for r in list(self.buf) if r["t"] >= cut]
 
     def clear(self):
         self.buf.clear()
