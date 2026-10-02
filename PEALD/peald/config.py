@@ -15,6 +15,7 @@ device.py 에 있다 — 설정 파일을 잘못 복사해도 장비가 바뀌�
 import os
 import copy
 import json
+import ipaddress
 
 from . import paths
 from . import addresses as A
@@ -199,6 +200,21 @@ def prm_problems(cfg: dict) -> list:
     return out
 
 
+def host_valid(host) -> bool:
+    """server.host 형식 — 빈 값(모든 주소) · localhost · IPv4/IPv6 주소만. 이름은 받지 않는다(Host 검사와 같은 규칙)."""
+    if host is None:
+        return True
+    if not isinstance(host, str) or host != host.strip():
+        return False
+    if host in ("", "localhost"):
+        return True
+    try:
+        ipaddress.ip_address(host)
+        return True
+    except ValueError:
+        return False
+
+
 def validate(cfg: dict) -> list:
     """[(level, message)] — 비어 있으면 정상."""
     p = []
@@ -210,6 +226,10 @@ def validate(cfg: dict) -> list:
             raise ValueError
     except (TypeError, ValueError):
         p.append(("err", f"server.port 값이 올바르지 않습니다: {srv.get('port')!r}"))
+    if not host_valid(srv.get("host")):
+        # ★ v0.4.12: 이름 · 공백 · 잘못된 주소 — 서버를 열지 못하고 멈춘다(포트를 먼저 묶을 때 같은 이유로)
+        p.append(("err", f"server.host 형식이 올바르지 않습니다: {srv.get('host')!r} — 빈 값(모든 주소) · "
+                         "localhost · IP 주소만 씁니다"))
     if (cfg.get("window") or {}).get("side") not in ("left", "right"):
         p.append(("warn", "window.side 는 left 또는 right 여야 합니다"))
 

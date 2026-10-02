@@ -402,7 +402,7 @@ def test_m4_safe_stop_applied_after_step_processing(cfg):
     assert s._process_start() == A.RESULT_OK
     for _ in range(400):
         if s.running and s.seq_state == 4 and s.cycle == 2 and s.step_no == s.block_last \
-                and s.step_ms + 20 >= s.step_dur:
+                and s.step_ms + 20.5 >= s.step_dur:    # v0.4.12: 끝 판정 여유(C3) — 소수 오차로 그 스캔을 놓치지 않게
             break
         fs.step(1)
     else:

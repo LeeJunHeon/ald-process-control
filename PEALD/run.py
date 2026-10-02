@@ -83,8 +83,9 @@ def selftest(config_path: str = "") -> int:
         host = "127.0.0.1"
         port = window.find_free_port(host, DEV.DEFAULT_PORT + 50) or (DEV.DEFAULT_PORT + 50)
         from peald.server import uvicorn_config
+        socks = window.bind_sockets(host, port)            # 창 · headless 와 같게 먼저 묶어 넘긴다
         server = uvicorn.Server(uvicorn_config(app, host, port))
-        th = threading.Thread(target=server.run, daemon=True)
+        th = threading.Thread(target=server.run, kwargs={"sockets": socks}, daemon=True)
         th.start()
         body = None
         for _ in range(100):
@@ -96,6 +97,7 @@ def selftest(config_path: str = "") -> int:
                 time.sleep(0.1)
         server.should_exit = True
         th.join(5)
+        window.close_sockets(socks)
         if not body or not body.get("ok") or body.get("device") != DEV.KEY:
             problems.append(f"/health 응답 이상: {body!r}")
         else:
@@ -125,16 +127,20 @@ def main():
 
     if args.headless:
         import uvicorn
-        why = window.wait_port(host, port)
-        if why:
-            # ★ 창 모드와 같게 — 다른 포트로 조용히 옮기지 않고 이유를 알리고 멈춘다
+        # ★ v0.4.12: 창 모드와 같게 포트를 먼저 묶는다 — 못 묶으면 서버 · PLC 링크 · 시뮬레이터를 띄우기 전에
+        #   다른 포트로 조용히 옮기지 않고 이유를 알리고 멈춘다
+        socks, why = window.bind_port(host, port)
+        if not socks:
             text = window.port_busy_text(host, port, why)
             print(f"[error] {text}", flush=True)
             logger.write("err", text)
             sys.exit(2)
-        print(f"[info] {DEV.NAME} headless — http://{host}:{port}")
+        print(f"[info] {DEV.NAME} headless — http://{window.url_host(host)}:{port}")
         from peald.server import uvicorn_config
-        uvicorn.Server(uvicorn_config(app, host, port)).run()
+        try:
+            uvicorn.Server(uvicorn_config(app, host, port)).run(sockets=socks)
+        finally:
+            window.close_sockets(socks)
         return
     window.run(app, host, port, side)
 

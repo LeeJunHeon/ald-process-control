@@ -51,6 +51,7 @@ HEATER_TAU_S = 25.0
 MFC_TAU_S = 1.0
 PULSE_RISE_TORR = 0.02          # 펄스 스텝에서 잠깐 오르는 폭
 FLOW_TORR_PER_SLM = 0.06        # 흐름(MFC 합)이 만드는 공정 압력 상승
+TIME_EPS_MS = 1e-6              # 가짜 시계 소수 오차 여유(스텝 끝 판정 · D00026 내림)
 MFC_DEV_ABORT_S = 10.0          # 공정 중 MFC1 편차가 이만큼 계속되면 중단
 HEATER_SOFT_OT_CH = 6           # 소프트 과온 감시 채널 (CH1~6)
 PV_R_BIT = 5                    # PV-R (PEALD 반응물 매니폴드 / Powder O3 → 챔버)
@@ -755,17 +756,29 @@ class PlcSim:
         if not self.running:
             self.abort_req = False
             return
-        # ★ 재개 스캔(행 38)은 스텝 타이머(행 41)가 돌지 않는다 — 다음 스텝 적재(행 112~129)가 그 뒤다
-        if not (ran and ran[0] == A.CMD_RESUME and ran[1] == A.RESULT_OK):
+        # ★ 중단 여부는 스텝 처리 앞에서 정한다 — 래더 행 130 에서 SEQ_RUN 은 아직 서 있다(행 139 에서야 풀림).
+        #   그 스캔에 정상 끝 · 사이클 후 정지로 끝나도 중단이 행 137 을 막고 행 138 이 시퀀서 8 로 만든다
+        stop = self.safe_stop or self.abort_req
+        if self.safe_stop:
+            why = ("MFC 안정 대기 시간 초과 — 안전 정지" if self.mfc_to_done else
+                   "공정 중 MFC 편차 — 안전 정지" if self.mfc_dev_done else "안전 정지 요구")
+        else:
+            why = "운전자 즉시 중단"
+        if ran and ran[0] == A.CMD_RESUME and ran[1] == A.RESULT_OK:
+            # ★ 재개 스캔(행 38)은 스텝 시간이 흐르지 않는다(행 41 TON 이 다음 스텝 적재 행 112~129 보다 앞).
+            #   블록 경계에서 재개해 블록 준비(시퀀서 3)가 됐으면 준비는 그 스캔에 돈다(행 50 → 58 → 78~95 → 103 → 112)
+            if self.running and self.seq_state == 3:
+                self._prep_tick(now)
+        else:
             self._seq_steps(dt, now)        # 행 41~129
         # ★ 안전 정지 · 즉시 중단은 스텝 처리 뒤(행 130)에 시퀀서에 적용한다
-        if self.running and (self.safe_stop or self.abort_req):
-            if self.safe_stop:
-                why = ("MFC 안정 대기 시간 초과 — 안전 정지" if self.mfc_to_done else
-                       "공정 중 MFC 편차 — 안전 정지" if self.mfc_dev_done else "안전 정지 요구")
-            else:
-                why = "운전자 즉시 중단"
-            self._process_end(why, aborted=True)
+        if stop:
+            if self.running:
+                self._process_end(why, aborted=True)
+            elif self.seq_state == 6:
+                # 이 스캔에 정상 끝 · 사이클 후 정지로 끝났다 — 래더는 시퀀서 8 · 중단(D00021 은 그대로)
+                self.seq_state = 8
+                self.end_reason = why
         self.abort_req = False
 
     def _seq_steps(self, dt, now):
@@ -785,7 +798,7 @@ class PlcSim:
         if not self.running:
             return
         self.step_ms += dt * 1000.0
-        if self.step_ms >= self.step_dur:
+        if self.step_ms >= self.step_dur - TIME_EPS_MS:     # 가짜 시계 소수 오차(199.999…) 여유
             self._step_done()
             # ★ 블록을 적재한 그 스캔에 블록 준비가 바로 돈다(행 95 → 103 · 105 · 112) — 블록 사이에
             #   '시퀀서 3 · 밸브 모두 닫힘' 스캔이 끼지 않는다
@@ -1332,7 +1345,14 @@ class PlcSim:
         self.reg[A.D_SEQ_BLOCK_PASS] = lo
         self.reg[A.D_SEQ_BLOCK_PASS + 1] = hi
         # 스텝 경과는 스텝 실행 중에만 의미가 있다
-        ms = int(round(self.step_ms)) if self.seq_state == 4 else 0       # 가짜 시계 소수 오차(19.999…) 내림 방지
+        # D00026 — 행 153 은 T1000 의 지난 ms 를 내림으로, 60 s 넘는 스텝은 행 155 가 T0010 × 100(100 ms 단위)으로
+        #   공개한다. 가짜 시계 소수 오차(19.999…)는 아주 작은 여유로 푼다
+        if self.seq_state == 4:
+            ms = int(self.step_ms + TIME_EPS_MS)
+            if self.step_dur > 60_000:
+                ms = (ms // 100) * 100
+        else:
+            ms = 0
         lo, hi = A.split_dword(ms)
         self.reg[A.D_SEQ_STEP_MS] = lo
         self.reg[A.D_SEQ_STEP_MS + 1] = hi

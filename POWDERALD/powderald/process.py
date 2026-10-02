@@ -898,8 +898,22 @@ class ProcessRunner:
             return
         if self.recipe:
             return
-        words = await link.read_recipe_area()
+        # ★ v0.4.12: b13 은 되읽기 전 상태로 — 되읽는 동안 선 b13 은 '이번 공정 중 선 것'이다
+        b13_pre = A.bit(link.status[A.D_ALARM0], A.ALM0_RECIPE)
+        words = None
+        for i in range(ADOPT_READ_TRIES):             # 되읽기가 실패하면 다시(한 번 놓쳤다고 이어받기를 버리지 않는다)
+            if i:
+                await asyncio.sleep(ADOPT_READ_GAP_S)
+            if not link.connected:
+                return
+            words = await link.read_recipe_area()
+            if words:
+                break
         if not words:
+            await push_log(f"PLC 가 공정 중인데 레시피 표를 {ADOPT_READ_TRIES}번 읽지 못했습니다 — 이어받지 않습니다", "warn")
+            return
+        # ★ 되읽는 동안 공정이 끝났거나 다른 레시피가 열렸으면 이어받지 않는다
+        if not (link.connected and link.status[A.D_STATE] in RUNNING_STATES) or self.recipe:
             return
         info = R.from_plc_words(words)
         name = storage.find_by_number(info["number"])
@@ -921,12 +935,14 @@ class ProcessRunner:
         self._run_started_mono = time.monotonic()
         # ★ b13 은 리셋 전까지 남는다 — 이어받는 순간 이미 서 있었으면 '이번 공정 중 선 것'이 아니다
         self._gen += 1
-        self._b13_pre = A.bit(link.status[A.D_ALARM0], A.ALM0_RECIPE)
+        self._b13_pre = b13_pre
         self._b13_cleared = False
         self._abort_sent = self._abort_pending = self._abort_unknown = False
         self._end_deferred = self._b13_wait = None
 
 
+ADOPT_READ_TRIES = 3     # 이어받을 때 PLC 레시피 표 되읽기 시도 횟수
+ADOPT_READ_GAP_S = 0.5   # 그 사이 간격
 B13_WAIT_S = 1.0        # 시퀀서 8 로 끝났을 때 레시피 표 오류(b13)가 공개되기를 기다리는 시간
 ABORT_GRACE_S = 1.0     # 결과를 못 받은 즉시 중단 뒤 이만큼 지나도 공정 중이면 중단이 닿지 않은 것
 

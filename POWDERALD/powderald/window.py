@@ -20,6 +20,7 @@ import traceback
 from . import logger
 from . import paths
 from . import device as DEV
+from .config import host_valid
 
 WINDOW = None
 TITLE = DEV.TITLE
@@ -71,35 +72,95 @@ def set_app_user_model_id():
 PORT_WAIT_S = 5.0       # 설정 포트가 쓰이고 있으면 이만큼 다시 시도한 뒤 이유를 알리고 멈춘다
 
 
+def bind_sockets(host: str, port: int) -> list:
+    """★ v0.4.12: 서버가 들을 소켓을 먼저 묶는다 — 확인이 곧 실제 bind 다(확인과 서버 bind 사이에 다른 프로그램이
+    끼거나, IPv4 로만 확인해 '::' · '::1' 을 늘 '사용 중'으로 보던 것 · localhost 를 127.0.0.1 로만 보던 것).
+    asyncio.create_server(uvicorn)와 같게: getaddrinfo(AF_UNSPEC · AI_PASSIVE)의 주소마다 하나씩, IPv6 는 V6ONLY,
+    POSIX 만 SO_REUSEADDR(TIME_WAIT 만 남은 포트도 열린다 — Windows 는 옵션 없이도 열린다). 실패하면 연 것을 닫고
+    OSError(이름을 못 풀면 socket.gaierror). 돌려준 소켓은 uvicorn Server.run(sockets=…) 에 넘긴다."""
+    if not host_valid(host):
+        raise OSError(f"server.host 형식이 올바르지 않습니다: {host!r} (빈 값 · localhost · IP 주소)")
+    infos = socket.getaddrinfo(host or None, port, socket.AF_UNSPEC, socket.SOCK_STREAM, 0, socket.AI_PASSIVE)
+    socks, seen = [], set()
+    try:
+        for af, st, proto, _cn, sa in infos:
+            if (af, sa) in seen:
+                continue
+            seen.add((af, sa))
+            s = socket.socket(af, st, proto)
+            socks.append(s)
+            if os.name == "posix":
+                s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+            if af == getattr(socket, "AF_INET6", None) and hasattr(socket, "IPPROTO_IPV6"):
+                s.setsockopt(socket.IPPROTO_IPV6, socket.IPV6_V6ONLY, 1)
+            s.bind(sa)
+    except BaseException:
+        close_sockets(socks)
+        raise
+    if not socks:
+        raise OSError(f"{host!r} 의 주소를 찾지 못했습니다")
+    return socks
+
+
+def close_sockets(socks):
+    for s in socks or ():
+        with contextlib.suppress(OSError):
+            s.close()
+
+
 def port_probe(host: str, port: int) -> str:
-    """포트를 서버가 열 수 있는가 — 빈 문자열이면 된다, 아니면 이유.
-    ★ 실제 서버(uvicorn → asyncio.create_server)와 같은 소켓 옵션으로 확인한다: POSIX 는 SO_REUSEADDR 를 켜므로
-      빠르게 다시 시작해 TIME_WAIT 만 남은 포트도 열린다(옵션 없이 bind 하면 '사용 중'으로 잘못 본다).
-      Windows 는 asyncio 가 SO_REUSEADDR 를 켜지 않고(다른 프로그램의 포트를 빼앗을 수 있다), TIME_WAIT 만
-      남은 포트는 옵션 없이도 bind 된다."""
-    with socket.socket() as s:
-        if os.name == "posix":
-            s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-        try:
-            s.bind((host, port))
-            return ""
-        except OSError as e:
-            return f"{type(e).__name__}: {e}"
+    """포트를 서버가 열 수 있는가 — 빈 문자열이면 된다, 아니면 이유. bind_sockets 로 실제로 묶어 보고 닫는다
+    (서버와 같은 주소 · 같은 소켓 옵션). 자체 점검의 빈 포트 고르기와 시험용 — 설정 포트는 bind_port 로 묶은 채 쓴다."""
+    try:
+        close_sockets(bind_sockets(host, port))
+        return ""
+    except OSError as e:
+        return f"{type(e).__name__}: {e}"
 
 
-def wait_port(host: str, port: int, total_s: float = None, step_s: float = 0.5) -> str:
-    """설정 포트를 잠시(PORT_WAIT_S) 다시 시도한다. 빈 문자열이면 열 수 있다, 아니면 마지막 이유.
-    ★ 다른 포트로 조용히 옮기지 않는다 — 열린 화면 · 원격 화면은 설정 포트를 계속 두드린다."""
+def bind_port(host: str, port: int, total_s: float = None, step_s: float = 0.5):
+    """설정 포트를 잠시(PORT_WAIT_S) 다시 시도하며 묶는다 — (소켓 목록, '') 또는 ([], 마지막 이유).
+    ★ 다른 포트로 조용히 옮기지 않는다 — 열린 화면 · 원격 화면은 설정 포트를 계속 두드린다.
+    ★ 형식이 틀린 host · 풀 수 없는 이름은 기다려도 안 바뀐다 — 바로 돌려준다."""
     total_s = PORT_WAIT_S if total_s is None else total_s
     end = time.monotonic() + total_s
     while True:
-        why = port_probe(host, port)
-        if not why or time.monotonic() >= end:
-            return why
+        try:
+            return bind_sockets(host, port), ""
+        except socket.gaierror as e:
+            return [], f"{type(e).__name__}: {e}"
+        except OSError as e:
+            why = f"{type(e).__name__}: {e}"
+            if not host_valid(host) or time.monotonic() >= end:
+                return [], why
         time.sleep(step_s)
 
 
+def wait_port(host: str, port: int, total_s: float = None, step_s: float = 0.5) -> str:
+    """bind_port 와 같게 기다리되 묶은 소켓은 닫는다(빈 문자열이면 열 수 있다). 묶은 채 서버에 넘기려면 bind_port."""
+    socks, why = bind_port(host, port, total_s, step_s)
+    close_sockets(socks)
+    return why
+
+
+def view_host(host: str) -> str:
+    """이 PC 화면이 붙을 주소 — 모든 주소(빈 값 · 0.0.0.0 · ::)면 루프백, IPv6 는 URL 에 [ ]."""
+    if host in ("", "0.0.0.0"):
+        return "127.0.0.1"
+    if host == "::":
+        return "::1"
+    return host
+
+
+def url_host(host: str) -> str:
+    h = view_host(host)
+    return f"[{h}]" if ":" in h else h
+
+
 def port_busy_text(host: str, port: int, why: str) -> str:
+    if not host_valid(host) or "gaierror" in why:
+        return (f"설정 server.host {host!r} 로 서버를 열 수 없습니다 — 빈 값(모든 주소) · localhost · IP 주소만 "
+                f"씁니다. 설정을 고치세요. ({why})")
     return (f"설정 포트 {host}:{port} 를 열 수 없습니다 — 다른 프로그램(또는 이미 떠 있는 이 프로그램)이 쓰고 "
             f"있습니다. {PORT_WAIT_S:g} s 다시 시도했습니다. 쓰는 프로그램을 끄거나 설정 server.port 를 바꾸세요. ({why})")
 
@@ -116,7 +177,7 @@ def _wait_server_ready(host: str, port: int, timeout_s: float = 20.0) -> bool:
     """서버 소켓이 열릴 때까지 기다린다. 창이 먼저 뜨면 WebView2 가 연결 거부 화면을
     띄우고 재시도하지 않는다."""
     deadline = time.monotonic() + timeout_s
-    h = "127.0.0.1" if host in ("0.0.0.0", "") else host
+    h = view_host(host)
     while time.monotonic() < deadline:
         with contextlib.suppress(OSError):
             with socket.create_connection((h, port), 0.3):
@@ -290,8 +351,11 @@ def run(app, host: str, port: int, side: str = None):
         _msgbox("데이터 폴더에 쓸 수 없습니다.\n"
                 f"{paths.DATA_DIR}\n\n로그와 알람 이력이 저장되지 않습니다.")
 
-    why = wait_port(host, port)
-    if why:
+    # ★ v0.4.12: 포트를 먼저 묶는다(확인이 곧 실제 bind). 못 묶으면 서버 · PLC 링크 · 시뮬레이터(lifespan)를
+    #   띄우기 전에 이유를 알리고 멈춘다 — uvicorn 이 스스로 bind 하면 lifespan(PLC 링크)이 먼저 돌고, bind 실패는
+    #   SystemExit 라 아래 except 에도 안 잡혔다
+    socks, why = bind_port(host, port)
+    if not socks:
         text = port_busy_text(host, port, why)
         print(f"[error] {text}")
         logger.write("err", text)
@@ -304,15 +368,16 @@ def run(app, host: str, port: int, side: str = None):
             # log_config=None: uvicorn 자체 로깅 dictConfig 를 타지 않는다
             # (창 전용 exe 에서 sys.stdout.isatty() 로 죽는다).
             from .server import uvicorn_config
-            uvicorn.Server(uvicorn_config(app, host, port)).run()
-        except Exception as e:  # noqa: BLE001
+            uvicorn.Server(uvicorn_config(app, host, port)).run(sockets=socks)
+        except BaseException as e:  # noqa: BLE001 — uvicorn 은 시작 실패를 SystemExit 로 낸다
             _SERVER_ERROR = f"{type(e).__name__}: {e}"
             print(f"[error] 내부 서버가 중단되었습니다: {traceback.format_exc()}")
             logger.write("err", f"내부 서버 중단: {_SERVER_ERROR}")
+        finally:
+            close_sockets(socks)
 
     threading.Thread(target=run_server, daemon=True).start()
-    view_host = "127.0.0.1" if host in ("0.0.0.0", "") else host
-    url = f"http://{view_host}:{port}"
+    url = f"http://{url_host(host)}:{port}"
 
     try:
         import webview
@@ -322,7 +387,7 @@ def run(app, host: str, port: int, side: str = None):
                 f"설치 후 다시 실행하거나, 브라우저에서 {url} 로 접속하세요.")
         return
 
-    if not _wait_server_ready(view_host, port):
+    if not _wait_server_ready(host, port):
         reason = ("내부 서버가 시작되지 못했습니다.\n\n" + _SERVER_ERROR) if _SERVER_ERROR \
             else "내부 서버가 시간 안에 시작되지 않았습니다."
         logger.write("err", reason.replace("\n", " "))

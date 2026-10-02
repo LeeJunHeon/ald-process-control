@@ -6,8 +6,6 @@
 ★ 시퀀서는 레지스터만 쥐고 돌기 때문에 소켓 없이 직접 돌릴 수 있다 —
   짧은 스텝으로 빠르게 검증한다(통신 경로는 test_modbus·test_plclink 가 덮는다).
 """
-import time
-
 import pytest
 
 from peald import addresses as A
@@ -41,7 +39,10 @@ def loaded(cfg, blocks, groups=None, stable_s=0, tol_raw=0, vmin=0):
     r["groups"] = groups or []
     tbl = R.to_plc_words(cfg, conv, r)
 
-    sim = PlcSim(cfg, 1)
+    # ★ v0.4.12: 가짜 시계 — 시퀀서만 도는 run() 과 한 스캔 전체(scan) 가 같은 시계를 쓴다
+    clk = [1000.0]
+    sim = PlcSim(cfg, 1, clock=lambda: clk[0])
+    sim._clk = clk
     # PC 영역은 Modbus 쓰기 경로(sim.write)로만 쓴다 — PC 가 하는 그대로
     sim.write(A.RCP_SUM_BASE, tbl["words"])
     sim.write(A.D_PRM_MFC_STABLE, [stable_s, tol_raw, 60, vmin])
@@ -52,17 +53,25 @@ def loaded(cfg, blocks, groups=None, stable_s=0, tol_raw=0, vmin=0):
     return sim, r
 
 
-def _ladder_scan(sim, t, dt, seq=True):
-    sim._inputs(t)
-    sim._interlocks(t)
-    sim._alarms(t)
-    if seq:
-        sim._sequencer(dt, t)
-    if DEV.HAS_O3:
-        sim._p45(t)                         # D04050 복사 · 바이패스 펌프 · IV-B 출력(v0.4.11 M2 — P45 에서 정한다)
-        sim._p60(t)                         # O3 발생기 출력
-    sim._publish_seq()
-    sim._state()
+def scan(sim, step_ms=10):
+    """★ v0.4.12 — 래더 한 스캔 전체를 가짜 시계로(sim.tick 그대로): 물리 → 입력 → P25(하트비트 · 명령 요청) →
+    P30 → P35 → P40 → P45 → P50 → P60 → P70 → 상태 · 공개. 예전 cmd(P40 만 · D00002/3 없이 · 실제 시계 ·
+    안전 정지 손으로)와 _ladder_scan(P25 · P50 없음 · PEALD 는 P45 · P60 도 없음)을 대신한다."""
+    clk = sim._clk
+    sim._t = clk[0]                 # 시퀀서만 돈 run() 의 시간을 이 스캔의 dt 에 넣지 않는다
+    clk[0] += step_ms / 1000.0
+    sim.tick()
+    return sim
+
+
+def cmd(sim, code, step_ms=10):
+    """PC 처럼 명령 영역(D01002 코드 → D01001 번호)에 쓰고 한 스캔 돈 뒤 결과(D00003). 그 스캔의 P25 가 요청을
+    세우고, 평가는 그 명령의 프로그램(P40 · P45 · P50)이, 즉시 중단 · 안전 정지는 스텝 처리 뒤 행 130 이 한다."""
+    sim.write(A.D_CMD_CODE, [code])
+    sim.write(A.D_CMD_NO, [(sim.reg[A.D_CMD_NO] + 1) & 0xFFFF])
+    scan(sim, step_ms)
+    assert sim.reg[A.D_ACK_NO] == sim.reg[A.D_CMD_NO], "명령을 받지 않았다"
+    return sim.reg[A.D_ACK_RESULT]
 
 
 def o3_permit(sim):
@@ -71,44 +80,30 @@ def o3_permit(sim):
     if not DEV.HAS_O3:
         return
     sim.man_aux |= (1 << A.AUX_BYPASS_PUMP) | (1 << A.AUX_IVB) | (1 << A.AUX_O3_GEN)
-    t = time.monotonic()
     for _ in range(600):
-        t += 0.01
-        _ladder_scan(sim, t, 0.01, seq=False)
+        scan(sim)
         if A.bit(sim.reg[A.D_INTERLOCK], A.ILK_O3_OK) and sim.o3_gen_on:
-            sim._lt = t
             return
     raise AssertionError("O3 허가가 서지 않았다")
 
 
 def run_ladder(sim, ms=4000, step_ms=10):
-    """입력 · P30 · P35 · P40 (O3 장비는 P60 까지) 순서로(래더 스캔 순서) — 안전 정지 요구 · 알람 공개가
-    필요한 시험. v0.4.10: MFC 시간 초과 · 편차는 P40 이 바로 끝내지 않고 P35(b12) → 다음 스캔 P30 안전 정지로 끝난다."""
-    t = max(getattr(sim, "_lt", 0.0), time.monotonic())
+    """한 스캔 전체(scan)로 — 안전 정지 요구 · 알람 공개가 필요한 시험. v0.4.10: MFC 시간 초과 · 편차는 P40 이
+    바로 끝내지 않고 P35(b12) → 다음 스캔 P30 안전 정지로 끝난다."""
     for _ in range(int(ms / step_ms)):
-        t += step_ms / 1000.0
-        _ladder_scan(sim, t, step_ms / 1000.0)
+        scan(sim, step_ms)
         if not sim.running:
             return True
     return False
 
 
-def p40_cmd(sim, code, step_ms=10):
-    """P25 가 세운 요청을 그 스캔 P40 이 평가하고(일시정지 · 재개 · 사이클 후 정지 · 즉시 중단),
-    즉시 중단 · 안전 정지는 스텝 처리 뒤(행 130)에 적용한다 — v0.4.10/11 래더 순서. 결과(D00003)를 돌려준다."""
-    sim.cmd_req = code
-    t = time.monotonic()
-    sim._sequencer(step_ms / 1000.0, t)
-    sim._publish_seq()
-    sim._state()
-    return sim.reg[A.D_ACK_RESULT]
-
-
 def run(sim, ms=4000, step_ms=10, watch=None):
-    """시퀀서만 가짜 시계로 돌린다. watch(sim) 가 있으면 매 tick 부른다."""
-    t = time.monotonic()
+    """시퀀서(P40)만 가짜 시계로 돌린다 — 순서 · 시간만 보는 시험. watch(sim) 가 있으면 매 tick 부른다.
+    명령 · 알람 · 안전 정지가 끼는 시험은 scan · cmd · run_ladder 로."""
+    clk = sim._clk
     for _ in range(int(ms / step_ms)):
-        t += step_ms / 1000.0
+        clk[0] += step_ms / 1000.0
+        t = clk[0]
         sim._sequencer(step_ms / 1000.0, t)
         sim._publish_seq()
         sim._state()
@@ -247,7 +242,7 @@ def test_resume_continues(cfg):
     sim.pause_req = True
     run(sim, ms=60, step_ms=10)
     assert sim.seq_state == 7
-    assert p40_cmd(sim, A.CMD_RESUME) == A.RESULT_OK
+    assert cmd(sim, A.CMD_RESUME) == A.RESULT_OK
     done = run(sim, ms=500, step_ms=10)
     assert done and sim.end_reason == "정상 종료"
 
@@ -257,14 +252,15 @@ def test_pause_again_is_accepted_but_not_when_paused(cfg):
     이미 일시정지(시퀀서 7) 중이면 2."""
     sim, _r = loaded(cfg, [mkblock("A", 1, [mkstep("a", 100, pause_ok=True),
                                             mkstep("b", 100)])])
+    o3_permit(sim)                          # v0.4.12: 명령을 두 번 이상 한 스캔 전체로 — Powder 는 O3 허가를 세운 채로
     sim._process_start()
     run(sim, ms=20, step_ms=10)
-    assert p40_cmd(sim, A.CMD_PAUSE) == A.RESULT_OK
-    assert p40_cmd(sim, A.CMD_PAUSE) == A.RESULT_OK
+    assert cmd(sim, A.CMD_PAUSE) == A.RESULT_OK
+    assert cmd(sim, A.CMD_PAUSE) == A.RESULT_OK
     assert sim.pause_req
     run(sim, ms=120, step_ms=10)
     assert sim.seq_state == 7
-    assert p40_cmd(sim, A.CMD_PAUSE) == A.RESULT_STATE
+    assert cmd(sim, A.CMD_PAUSE) == A.RESULT_STATE
 
 
 def test_pause_during_block_prep_stops_at_first_allowed_step(cfg):
@@ -274,19 +270,19 @@ def test_pause_during_block_prep_stops_at_first_allowed_step(cfg):
     sim._process_start()
     run(sim, ms=100, step_ms=10)
     assert sim.seq_state == 3 and sim.reg[A.D_STATE] == A.STATE_READY
-    assert p40_cmd(sim, A.CMD_PAUSE) == A.RESULT_OK
+    assert cmd(sim, A.CMD_PAUSE) == A.RESULT_OK
     run(sim, ms=1500, step_ms=10)
     assert sim.seq_state == 7 and sim.step_no == 2, (sim.seq_state, sim.step_no)
 
 
 def test_pause_accepted_while_stop_after_cycle_reserved(cfg):
     sim, _r = loaded(cfg, [mkblock("A", 5, [mkstep("a", 100)])])
+    o3_permit(sim)                          # v0.4.12: 명령을 두 번 이상 한 스캔 전체로 — Powder 는 O3 허가를 세운 채로
     sim._process_start()
     run(sim, ms=20, step_ms=10)
-    assert p40_cmd(sim, A.CMD_STOP_AFTER_CYCLE) == A.RESULT_OK
-    sim._state()
+    assert cmd(sim, A.CMD_STOP_AFTER_CYCLE) == A.RESULT_OK
     assert sim.reg[A.D_STATE] == A.STATE_STOPPING
-    assert p40_cmd(sim, A.CMD_PAUSE) == A.RESULT_OK
+    assert cmd(sim, A.CMD_PAUSE) == A.RESULT_OK
 
 
 def test_resume_results(cfg):
@@ -294,19 +290,20 @@ def test_resume_results(cfg):
     sim, _r = loaded(cfg, [mkblock("A", 2, [mkstep("a", 50, pause_ok=True)])])
     sim._process_start()
     run(sim, ms=20, step_ms=10)
-    assert p40_cmd(sim, A.CMD_RESUME) == A.RESULT_STATE
+    assert cmd(sim, A.CMD_RESUME) == A.RESULT_STATE
     sim.pause_req = True
     run(sim, ms=60, step_ms=10)
     assert sim.seq_state == 7
-    sim.safe_stop = True
-    assert p40_cmd(sim, A.CMD_RESUME) == A.RESULT_INTERLOCK
+    sim.faults["emo"] = True        # v0.4.12: 한 스캔 전체 — 안전 정지 요구는 그 스캔 P30 이 입력으로 세운다
+    assert cmd(sim, A.CMD_RESUME) == A.RESULT_INTERLOCK
+    assert not sim.running and sim.seq_state == 8, "재개를 거절한 그 스캔 행 130 에서 중단"
 
 
 def test_stop_after_cycle(cfg):
     sim, _r = loaded(cfg, [mkblock("A", 10, [mkstep("a", 50)])])
     sim._process_start()
     run(sim, ms=20, step_ms=10)
-    assert p40_cmd(sim, A.CMD_STOP_AFTER_CYCLE) == A.RESULT_OK
+    assert cmd(sim, A.CMD_STOP_AFTER_CYCLE) == A.RESULT_OK
     assert sim.reg[A.D_STATE] == A.STATE_STOPPING or sim.stop_req
     done = run(sim, ms=500, step_ms=10)
     assert done and sim.end_reason == "사이클 후 정지"
@@ -319,7 +316,7 @@ def test_abort(cfg):
     sim, _r = loaded(cfg, [mkblock("A", 100, [mkstep("a", 50)])])
     sim._process_start()
     run(sim, ms=20, step_ms=10)
-    assert p40_cmd(sim, A.CMD_ABORT) == A.RESULT_OK         # v0.4.11: 그 스캔 P40 행 130 에서 적용
+    assert cmd(sim, A.CMD_ABORT) == A.RESULT_OK         # v0.4.11: 그 스캔 P40 행 130 에서 적용
     assert not sim.running and sim.seq_state == 8
     assert "즉시 중단" in sim.end_reason
 
@@ -354,7 +351,7 @@ def test_recipe_value_error_aborts(cfg):
     sim._load_step()
     assert not sim.running
     assert "레시피 값 오류" in sim.end_reason
-    sim._alarms(time.monotonic())               # v0.4.10 래더: b13(P40 래치)은 다음 P35 에서 공개
+    scan(sim)                                   # v0.4.10 래더: b13(P40 래치)은 다음 스캔 P35 에서 공개
     assert (sim.reg[A.D_ALARM0] >> A.ALM0_RECIPE) & 1
 
 
@@ -377,7 +374,7 @@ def test_bad_group_on_advance_aborts(cfg):
     sim.work[g2 + 2] = 0                                   # 그룹 2 반복 0
     run(sim, ms=500, step_ms=10)
     assert not sim.running and "레시피 값 오류" in sim.end_reason
-    sim._alarms(time.monotonic())               # v0.4.10 래더: 다음 P35 에서 공개
+    scan(sim)                                   # v0.4.10 래더: 다음 스캔 P35 에서 공개
     assert (sim.reg[A.D_ALARM0] >> A.ALM0_RECIPE) & 1
 
 
@@ -529,15 +526,16 @@ def test_remaining_ms_matches_simulator_after_pause(cfg):
     blocks = [mkblock("A", 3, [mkstep("a", 100, [v], pause_ok=True), mkstep("b", 300, [v]),
                                mkstep("c", 150)])]
     sim, r = loaded(cfg, blocks, stable_s=0, vmin=200)
+    o3_permit(sim)                          # v0.4.12: 명령을 두 번 이상 한 스캔 전체로 — Powder 는 O3 허가를 세운 채로
     sim._process_start()
     run(sim, ms=250, step_ms=10)
-    assert p40_cmd(sim, A.CMD_PAUSE) == A.RESULT_OK
+    assert cmd(sim, A.CMD_PAUSE) == A.RESULT_OK
     run(sim, ms=2000, step_ms=10, watch=lambda s: None)
     assert sim.seq_state == 7
     pos = {"block": sim.blk, "step": sim.step_no, "cycle": sim.cycle,
            "group_pass": sim.group_pass, "paused": True}
     want = R.remaining_ms(cfg, r, pos)
-    assert p40_cmd(sim, A.CMD_RESUME) == A.RESULT_OK          # 재개 스캔은 스텝 타이머가 돌지 않는다(M3)
+    assert cmd(sim, A.CMD_RESUME) == A.RESULT_OK          # 재개 스캔은 스텝 타이머가 돌지 않는다(M3)
     ran = [0]
 
     def count(_s):

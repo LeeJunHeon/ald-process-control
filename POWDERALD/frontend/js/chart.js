@@ -18,7 +18,9 @@
  *   - 서버가 구간을 최대 2000 묶음(최소·최대·평균)으로 줄여 보낸다 — 평균은 선, 최소~최대는 옅은 띠.
  *   - ★ 그리기 전에 보이는 구간만 자르고 플롯 폭보다 점이 많으면 화소 열마다 처음 · 최소 · 최대 · 끝만
  *     남긴다(decimate.js — 실시간 1 시간 · 11 계열도 한 번 그리기 수 ms). 띠는 열마다 하나, 1 px 이상일 때만.
- *   - 같은 그림이면(창이 1 px 도 안 움직였고 새 점이 없으면) 다시 그리지 않는다. 캔버스 크기는 바뀔 때만 바꾸고,
+ *   - ★ 같은 그림이면 다시 그리지 않는다(v0.4.12): 창이 1 px 이상 움직였거나, 새 점이 마지막 보이는 열의
+ *     처음 · 최소 · 최대 · 끝(과 띠) 화소를 바꿨을 때만(Decimate.tailKey — 지난 그림의 y 축으로 화소를 잰다).
+ *     점 개수 · 마지막 점이 바뀌었다고 다시 그리지 않는다(1 시간 보기에서 5 Hz 로 다시 그리던 것). 캔버스 크기는 바뀔 때만 바꾸고,
  *     해상도는 실제 보이는 화소(CSS zoom × 기기 배율)에 맞춘다.
  *   - 묶음 사이가 gap 보다 벌어지면(꺼져 있던 구간) 선을 잇지 않는다.
  *   - 압력은 로그 축 — 0 이하 값은 그리지도 축 범위에 넣지도 않는다.
@@ -142,19 +144,28 @@
     var st = { series: [], x0: 0, x1: 1, logY: false, noNeg: false, gap: Infinity, bands: [],
                dead: false, tol: null, xLabel: function (x) { return String(x); } };
     var drag = null, hoverX = null, hoverY = null, scroll = 0;
-    var lastRows = [], lastG = null, lastSig = '', views = [];
+    var lastRows = [], lastG = null, lastR = null, lastSig = '', views = [];
     var g = canvas.getContext('2d');
 
-    /** 그림을 바꾸는 것들의 요약 — 같으면 다시 그리지 않는다(창이 1 px 미만 움직임 · 새 점 없음). */
+    /** 그림을 바꾸는 것들의 요약 — 같으면 다시 그리지 않는다.
+     *  ★ 창이 1 px 이상 움직였거나, 새 점이 마지막 보이는 열의 처음 · 최소 · 최대 · 끝 화소를 바꿨을 때만 달라진다.
+     *  열은 그리기와 같은 열(플롯 폭 × 실제 배율), 화소는 지난 그림의 y 축으로(축이 바뀔 만한 새 값은 그 열의
+     *  최소 · 최대를 바꾸므로 여기서 걸린다). */
     function signature() {
       var W = canvas.clientWidth, H = canvas.clientHeight;
       var cols = Math.max(1, W - PAD_L - PAD_R);
       var px = (st.x1 - st.x0) / cols;
-      var parts = [W, H, scale(), Math.floor(st.x0 / px), Math.floor(st.x1 / px), st.logY, st.dead, st.gap,
+      var k = (w.devicePixelRatio || 1) * scale();
+      var dcols = Math.max(1, Math.round(cols * k));
+      var ypx = lastR && lastG ? function (v) {
+        if (st.logY && !(v > 0)) return 'n';
+        return Math.round(yPos(v, lastR, lastG) * k);
+      } : function (v) { return v; };
+      var parts = [W, H, k, Math.floor(st.x0 / px), Math.floor(st.x1 / px), st.logY, st.dead, st.gap,
                    st.bands.length, hoverX, hoverY, drag ? drag.px1 : '', scroll];
       st.series.forEach(function (se) {
-        var n = se.pts.length, lp = n ? se.pts[n - 1] : null;
-        parts.push(se.label, se.color, se.hidden ? 1 : 0, n, lp ? lp[0] : '', lp ? lp[3] : '');
+        parts.push(se.label, se.color, se.hidden ? 1 : 0,
+                   se.hidden ? '' : Decimate.tailKey(se.pts, st.x0, st.x1, dcols, ypx));
       });
       return parts.join('|');
     }
@@ -307,6 +318,7 @@
         return se.hidden ? { line: [], band: [] } : Decimate.view(se.pts, st.x0, st.x1, st.gap, cols);
       });
       var r = range();
+      lastR = r;
       var grid = cssVar('--grid'), axis = cssVar('--axis');
       g.font = '10px ' + cssVar('--font-sans');
 
@@ -343,17 +355,28 @@
         if (se.hidden) return;
         var vw = views[si];
         // 최소~최대 띠(설정값 점선에는 두지 않는다) — 열마다 하나, 높이 1 px 이상일 때만
+        // ★ v0.4.12: 줄이기 전에는 점마다 1.5 px 폭 · 0.15 칸을 겹쳐 그려 점이 많은 열일수록 진했다. 줄인 열은
+        //   그 겹침(점 수 × 1.5 px × 열 배율 × 점 높이 ÷ 열 높이)만큼 진하게 — 한 열 폭으로 겹치지 않게 그린다
         if (!se.dashed) {
-          g.fillStyle = se.color; g.globalAlpha = 0.15;
+          g.fillStyle = se.color;
+          var colW = (G.x1 - G.x0) / cols, perUnit = (G.y1 - G.y0) / ((r.hi - r.lo) || 1);
           vw.band.forEach(function (bd) {
             var a = bd[1], b = bd[2];
             if (st.logY) {
               if (!(b > 0)) return;
               if (!(a > 0)) a = b;                       // 0 묶음이 띠를 세로로 채우지 않게
             }
-            var ya = yPos(a, r, G), yb = yPos(b, r, G);
-            if (Math.abs(ya - yb) < 1) return;
-            g.fillRect(xPos(bd[0], G) - 0.5, Math.min(ya, yb), 1.5, Math.abs(ya - yb));
+            var ya = yPos(a, r, G), yb = yPos(b, r, G), h = Math.abs(ya - yb);
+            if (h < 1) return;
+            if (bd.col == null) {                          // 줄이지 않은 묶음 — 예전 그대로
+              g.globalAlpha = 0.15;
+              g.fillRect(xPos(bd[0], G) - 0.5, Math.min(ya, yb), 1.5, h);
+              return;
+            }
+            var rowsPx = bd.n + (st.logY ? 0 : (bd.hs || 0) * perUnit);   // 점마다 칸 높이(최소 1 px)의 합
+            var stack = Math.max(1, rowsPx * 1.5 * k / h);
+            g.globalAlpha = Math.min(0.9, 1 - Math.pow(0.85, stack));
+            g.fillRect(G.x0 + bd.col * colW, Math.min(ya, yb), Math.max(colW, 1 / k), h);
           });
           g.globalAlpha = 1;
         }
@@ -388,6 +411,7 @@
       var hx = hoverX != null && hoverX >= G.x0 && hoverX <= G.x1 ? hoverX : null;
       drawBand(G, r, hx);
       if (hx != null) drawCursor(G, hx);
+      lastSig = signature();          // 이번 그림의 y 축으로 다시 — 다음 비교가 같은 축 기준이 되게
     }
 
     /* ---------- 라벨 띠 ---------- */

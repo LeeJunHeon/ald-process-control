@@ -142,18 +142,24 @@
             <button class="btn sm" data-range="600">10분</button>
             <button class="btn sm" data-range="3600">1시간</button>
           </span>
-          <span data-bind="histBar" class="trendbar-in" hidden>
-            <input type="datetime-local" class="inp dt" step="1" data-bind="hT0">
-            <span class="dim">~</span>
-            <input type="datetime-local" class="inp dt" step="1" data-bind="hT1">
-            <button class="btn sm" data-hquick="3600">1 h</button>
-            <button class="btn sm" data-hquick="21600">6 h</button>
-            <button class="btn sm" data-hquick="86400">24 h</button>
-            <button class="btn sm" data-hquick="604800">7 일</button>
-            <button class="btn sm primary" data-hact="load">조회</button>
-            <button class="btn sm" data-hact="undo" data-bind="hUndo" disabled>되돌리기</button>
-            <button class="btn sm" data-hact="export">CSV 저장</button>
-            <button class="btn sm" data-hact="folder">폴더 열기</button>
+          <span data-bind="histBar" class="trendbar-in hist" hidden>
+            <span class="tb-grp">
+              <input type="datetime-local" class="inp dt" step="1" data-bind="hT0">
+              <span class="dim">~</span>
+              <input type="datetime-local" class="inp dt" step="1" data-bind="hT1">
+            </span>
+            <span class="tb-grp">
+              <button class="btn sm" data-hquick="3600">1 h</button>
+              <button class="btn sm" data-hquick="21600">6 h</button>
+              <button class="btn sm" data-hquick="86400">24 h</button>
+              <button class="btn sm" data-hquick="604800">7 일</button>
+            </span>
+            <span class="tb-grp">
+              <button class="btn sm primary" data-hact="load">조회</button>
+              <button class="btn sm" data-hact="undo" data-bind="hUndo" disabled>되돌리기</button>
+              <button class="btn sm" data-hact="export">CSV 저장</button>
+              <button class="btn sm" data-hact="folder">폴더 열기</button>
+            </span>
           </span>
           <span class="right"><span class="mono" data-bind="trendInfo">&mdash;</span></span>
         </div>

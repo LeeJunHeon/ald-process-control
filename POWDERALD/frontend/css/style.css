@@ -241,8 +241,9 @@ header {
 }
 .cmdbar .lockmsg {
   margin-left: auto; margin-right: var(--sp-2); font-size: var(--fs-md); color: var(--ink-faint);
-  /* ★ 줄을 바꿔 다 보인다(멈춤 · 끊김 이유가 말줄임으로 잘려 툴팁에만 있던 것) */
-  min-width: 0; flex: 0 1 auto; white-space: normal; line-height: 1.25; text-align: right;
+  /* ★ 줄을 바꿔 다 보인다(멈춤 · 끊김 이유가 말줄임으로 잘려 툴팁에만 있던 것). v0.4.12: 낱말 중간에서 끊지 않는다 */
+  min-width: 0; flex: 0 1 auto; white-space: normal; word-break: keep-all; overflow-wrap: anywhere;
+  line-height: 1.25; text-align: right;
 }
 
 /* ===================== 트렌드 ===================== */
@@ -592,3 +593,13 @@ header {
 #schemSvg.unknown [data-aux] { fill: none; stroke: var(--ink-faint); stroke-width: 1; stroke-dasharray: 1.5 1.5; }
 /* 운전 탭 MFC 표 — 1000 sccm 이상이어도 '현재' 열이 잘리지 않게(패널 폭은 index.html) */
 [data-bind="mfcTbl"] td, [data-bind="mfcTbl"] th { white-space: nowrap; }
+
+/* ===================== v0.4.12 ===================== */
+/* 트렌드 이력 막대 — 날짜 · 빠른 범위 · 동작 세 묶음이 폭에 따라 줄을 바꾼다(한 줄 inline-flex 라 978 px 가 928 px
+   줄을 넘어 '폴더 열기' 가 잘리던 것). 묶음 안은 끊지 않는다 */
+.trendbar-in.hist { display: flex; flex: 1 1 0; min-width: 0; flex-wrap: wrap; row-gap: 4px; }
+.trendbar-in.hist[hidden] { display: none; }
+.trendbar-in .tb-grp { display: inline-flex; align-items: center; gap: var(--sp-2); white-space: nowrap; }
+/* 운전 탭 MFC 표 — 384 px 패널(index.html)에서 768 폭 여유가 0(1 px 넘침)이었다. 패널을 넓히면 아래 줄 히터 표가
+   좁아져 줄 높이 · 배관도 크기가 바뀔 수 있어, 칸 좌우 여백만 줄인다(열 5 개 × 좌우) */
+.tbl[data-bind="mfcTbl"] th, .tbl[data-bind="mfcTbl"] td { padding-left: var(--sp-2); padding-right: var(--sp-2); }

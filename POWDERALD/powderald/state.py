@@ -9,6 +9,7 @@ state.py — PLC 레지스터를 화면이 쓸 모양으로 푼다 + 서버가 �
 """
 
 import os
+import re
 import time
 
 from . import addresses as A
@@ -25,6 +26,40 @@ PC_NOTICE_KEYS = ("plc_disconnected", "plc_hb_stall", "prm_mismatch",
 
 
 ALARM_LOAD_MAX = 200
+# ★ v0.4.12: 알람 CSV 는 끝에서 이만큼만 읽는다(10 만 줄을 통째로 읽던 것 — create_app 안에서 1.65 s · 72 MB).
+#   한 줄 ≈ 60~100 B 라 1 MB 면 1 만 줄 이상 — 최근 200 건과 그 해제에 넉넉하다
+ALARM_TAIL_BYTES = 1 << 20
+ALARM_UNKNOWN = "모름(재시작 전)"
+_ALARM_TS = re.compile(r"\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}$")
+_ALARM_CODE = re.compile(r"A[01]-\d{2}$")
+
+
+def _alarm_rows(path: str, tail: int = ALARM_TAIL_BYTES) -> list:
+    """알람 CSV 의 끝 tail 바이트만 읽어 온전한 줄만 돌려준다. 깨진 글자는 바꿔 읽고(errors=replace),
+    끊긴 줄(쓰다 꺼져 등급이 '중' 까지만 있는 줄 등)은 버린다."""
+    import csv
+    import io
+    with open(path, "rb") as f:
+        f.seek(0, os.SEEK_END)
+        size = f.tell()
+        start = max(0, size - tail)
+        f.seek(start)
+        raw = f.read()
+    if start > 0:
+        cut = raw.find(b"\n")
+        raw = raw[cut + 1:] if cut >= 0 else b""        # 중간부터 읽었으면 첫 (잘린) 줄은 버린다
+    text = raw.decode("utf-8", errors="replace").lstrip("\ufeff")
+    out = []
+    for r in csv.reader(io.StringIO(text, newline="")):
+        if len(r) < 5:
+            continue
+        ts, kind, code, name, sev = (c.strip() for c in r[:5])
+        if not _ALARM_TS.match(ts) or not _ALARM_CODE.match(code) or sev not in ("중대", "경고"):
+            continue                                    # 머리줄 · 끊긴 줄 · 깨진 줄
+        if kind != "발생" and not kind.startswith("해제"):
+            continue
+        out.append((ts, kind, code, name, sev))
+    return out
 
 
 class AlarmTracker:
@@ -34,17 +69,33 @@ class AlarmTracker:
         self.active = {}        # code -> {code, name, crit, since}
         self.history = []       # 최근이 앞
         self.ver = 0            # 이력이 바뀔 때마다 +1 — 화면은 live 의 이 번호가 바뀌면 이력을 다시 받는다
+        # ★ v0.4.12: 불러온 이력 중 '모름(재시작 전)' 으로 닫은 코드 — 다시 시작한 뒤 첫 알람 갱신에서 PLC 가 같은
+        #   코드를 알리면 새 '발생' 을 쓰지 않고 그 줄을 다시 연다(첫 갱신이 지나면 비운다)
+        self._reopen = set()
 
     def update(self, w0: int, w1: int) -> list:
         """새로 선 알람 코드 목록을 돌려준다(알람 창을 띄울지 판단에 쓴다)."""
         seen = set()
         fresh = []
+        reopen, self._reopen = self._reopen, set()
         for word, defs, tag in ((w0, DEV.ALARMS0, "A0"), (w1, DEV.ALARMS1, "A1")):
             for d in defs:
                 if not (word >> d["bit"]) & 1:
                     continue
                 code = f"{tag}-{d['bit']:02d}"
                 seen.add(code)
+                if code not in self.active and code in reopen:
+                    h = next((h for h in self.history if h["code"] == code), None)
+                    if h is not None and h["cleared"] == ALARM_UNKNOWN:
+                        # 꺼져 있던 동안 계속 서 있던 것 — 닫아 둔 줄을 다시 열고 CSV 에 새 '발생' 을 쓰지 않는다
+                        h["cleared"] = ""
+                        self.active[code] = {"code": code, "name": d["name"], "crit": d["crit"],
+                                             "since": h["since"], "date": h["date"]}
+                        fresh.append(code)
+                        self.ver += 1
+                        logger.write("err" if d["crit"] else "warn",
+                                     f"알람 계속 [{code}] {d['name']} (다시 시작하기 전부터)")
+                        continue
                 if code not in self.active:
                     rec = {"code": code, "name": d["name"], "crit": d["crit"],
                            "since": time.strftime("%H:%M:%S"),
@@ -80,16 +131,15 @@ class AlarmTracker:
         rows = []
         for d in (now - datetime.timedelta(days=1), now):
             p = os.path.join(paths.ALARMS_DIR, f"alarms-{d:%Y%m%d}.csv")
+            if not os.path.exists(p):
+                continue
             try:
-                with open(p, encoding="utf-8-sig", newline="") as f:
-                    rows += list(csv.reader(f))[1:]
-            except OSError:
+                rows += _alarm_rows(p)          # ★ 끝에서만 · 깨진 글자 바꿔 읽기 · 끊긴 줄 버림
+            except (OSError, ValueError, csv.Error) as e:
+                logger.write("warn", f"알람 이력 불러오기 실패({os.path.basename(p)}): {e}")
                 continue
         hist = []                       # 오래된 것이 앞
-        for r in rows:
-            if len(r) < 5:
-                continue
-            ts, kind, code, name, sev = r[:5]
+        for ts, kind, code, name, sev in rows:
             if kind == "발생":
                 hist.append({"code": code, "name": name, "crit": sev == "중대", "since": ts[11:19],
                              "date": ts[5:10], "cleared": ""})
@@ -100,8 +150,13 @@ class AlarmTracker:
                         break
         for h in hist:
             if not h["cleared"]:
-                h["cleared"] = "모름(재시작 전)"
+                h["cleared"] = ALARM_UNKNOWN
         self.history = list(reversed(hist))[:ALARM_LOAD_MAX]
+        # 코드마다 가장 최근 줄이 '모름' 인 것만 다시 열 수 있다
+        latest = {}
+        for h in self.history:
+            latest.setdefault(h["code"], h)
+        self._reopen = {c for c, h in latest.items() if h["cleared"] == ALARM_UNKNOWN}
         self.ver += 1
         return len(self.history)
 
@@ -224,6 +279,8 @@ class State:
             "interlocks": DEV.INTERLOCKS,
             "mfc": self.cfg.get("mfc") or [],
             "heaters": self.cfg.get("heaters") or [],
+            # ★ v0.4.12: CM 을 달지 않았으면 트렌드 이력 고르기에 'CM 압력' 을 내지 않는다(PLC 와 상관없는 설정값)
+            "cm_installed": bool(self.conv and self.conv.cm.installed),
             "manual_valve_mask": DEV.MANUAL_VALVE_MASK,
             "state_names": A.STATE_NAMES,
             "seq_names": A.SEQ_NAMES,

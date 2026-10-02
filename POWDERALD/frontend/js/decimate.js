@@ -10,7 +10,14 @@
  *   (계열당 최대 4 × 열 수). 끊김(앞 점과 gap 보다 벌어짐)이 있으면 그 자리에서 열 묶음을 새로 시작하고 line 에
  *   null 을 넣는다 — ★ 그리는 쪽은 null 에서만 선을 끊는다(줄인 점끼리는 같은 구간이어도 gap 보다 벌어질 수 있다).
  *   최소 · 최대 띠는 열마다 하나 [x, 최소, 최대].
+ *   ★ v0.4.12: 띠 배열에 속성 n(점 수) · col(열 번호, 줄이지 않은 경로는 null) · hs(묶음 높이 합 Σ 최대 − 최소)를
+ *   붙인다 — 그리는 쪽이 띠 진하기를 줄이기 전 모양(점마다 옅은 칸을 겹쳐 그리던 것)에 맞추는 데 쓴다.
  *   반환 { line: [점…], band: [[x, 최소, 최대]…], lo: 첫 보이는 index, hi: 끝 index }
+ *
+ * tailKey(pts, x0, x1, cols, ypx) — ★ v0.4.12: 마지막 보이는 열(view 와 같은 열 나누기)의 그림 요약.
+ *   열 번호 + 그 열 점들의 처음 · 최소 · 최대 · 끝(평균)과 띠(최소 · 최대)를 ypx(값 → 화소)로 바꾼 문자열.
+ *   새 점이 그 열의 그림을 바꾸지 않으면(같은 열 · 같은 화소) 같은 문자열 — 그리는 쪽은 이것과 창 위치(1 px)가
+ *   같으면 다시 그리지 않는다.
  *
  * Live(rawMs, keepMs) — 실시간 저장: 최근 rawMs 는 받은 그대로, 그보다 오래된 것은 1 s 묶음
  *   (최소 · 최대 · 평균, x = 묶음 안 시각의 평균), keepMs 보다 오래된 것은 앞에서 한 번에 자른다.
@@ -40,6 +47,12 @@
 
   function finite(v) { return v != null && isFinite(v); }
 
+  function bandOf(x, lo, hi, n, col, hs) {
+    var b = [x, lo, hi];
+    b.n = n; b.col = col; b.hs = hs;
+    return b;
+  }
+
   function view(pts, x0, x1, gap, cols) {
     pts = pts || [];
     var g = isFinite(gap) ? gap : 0;
@@ -58,20 +71,21 @@
         if (useGap && px !== null && p[0] - px > gap) line.push(null);       // 끊김
         px = p[0];
         line.push(p);
-        if (finite(p[1]) && finite(p[2]) && p[2] > p[1]) band.push([p[0], p[1], p[2]]);
+        if (finite(p[1]) && finite(p[2]) && p[2] > p[1]) band.push(bandOf(p[0], p[1], p[2], 1, null, p[2] - p[1]));
       }
       return { line: line, band: band, lo: lo, hi: hi };
     }
     // 열 묶음: 처음 · 최소 · 최대 · 끝(평균 기준), 띠는 열마다 최소~최대 하나
     var cur = -1, first = null, mn = null, mx = null, last = null, bl = Infinity, bh = -Infinity, prevX = null;
+    var cnt = 0, hsum = 0;
     function flush() {
       if (first === null) return;
       var keep = [first, mn, mx, last].filter(function (q) { return q; });
       keep.sort(function (a, b) { return a[0] - b[0]; });
       var seen = null;
       keep.forEach(function (q) { if (q !== seen) { line.push(q); seen = q; } });
-      if (bh > bl) band.push([first[0], bl, bh]);
-      first = mn = mx = last = null; bl = Infinity; bh = -Infinity;
+      if (bh > bl) band.push(bandOf(first[0], bl, bh, cnt, cur, hsum));
+      first = mn = mx = last = null; bl = Infinity; bh = -Infinity; cnt = 0; hsum = 0;
     }
     for (var j = lo; j < hi; j++) {
       var q = pts[j];
@@ -91,9 +105,38 @@
       }
       if (finite(q[1]) && q[1] < bl) bl = q[1];
       if (finite(q[2]) && q[2] > bh) bh = q[2];
+      cnt++;
+      if (finite(q[1]) && finite(q[2]) && q[2] > q[1]) hsum += q[2] - q[1];
     }
     flush();
     return { line: line, band: band, lo: lo, hi: hi };
+  }
+
+  function tailKey(pts, x0, x1, cols, ypx) {
+    pts = pts || [];
+    cols = Math.max(1, Math.floor(cols || 1));
+    var span = x1 - x0 > 0 ? x1 - x0 : 1;
+    var i = upperBound(pts, x1) - 1;
+    while (i >= 0 && !pts[i]) i--;
+    if (i < 0 || pts[i][0] < x0) return '-';
+    var c = Math.min(cols - 1, Math.floor((pts[i][0] - x0) / span * cols));
+    var from = x0 + c * span / cols;            // 그 열이 시작하는 x
+    var first = null, last = null, mn = Infinity, mx = -Infinity, bl = Infinity, bh = -Infinity;
+    for (var j = i; j >= 0; j--) {
+      var p = pts[j];
+      if (!p) continue;
+      if (p[0] < from || p[0] < x0) break;
+      if (finite(p[3])) {
+        if (last === null) last = p[3];
+        first = p[3];
+        if (p[3] < mn) mn = p[3];
+        if (p[3] > mx) mx = p[3];
+      }
+      if (finite(p[1]) && p[1] < bl) bl = p[1];
+      if (finite(p[2]) && p[2] > bh) bh = p[2];
+    }
+    function px(v) { return v === null || !isFinite(v) ? 'x' : String(ypx(v)); }
+    return [c, px(first), px(mn), px(mx), px(last), px(bl), px(bh)].join(',');
   }
 
   /* ---------- 실시간 저장 ---------- */
@@ -147,7 +190,7 @@
 
   Live.prototype.clear = function () { this.pts.length = 0; this.rawFrom = 0; };
 
-  var api = { view: view, Live: Live, lowerBound: lowerBound, upperBound: upperBound };
+  var api = { view: view, tailKey: tailKey, Live: Live, lowerBound: lowerBound, upperBound: upperBound };
   if (typeof module !== 'undefined' && module.exports) module.exports = api;
   else root.Decimate = api;
 })(typeof window !== 'undefined' ? window : this);

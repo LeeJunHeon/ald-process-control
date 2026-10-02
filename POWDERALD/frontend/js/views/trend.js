@@ -169,14 +169,17 @@
   var lastRes = null;
   var loadNo = 0;
 
-  /** 고를 수 있는 열 — 설정에 있는(켠) 히터 채널만, 이름은 실시간과 같게('CH1 Stage·챔버' · '… 설정'). */
+  /** 고를 수 있는 열 — 설정에 있는(켠) 히터 채널만, 이름은 실시간과 같게('CH1 Stage·챔버' · '… 설정').
+   *  ★ v0.4.12: CM 은 달았을 때만(구조의 cm_installed — 없으면 live 압력의 cm_installed). */
   function cols() {
     var s = core.state || {}, str = s.structure || {};
+    var cmOn = str.cm_installed != null ? !!str.cm_installed : !!(s.pressure && s.pressure.cm_installed);
     var heat = {}, mfc = {};
     (str.heaters || []).forEach(function (h) { heat[h.ch] = h; });
     (str.mfc || []).forEach(function (m) { mfc[m.no] = m; });
     return (s.trend_cols || []).map(function (c) {
       var mh = /^h(\d+)_(pv|sv)$/.exec(c.key), mm = /^mfc(\d+)_(pv|sv)$/.exec(c.key);
+      if (c.key === 'cm' && !cmOn) return null;
       if (mh) {
         var h = heat[Number(mh[1])];
         if (!h || !h.enabled) return null;
@@ -391,5 +394,5 @@
   });
 
   core.register('trendhist', { render: render, update: function () { locks(); } });
-  w.viewTrendHist = { setMode: setMode, get mode() { return mode; }, charts: charts };
+  w.viewTrendHist = { setMode: setMode, get mode() { return mode; }, charts: charts, picker: buildSeriesPicker };
 })(window, document);

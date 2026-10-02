@@ -362,7 +362,7 @@ def test_start_results(cfg):
     s.reg[A.D_INTERLOCK] = 1 << A.ILK_START_OK      # 1 s 전 검사로 허가가 선 상태
     s.write(A.D_RCP_STEP_BASE, [s.reg[A.D_RCP_STEP_BASE] ^ 1])  # 그 뒤 표가 흠집 남
     assert s._execute(A.CMD_PROCESS_START) == A.RESULT_RECIPE
-    s._alarms(s._clock())                       # v0.4.10 래더: 알람 워드는 같은 스캔 P35 에서 공개된다
+    s._alarms(s._clock())                       # 래더: b13 은 P40 에서 래치되고 다음 스캔 P35 에서 공개된다(그 P35 만 부른다)
     assert (s.reg[A.D_ALARM0] >> A.ALM0_RECIPE) & 1
     assert not s.running
 
@@ -385,7 +385,7 @@ def test_start_rejects_bad_first_group(cfg):
     s.write(A.RCP_SUM_BASE, words)
     s.reg[A.D_INTERLOCK] = 1 << A.ILK_START_OK
     assert s._execute(A.CMD_PROCESS_START) == A.RESULT_RECIPE
-    s._alarms(s._clock())                       # v0.4.10 래더: 같은 스캔 P35 에서 공개
+    s._alarms(s._clock())                       # 래더: P40 래치 → 다음 스캔 P35 에서 공개(그 P35 만 부른다)
     assert (s.reg[A.D_ALARM0] >> A.ALM0_RECIPE) & 1 and not s.running
 
 
