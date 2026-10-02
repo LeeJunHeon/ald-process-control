@@ -32,7 +32,7 @@ def pump_down(fs, base_torr=1.0):
     s = fs.sim
     s.write(A.D_PRM_BASE_PRESS, [s.conv.cvg.to_raw(base_torr)])
     s.base_pressure = s.pressure = 0.5
-    assert s._execute(A.CMD_PUMP_START) == A.RESULT_OK
+    assert fs.cmd(A.CMD_PUMP_START) == A.RESULT_OK         # 펌프 명령은 그 스캔 P45 에서 평가
     for _ in range(200):
         fs.step()
         if bit(s.reg[A.D_INTERLOCK], A.ILK_VALVE_OK):
@@ -171,7 +171,7 @@ def test_zero_pump_timeout_trips_when_ive_opens(cfg):
     s = fs.sim
     s.write(A.D_PRM_PUMP_TIMEOUT, [0])
     s.write(A.D_PRM_BASE_PRESS, [s.conv.cvg.to_raw(1e-3)])
-    assert s._execute(A.CMD_PUMP_START) == A.RESULT_OK
+    assert fs.cmd(A.CMD_PUMP_START) == A.RESULT_OK
     ive_at = b7_at = None
     for _ in range(200):
         fs.step()
@@ -208,7 +208,7 @@ def test_pump_timeout_counts_from_ive_open_and_comes_back_after_reset(cfg):
     s.write(A.D_PRM_PUMP_TIMEOUT, [2])
     s.write(A.D_PRM_BASE_PRESS, [s.conv.cvg.to_raw(1e-6)])       # 갈 수 없는 베이스
     t0 = fs.t[0]
-    assert s._execute(A.CMD_PUMP_START) == A.RESULT_OK
+    assert fs.cmd(A.CMD_PUMP_START) == A.RESULT_OK
     ive_at = b7_at = None
     for _ in range(400):
         fs.step()
@@ -238,7 +238,7 @@ def test_zero_base_pressure_never_reaches_vac_done(cfg):
     s = fs.sim
     s.write(A.D_PRM_PUMP_TIMEOUT, [1])
     s.write(A.D_PRM_BASE_PRESS, [0])
-    s._execute(A.CMD_PUMP_START)
+    fs.cmd(A.CMD_PUMP_START)
     fs.step(200)
     assert not s.vac_done and alm0(s, A.ALM0_BASE_TIMEOUT)
 
@@ -289,11 +289,9 @@ def test_dp_n2_follows_pump_output(cfg):
     s = fs.sim
     fs.step()
     assert not aux(s, A.AUX_PUMP_N2)
-    s._execute(A.CMD_PUMP_START)
-    fs.step()
+    fs.cmd(A.CMD_PUMP_START)                     # 그 스캔 P45 에서 평가 · 출력
     assert aux(s, A.AUX_PUMP) and aux(s, A.AUX_PUMP_N2)
-    s._execute(A.CMD_PUMP_STOP)
-    fs.step()
+    fs.cmd(A.CMD_PUMP_STOP)
     assert not aux(s, A.AUX_PUMP_N2)
 
 

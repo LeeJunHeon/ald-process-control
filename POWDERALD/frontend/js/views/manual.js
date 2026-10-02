@@ -79,7 +79,7 @@
       h += '<label>CH' + ch + ' ' + core.esc(x.name) +
         (x.max_c == null ? ' <span class="unconf">한계 미정</span>' : '') +
         '<span class="inrow"><input type="number" min="0" step="1" data-mnhsv="' + ch + '"' +
-        (x.max_c == null ? ' disabled' : '') + '>' +
+        (x.max_c == null ? ' disabled data-nolimit' : '') + '>' +
         '<span class="unit">℃</span>' +
         '<span class="sw sm" role="switch" tabindex="0" data-mnhpow="' + ch + '"></span>' +
         '<span class="cur mono" data-mnhcur="' + ch + '">&mdash;</span></span></label>';
@@ -140,8 +140,15 @@
       sw.tabIndex = can ? 0 : -1;
       sw.setAttribute('aria-checked', String(!!mn.unlocked));
     }
-    core.setText('mnLeft', mn.unlocked ? '잠금 해제 ' + (mn.unlock_left_s || 0) + ' s 남음'
-      : (run ? '공정 중 — 수동 조작 잠김' : '잠김'));
+    var why = core.plcReason();
+    core.setText('mnLeft', why ? why + ' — 수동 조작 잠김'
+      : mn.unlocked ? '잠금 해제 ' + (mn.unlock_left_s || 0) + ' s 남음'
+        : (run ? '공정 중 — 수동 조작 잠김' : '잠김'));
+    // 숫자 칸도 잠근다(한계가 정해지지 않은 히터 칸은 늘 잠김)
+    Array.prototype.forEach.call(d.querySelectorAll('#manualModal input'), function (e) {
+      var off = !can || e.hasAttribute('data-nolimit');
+      if (e.disabled !== off) e.disabled = off;
+    });
 
     Array.prototype.forEach.call(d.querySelectorAll('[data-mnv]'), function (e) {
       var tag = e.dataset.mnv;

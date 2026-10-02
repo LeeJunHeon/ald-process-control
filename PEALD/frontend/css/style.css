@@ -241,7 +241,8 @@ header {
 }
 .cmdbar .lockmsg {
   margin-left: auto; margin-right: var(--sp-2); font-size: var(--fs-md); color: var(--ink-faint);
-  min-width: 0; flex: 0 1 auto; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;  /* 한 줄 말줄임 */
+  /* ★ 줄을 바꿔 다 보인다(멈춤 · 끊김 이유가 말줄임으로 잘려 툴팁에만 있던 것) */
+  min-width: 0; flex: 0 1 auto; white-space: normal; line-height: 1.25; text-align: right;
 }
 
 /* ===================== 트렌드 ===================== */
@@ -512,7 +513,9 @@ header {
 .trendbar .sep, .dlhead .sep { width: 1px; height: 18px; background: var(--line-2); margin: 0 var(--sp-1); }
 .trendbar-in { display: inline-flex; align-items: center; gap: var(--sp-2); }
 .trendbar-in[hidden] { display: none; }
-.inp.dt { width: 178px; padding: 2px 6px; }
+/* ★ 초 · 오전/오후까지 다 보이게(178 px 에서 끝이 잘렸다). 막대는 줄을 바꿀 수 있다 */
+.inp.dt { width: 236px; padding: 2px 6px; }
+.trendbar { flex-wrap: wrap; row-gap: var(--sp-1); }
 .hseries { flex: 0 0 auto; display: flex; flex-wrap: wrap; gap: 2px var(--sp-3); font-size: var(--fs-sm);
   padding: 2px var(--sp-1); color: var(--ink-dim); }
 .hseries[hidden] { display: none; }
@@ -580,3 +583,15 @@ header {
 .rcbar [data-bind="rcSaveMsg"] { margin-left: var(--sp-2); }
 .chartpanel .panel-head { white-space: nowrap; }
 .chartpanel .legend-inline { min-width: 0; flex: 1 1 auto; }
+
+/* ===================== v0.4.11 — 좁은 폭 · 멈춤/끊김 ===================== */
+/* 알람 탭 — 현재 알람 · 프로그램 알림은 최대 높이 + 스크롤, 프로그램 로그는 최소 높이를 지킨다 */
+.panel-body.cap-alarm { max-height: 156px; overflow-y: auto; }
+.panel-body.cap-notice { max-height: 120px; overflow-y: auto; }
+.panel.log-min { min-height: 150px; }
+/* 배관도 '모름' — 서버 · PLC 끊김 · 하트비트 멈춤이면 밸브 · 배관 · 펌프를 흐린 점선으로(닫힘 · 쉼과 구분) */
+#schemSvg.unknown [data-valve] { fill: none; stroke: var(--ink-faint); stroke-dasharray: 1.5 1.5; opacity: .75; }
+#schemSvg.unknown [data-pipe] { stroke: var(--ink-faint); stroke-dasharray: 3 3; opacity: .6; }
+#schemSvg.unknown [data-aux] { fill: none; stroke: var(--ink-faint); stroke-width: 1; stroke-dasharray: 1.5 1.5; }
+/* 운전 탭 MFC 표 — 1000 sccm 이상이어도 '현재' 열이 잘리지 않게(패널 폭은 index.html) */
+[data-bind="mfcTbl"] td, [data-bind="mfcTbl"] th { white-space: nowrap; }

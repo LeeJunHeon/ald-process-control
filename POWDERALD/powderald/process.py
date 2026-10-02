@@ -776,6 +776,8 @@ class ProcessRunner:
             if first <= step <= last and 1 <= step <= ns:
                 sb = A.D_RCP_STEP_BASE + (step - 1) * A.RCP_STEP_STRIDE
                 t = A.dword(w(sb + A.RCP_STEP_TIME_LO), w(sb + A.RCP_STEP_TIME_LO + 1))
+                if t >= 1 << 31:
+                    t -= 1 << 32                # 부호 있는 32 비트(래더 비교와 같게)
                 if t < 20 or t > 3_276_700:
                     return f"블록 {blk} · 스텝 {step} 적재 거절: 시간 {t} ms (20 ~ 3,276,700 ms 밖)"
         for g in range(1, min(ng, A.RCP_GROUP_MAX) + 1):
@@ -812,7 +814,12 @@ class ProcessRunner:
             if self._needs_b13_wait(end[0]) and time.monotonic() < self._end_seen_mono + B13_WAIT_S:
                 self._b13_wait = (self._end_seen_mono + B13_WAIT_S, end)
             else:
-                self._finish(*end)
+                # 창이 지났어도 그사이 선 b13 은 합친다(_flush_pending_end 와 같게)
+                link = self.state.link
+                s0 = end[0]
+                if link is not None and link.connected and self._b13_rose(link.status):
+                    s0 = self._with_b13(s0, link.status)
+                self._finish(s0, end[1], end[2])
 
     def note_stop_after_cycle(self):
         """사이클 후 정지가 처리됨 — 남은 시간은 이번 사이클만(일시정지 중 예약 포함)."""
@@ -896,21 +903,28 @@ class ProcessRunner:
             return
         info = R.from_plc_words(words)
         name = storage.find_by_number(info["number"])
+        # 끝 판정의 표 근거는 PLC 에 실제로 올라가 있는 표(되읽은 것)
         if name:
             self.select(name)
-            self.run = {"name": name, "recipe": self.recipe, "table": self.table}
+            self.run = {"name": name, "recipe": self.recipe, "table": dict(self.table or {}, words=list(words))}
             await push_log(f"PLC 가 이미 공정 중입니다 — 레시피 [{name}] "
                            f"(번호 {info['number']})로 이어 갑니다", "warn")
         else:
             self.recipe_name = f"(PLC 번호 {info['number']})"
             self.table = {"number": info["number"], "checksum": info["checksum"]}
-            self.run = {"name": self.recipe_name, "recipe": None, "table": self.table}
+            self.run = {"name": self.recipe_name, "recipe": None, "table": dict(self.table, words=list(words))}
             await push_log(f"PLC 가 이미 공정 중입니다 — 번호 {info['number']} 에 맞는 "
                            f"로컬 레시피가 없어 이름 없이 표시합니다", "warn")
         self._was_running = True
         self.started_at = time.time()
         self.active_run = True                  # 이어받은 공정도 데이터 로그 구간
         self._run_started_mono = time.monotonic()
+        # ★ b13 은 리셋 전까지 남는다 — 이어받는 순간 이미 서 있었으면 '이번 공정 중 선 것'이 아니다
+        self._gen += 1
+        self._b13_pre = A.bit(link.status[A.D_ALARM0], A.ALM0_RECIPE)
+        self._b13_cleared = False
+        self._abort_sent = self._abort_pending = self._abort_unknown = False
+        self._end_deferred = self._b13_wait = None
 
 
 B13_WAIT_S = 1.0        # 시퀀서 8 로 끝났을 때 레시피 표 오류(b13)가 공개되기를 기다리는 시간

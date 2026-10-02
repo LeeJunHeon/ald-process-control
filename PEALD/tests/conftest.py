@@ -100,6 +100,16 @@ class FakeSim:
             self.sim.tick()
         return self.sim
 
+    def cmd(self, code, dt=0.02):
+        """PC 처럼 명령 영역(D01002 코드 → D01001 번호)에 쓰고 한 스캔 돈 뒤 결과(D00003).
+        래더 순서 그대로 — P25 는 요청만, 평가는 그 명령의 프로그램(P40 · P45 · P50)이 같은 스캔에 한다."""
+        from peald import addresses as A
+        s = self.sim
+        s.write(A.D_CMD_CODE, [code])
+        s.write(A.D_CMD_NO, [(s.reg[A.D_CMD_NO] + 1) & 0xFFFF])
+        self.step(1, dt)
+        return s.reg[A.D_ACK_RESULT]
+
     def o3_ready(self):
         """Powder: O3 라인을 래더대로 켠다(바이패스 펌프 → IV-B → 5 s 뒤 O3 허가 → 발생기).
         ★ 래더는 공정 중 O3 허가가 빠지면 알람1 b3 로 중단한다 — 시퀀서를 직접 돌리는 시험의 전제."""

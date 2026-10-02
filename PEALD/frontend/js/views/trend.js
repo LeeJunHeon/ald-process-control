@@ -8,11 +8,15 @@
  *   - 사용하는 히터 채널은 모두 그린다(12 개까지). 한 그래프 안 색은 겹치지 않는다.
  *
  * 이력은 GET /api/trend 로 한 번 받고, 이후는 live 로 이어 붙인다.
+ * ★ 저장(decimate.js Live): 최근 2 분은 받은 그대로, 그보다 오래된 것은 1 s 묶음(최소 · 최대 · 평균), 1 시간보다
+ *   오래된 것은 앞에서 한 번에 자른다 — 5 Hz × 1 h 를 그대로 들고 매번 다 긋던 것(계열당 18,000 점)을 줄인다.
+ * ★ 그리기는 트렌드 탭일 때만, 그리고 그림이 바뀔 때만(chart.js 가 판단).
  * ============================================================ */
 (function (w, d) {
   'use strict';
 
   var rangeSec = 120;
+  var RAW_MS = 120000, KEEP_MS = 3600000;      // 받은 그대로 2 분 · 1 s 묶음 1 시간
   var charts = {};
   var seeded = false;
   var dead = true;
@@ -45,8 +49,9 @@
         canvas: cv,
         series: def[k].map(function (sd) {
           var prev = old.filter(function (o) { return o.key === sd.key; })[0];
+          var store = (prev && prev.store) || new Decimate.Live(RAW_MS, KEEP_MS);
           return { key: sd.key, label: sd.label, unit: sd.unit, color: cm[String(sd.key)].color,
-                   pts: (prev && prev.pts) || [] };
+                   store: store, pts: store.pts };
         })
       };
       legend(k, cm);
@@ -68,14 +73,19 @@
       // 서버는 monotonic 시계를 쓴다 — 화면의 벽시계로 옮긴다.
       var base = Date.now() - js.now * 1000;
       ['p', 't', 'm'].forEach(function (k) {
-        (charts[k] || { series: [] }).series.forEach(function (se) { se.pts = []; });
+        (charts[k] || { series: [] }).series.forEach(function (se) { se.store.clear(); });
       });
+      // ★ 압력: fast(10 Hz) 는 최근 10 분뿐 — 그보다 오래된 쪽은 slow(1 Hz) 행의 압력으로 채운다
+      //   ('1시간' 보기에서 압력이 10 분만 보이던 것)
+      var fast = js.fast || [];
+      var fastFrom = fast.length ? fast[0].t : Infinity;
       (js.slow || []).forEach(function (r) {
         var ms = base + r.t * 1000;
+        if (r.t < fastFrom) pt('p', 'cvg', ms, r.p);
         push('t', r.h || {}, ms);
         push('m', r.m || {}, ms);
       });
-      (js.fast || []).forEach(function (r) { pt('p', 'cvg', base + r.t * 1000, r.p); });
+      fast.forEach(function (r) { pt('p', 'cvg', base + r.t * 1000, r.p); });
       drawAll();
     }).catch(function () { /* 이력이 없어도 live 로 계속 그린다 */ });
   }
@@ -91,10 +101,7 @@
     if (!c || v === null || v === undefined) return;   // ★ 끊긴 구간은 찍지 않는다
     var se = c.series.filter(function (x) { return String(x.key) === String(key); })[0];
     if (!se) return;
-    var n = Number(v);
-    se.pts.push([ms, n, n, n]);
-    var cut = ms - 3600000;
-    while (se.pts.length && se.pts[0][0] < cut) se.pts.shift();
+    se.store.push(ms, v);           // 오래된 것은 1 s 묶음으로 · 1 시간 넘은 것은 앞에서 한 번에 자른다
   }
 
   function update(t) {
@@ -110,14 +117,14 @@
       push('m', mm, ms);
     }
     if (!w.viewTrendHist || w.viewTrendHist.mode === 'live') {
-      core.setText('trendInfo', t.offline ? '서버 끊김 — 기록 멈춤'
-        : conn ? (t.clock || '') : 'PLC 끊김 — 기록 멈춤');
+      core.setText('trendInfo', conn ? (t.clock || '') : core.downText() + ' — 기록 멈춤');
     }
     if (core.tab === 'trend') drawAll();
   }
 
   function drawAll() {
     if (w.viewTrendHist && w.viewTrendHist.mode !== 'live') return;
+    if (core.tab !== 'trend') return;        // 다른 탭이면 그리지 않는다(점은 계속 쌓인다)
     var now = Date.now();
     ['p', 't', 'm'].forEach(function (k) {
       var c = charts[k];
@@ -140,7 +147,7 @@
   });
 
   core.register('trend', { render: render, update: update });
-  w.viewTrend = { render: render, update: update, charts: charts };
+  w.viewTrend = { render: render, update: update, charts: charts, drawAll: drawAll };
 })(window, document);
 
 /* ============================================================
@@ -162,7 +169,27 @@
   var lastRes = null;
   var loadNo = 0;
 
-  function cols() { return ((core.state || {}).trend_cols) || []; }
+  /** 고를 수 있는 열 — 설정에 있는(켠) 히터 채널만, 이름은 실시간과 같게('CH1 Stage·챔버' · '… 설정'). */
+  function cols() {
+    var s = core.state || {}, str = s.structure || {};
+    var heat = {}, mfc = {};
+    (str.heaters || []).forEach(function (h) { heat[h.ch] = h; });
+    (str.mfc || []).forEach(function (m) { mfc[m.no] = m; });
+    return (s.trend_cols || []).map(function (c) {
+      var mh = /^h(\d+)_(pv|sv)$/.exec(c.key), mm = /^mfc(\d+)_(pv|sv)$/.exec(c.key);
+      if (mh) {
+        var h = heat[Number(mh[1])];
+        if (!h || !h.enabled) return null;
+        return Object.assign({}, c, { label: 'CH' + h.ch + ' ' + h.name + (mh[2] === 'sv' ? ' 설정' : '') });
+      }
+      if (mm) {
+        var m = mfc[Number(mm[1])];
+        if (!m) return null;
+        return Object.assign({}, c, { label: 'MFC' + m.no + ' ' + m.name + (mm[2] === 'sv' ? ' 설정' : '') });
+      }
+      return c;
+    }).filter(Boolean);
+  }
 
   /** 묶음 하나의 색 — 보이는 현재값끼리 겹치지 않고 설정값은 같은 색 점선(체크박스와 선이 같게). */
   function colorsOf(group) {
@@ -192,10 +219,20 @@
     if (xp) xp.hidden = !hasX;
     var dev = (core.state || {}).device || {};
     core.setText('hXHead', dev.has_o3 ? 'O3' : 'RF · PCV');
-    var fb = d.querySelector('[data-hact="folder"]'), eb = d.querySelector('[data-hact="export"]');
-    if (fb) fb.disabled = !core.canOperate();
-    if (eb) eb.disabled = !core.canOperate();
+    locks();
     if (mode === 'hist') drawAll();
+  }
+
+  /** CSV 저장 · 폴더 열기 — live 를 받을 때마다 정한다(끊김 · 멈춤 뒤에도 켜져 있지 않게), 툴팁에 이유 */
+  function locks() {
+    var why = core.lockReason();
+    ['folder', 'export'].forEach(function (a) {
+      var b = d.querySelector('[data-hact="' + a + '"]');
+      if (!b) return;
+      b.disabled = !!why;
+      var tip = why ? why + ' — 쓸 수 없습니다' : '';
+      if (b.title !== tip) b.title = tip;
+    });
   }
 
   function buildSeriesPicker() {
@@ -337,7 +374,7 @@
       var prev = stack.pop();
       if (prev) { t0 = prev[0]; t1 = prev[1]; load(); }
     } else if (act === 'export') {
-      if (!core.canOperate()) { core.toast('원격 접속은 보기 전용입니다', 'warn'); return; }
+      if (!core.canOperate()) { core.toast(core.lockReason() + ' — CSV 로 저장할 수 없습니다', 'warn'); return; }
       w.app.send('trend_export', { t0: t0, t1: t1 });
     } else if (act === 'folder') {
       if (!core.canOperate()) return;
@@ -353,6 +390,6 @@
     load();
   });
 
-  core.register('trendhist', { render: render, update: function () {} });
+  core.register('trendhist', { render: render, update: function () { locks(); } });
   w.viewTrendHist = { setMode: setMode, get mode() { return mode; }, charts: charts };
 })(window, document);

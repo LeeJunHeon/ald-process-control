@@ -59,8 +59,8 @@ def _ladder_scan(sim, t, dt, seq=True):
     if seq:
         sim._sequencer(dt, t)
     if DEV.HAS_O3:
-        sim.aux_copy = sim.man_aux          # P45 의 D04050 복사(바이패스 펌프 · IV-B)
-        sim._p60(t)                         # O3 라인 출력(발생기 · IV-B · 바이패스 펌프)
+        sim._p45(t)                         # D04050 복사 · 바이패스 펌프 · IV-B 출력(v0.4.11 M2 — P45 에서 정한다)
+        sim._p60(t)                         # O3 발생기 출력
     sim._publish_seq()
     sim._state()
 
@@ -91,6 +91,17 @@ def run_ladder(sim, ms=4000, step_ms=10):
         if not sim.running:
             return True
     return False
+
+
+def p40_cmd(sim, code, step_ms=10):
+    """P25 가 세운 요청을 그 스캔 P40 이 평가하고(일시정지 · 재개 · 사이클 후 정지 · 즉시 중단),
+    즉시 중단 · 안전 정지는 스텝 처리 뒤(행 130)에 적용한다 — v0.4.10/11 래더 순서. 결과(D00003)를 돌려준다."""
+    sim.cmd_req = code
+    t = time.monotonic()
+    sim._sequencer(step_ms / 1000.0, t)
+    sim._publish_seq()
+    sim._state()
+    return sim.reg[A.D_ACK_RESULT]
 
 
 def run(sim, ms=4000, step_ms=10, watch=None):
@@ -236,7 +247,7 @@ def test_resume_continues(cfg):
     sim.pause_req = True
     run(sim, ms=60, step_ms=10)
     assert sim.seq_state == 7
-    assert sim._execute(A.CMD_RESUME) == A.RESULT_OK
+    assert p40_cmd(sim, A.CMD_RESUME) == A.RESULT_OK
     done = run(sim, ms=500, step_ms=10)
     assert done and sim.end_reason == "정상 종료"
 
@@ -248,12 +259,12 @@ def test_pause_again_is_accepted_but_not_when_paused(cfg):
                                             mkstep("b", 100)])])
     sim._process_start()
     run(sim, ms=20, step_ms=10)
-    assert sim._execute(A.CMD_PAUSE) == A.RESULT_OK
-    assert sim._execute(A.CMD_PAUSE) == A.RESULT_OK
+    assert p40_cmd(sim, A.CMD_PAUSE) == A.RESULT_OK
+    assert p40_cmd(sim, A.CMD_PAUSE) == A.RESULT_OK
     assert sim.pause_req
     run(sim, ms=120, step_ms=10)
     assert sim.seq_state == 7
-    assert sim._execute(A.CMD_PAUSE) == A.RESULT_STATE
+    assert p40_cmd(sim, A.CMD_PAUSE) == A.RESULT_STATE
 
 
 def test_pause_during_block_prep_stops_at_first_allowed_step(cfg):
@@ -263,7 +274,7 @@ def test_pause_during_block_prep_stops_at_first_allowed_step(cfg):
     sim._process_start()
     run(sim, ms=100, step_ms=10)
     assert sim.seq_state == 3 and sim.reg[A.D_STATE] == A.STATE_READY
-    assert sim._execute(A.CMD_PAUSE) == A.RESULT_OK
+    assert p40_cmd(sim, A.CMD_PAUSE) == A.RESULT_OK
     run(sim, ms=1500, step_ms=10)
     assert sim.seq_state == 7 and sim.step_no == 2, (sim.seq_state, sim.step_no)
 
@@ -272,10 +283,10 @@ def test_pause_accepted_while_stop_after_cycle_reserved(cfg):
     sim, _r = loaded(cfg, [mkblock("A", 5, [mkstep("a", 100)])])
     sim._process_start()
     run(sim, ms=20, step_ms=10)
-    assert sim._execute(A.CMD_STOP_AFTER_CYCLE) == A.RESULT_OK
+    assert p40_cmd(sim, A.CMD_STOP_AFTER_CYCLE) == A.RESULT_OK
     sim._state()
     assert sim.reg[A.D_STATE] == A.STATE_STOPPING
-    assert sim._execute(A.CMD_PAUSE) == A.RESULT_OK
+    assert p40_cmd(sim, A.CMD_PAUSE) == A.RESULT_OK
 
 
 def test_resume_results(cfg):
@@ -283,19 +294,19 @@ def test_resume_results(cfg):
     sim, _r = loaded(cfg, [mkblock("A", 2, [mkstep("a", 50, pause_ok=True)])])
     sim._process_start()
     run(sim, ms=20, step_ms=10)
-    assert sim._execute(A.CMD_RESUME) == A.RESULT_STATE
+    assert p40_cmd(sim, A.CMD_RESUME) == A.RESULT_STATE
     sim.pause_req = True
     run(sim, ms=60, step_ms=10)
     assert sim.seq_state == 7
     sim.safe_stop = True
-    assert sim._execute(A.CMD_RESUME) == A.RESULT_INTERLOCK
+    assert p40_cmd(sim, A.CMD_RESUME) == A.RESULT_INTERLOCK
 
 
 def test_stop_after_cycle(cfg):
     sim, _r = loaded(cfg, [mkblock("A", 10, [mkstep("a", 50)])])
     sim._process_start()
     run(sim, ms=20, step_ms=10)
-    assert sim._execute(A.CMD_STOP_AFTER_CYCLE) == A.RESULT_OK
+    assert p40_cmd(sim, A.CMD_STOP_AFTER_CYCLE) == A.RESULT_OK
     assert sim.reg[A.D_STATE] == A.STATE_STOPPING or sim.stop_req
     done = run(sim, ms=500, step_ms=10)
     assert done and sim.end_reason == "사이클 후 정지"
@@ -308,7 +319,7 @@ def test_abort(cfg):
     sim, _r = loaded(cfg, [mkblock("A", 100, [mkstep("a", 50)])])
     sim._process_start()
     run(sim, ms=20, step_ms=10)
-    assert sim._execute(A.CMD_ABORT) == A.RESULT_OK
+    assert p40_cmd(sim, A.CMD_ABORT) == A.RESULT_OK         # v0.4.11: 그 스캔 P40 행 130 에서 적용
     assert not sim.running and sim.seq_state == 8
     assert "즉시 중단" in sim.end_reason
 
@@ -520,13 +531,13 @@ def test_remaining_ms_matches_simulator_after_pause(cfg):
     sim, r = loaded(cfg, blocks, stable_s=0, vmin=200)
     sim._process_start()
     run(sim, ms=250, step_ms=10)
-    assert sim._execute(A.CMD_PAUSE) == A.RESULT_OK
+    assert p40_cmd(sim, A.CMD_PAUSE) == A.RESULT_OK
     run(sim, ms=2000, step_ms=10, watch=lambda s: None)
     assert sim.seq_state == 7
     pos = {"block": sim.blk, "step": sim.step_no, "cycle": sim.cycle,
            "group_pass": sim.group_pass, "paused": True}
     want = R.remaining_ms(cfg, r, pos)
-    assert sim._execute(A.CMD_RESUME) == A.RESULT_OK
+    assert p40_cmd(sim, A.CMD_RESUME) == A.RESULT_OK          # 재개 스캔은 스텝 타이머가 돌지 않는다(M3)
     ran = [0]
 
     def count(_s):

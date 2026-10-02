@@ -8,6 +8,7 @@ state.py — PLC 레지스터를 화면이 쓸 모양으로 푼다 + 서버가 �
   "PLC 끊김"을 크게 보여 준다. 마지막 값을 계속 보여 주면 운전자가 현재 상태로 오해한다.
 """
 
+import os
 import time
 
 from . import addresses as A
@@ -21,6 +22,9 @@ from .convert import heater_temp
 # PC 자체 알림(PLC 알람이 아니라 프로그램이 판단한 것). 화면에서 구분해 보여 준다.
 PC_NOTICE_KEYS = ("plc_disconnected", "plc_hb_stall", "prm_mismatch",
                   "unconfirmed", "example_config")
+
+
+ALARM_LOAD_MAX = 200
 
 
 class AlarmTracker:
@@ -64,6 +68,42 @@ class AlarmTracker:
                 logger.write("ok", f"알람 해제 [{code}] {rec['name']}")
                 logger.alarm_event("해제", code, rec["name"], "중대" if rec["crit"] else "경고")
         return fresh
+
+    def load_recent(self, now=None):
+        """다시 시작할 때 오늘 · 어제 alarms-YYYYMMDD.csv 에서 최근 이력을 불러온다(풀린 시각 포함).
+        풀린 기록이 없는 것은 프로그램이 꺼져 있던 동안 어떻게 됐는지 모른다 — '모름(재시작 전)'으로 닫는다
+        (PLC 에 다시 붙어 그 알람이 아직 서 있으면 새 줄로 다시 생긴다)."""
+        import csv
+        import datetime
+        from . import paths
+        now = now or datetime.datetime.now()
+        rows = []
+        for d in (now - datetime.timedelta(days=1), now):
+            p = os.path.join(paths.ALARMS_DIR, f"alarms-{d:%Y%m%d}.csv")
+            try:
+                with open(p, encoding="utf-8-sig", newline="") as f:
+                    rows += list(csv.reader(f))[1:]
+            except OSError:
+                continue
+        hist = []                       # 오래된 것이 앞
+        for r in rows:
+            if len(r) < 5:
+                continue
+            ts, kind, code, name, sev = r[:5]
+            if kind == "발생":
+                hist.append({"code": code, "name": name, "crit": sev == "중대", "since": ts[11:19],
+                             "date": ts[5:10], "cleared": ""})
+            elif kind.startswith("해제"):
+                for h in reversed(hist):
+                    if h["code"] == code and not h["cleared"]:
+                        h["cleared"] = ts[11:19] if kind == "해제" else f"{kind} {ts[11:19]}"
+                        break
+        for h in hist:
+            if not h["cleared"]:
+                h["cleared"] = "모름(재시작 전)"
+        self.history = list(reversed(hist))[:ALARM_LOAD_MAX]
+        self.ver += 1
+        return len(self.history)
 
     def clear_all(self, why: str = ""):
         """PLC 연결이 끊기면 알람 목록을 비운다 — 옛 값을 현재 알람으로 보여 주면 안 된다.

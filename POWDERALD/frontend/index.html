@@ -75,7 +75,7 @@
             <div class="panel-head">히터 · 온도<span class="note" data-bind="tcNote"></span></div>
             <div class="panel-body tight"><table class="tbl" data-bind="heaterTbl"></table></div>
           </div>
-          <div class="panel" style="flex:0 0 330px">
+          <div class="panel" style="flex:0 0 384px">
             <div class="panel-head">MFC · 유량</div>
             <div class="panel-body tight"><table class="tbl" data-bind="mfcTbl"></table></div>
           </div>
@@ -247,17 +247,17 @@
             <button class="btn sm" data-cmd="alarm_ack">확인 (부저 끄기)</button>
             <button class="btn sm" data-cmd="alarm_reset">알람 리셋</button></span>
           </div>
-          <div class="panel-body tight"><table class="tbl" data-bind="alarmTbl"></table></div>
+          <div class="panel-body tight cap-alarm"><table class="tbl" data-bind="alarmTbl"></table></div>
         </div>
         <div class="panel" style="flex:0 0 auto">
           <div class="panel-head">프로그램 알림<span class="note">PLC 알람이 아니라 이 프로그램이 판단한 것</span></div>
-          <div class="panel-body tight" data-bind="pcNotices"></div>
+          <div class="panel-body tight cap-notice" data-bind="pcNotices"></div>
         </div>
         <div class="panel" style="flex:0 0 190px">
           <div class="panel-head">알람 이력<span class="note" data-bind="histNote"></span></div>
           <div class="panel-body tight"><table class="tbl" data-bind="histTbl"></table></div>
         </div>
-        <div class="panel grow">
+        <div class="panel grow log-min">
           <div class="panel-head">프로그램 로그</div>
           <div class="panel-body"><div class="logbox" data-bind="logBox"></div></div>
         </div>
@@ -359,6 +359,7 @@
 
 <script src="js/fmt.js?v=__ASSET_V__"></script>
 <script src="js/core.js?v=__ASSET_V__"></script>
+<script src="js/decimate.js?v=__ASSET_V__"></script>
 <script src="js/chart.js?v=__ASSET_V__"></script>
 <script src="js/app.js?v=__ASSET_V__"></script>
 <script src="js/views/schematic.js?v=__ASSET_V__"></script>

@@ -258,7 +258,7 @@ class PlcSim:
         self.t_pump_fb = TON()      # P45 T0025 펌프 운전 피드백 없음 10 s
         self.t_bp_fb = TON()        # P45 T0031 바이패스 펌프 운전 피드백 없음 10 s (Powder)
         self._stopped = False       # PLC STOP 결함 중이었다 — 풀리면 P00 첫 스캔
-        self._in_p40 = False        # P40 자리에서 명령을 평가하는 중
+        self.abort_req = False      # 즉시 중단 요청 — P40 행 130 에서 적용
         self.cmd_req = None         # P25 가 세운 이번 스캔 명령 요청 — 그 명령의 프로그램이 평가한다
         self.vent_to_done = False   # P45 T0022 출력 → 다음 스캔 P35 행 10 이 b8
         self.ive_bad_done = False   # P45 T0026 출력 → 다음 스캔 P35 행 22 가 알람1 b0
@@ -365,7 +365,7 @@ class PlcSim:
         self.seq_valves = self.prev_valves = 0
         self.rf_step = False
         self.alm0 = self.alm1 = self.prev_alm0 = self.prev_alm1 = 0
-        self.ack_req = self.reset_req = False
+        self.ack_req = self.reset_req = self.abort_req = False
         self.safe_stop = self.both_req = False
         self.air_bad = self.n2_bad = self.o3_ok = False
         self.vac_done = self.pump_to_done = self.rf_ref_done = False
@@ -442,11 +442,14 @@ class PlcSim:
         log.debug("sim: 명령 %s(%s) 요청", code, no)
 
     def _run_cmd(self, codes):
-        """이 프로그램의 명령이면 지금 평가해 D00003 에 결과를 쓴다."""
+        """이 프로그램의 명령이면 지금 평가해 D00003 에 결과를 쓴다. (코드, 결과) 또는 None."""
         code = self.cmd_req
         if code is not None and code in codes:
             self.cmd_req = None
-            self.reg[A.D_ACK_RESULT] = self._execute(code)
+            result = self._execute(code)
+            self.reg[A.D_ACK_RESULT] = result
+            return code, result
+        return None
 
     def _execute(self, code: int) -> int:
         # 시퀀서 동작 중 = 공정 준비·실행·일시정지·사이클 후 정지 예약
@@ -491,7 +494,7 @@ class PlcSim:
             return A.RESULT_OK
         if code == A.CMD_ABORT:
             if running:
-                self._process_end("운전자 즉시 중단", aborted=True)
+                self.abort_req = True   # 시퀀서에는 스텝 처리 뒤(행 130)에 적용한다
             return A.RESULT_OK          # 멈춰 있으면 아무것도 안 하고 0
 
         if code == A.CMD_ALARM_ACK:
@@ -618,8 +621,6 @@ class PlcSim:
             return A.RESULT_RECIPE
         self.running = True
         self._load_block(1)
-        if self.running and self.seq_state == 3 and self._in_p40:
-            self._prep_tick(self._clock())  # 시작 스캔에 블록 1 준비가 바로 돈다
         return A.RESULT_OK
 
     def _group(self, idx: int):
@@ -742,11 +743,7 @@ class PlcSim:
 
     def _sequencer(self, dt, now):
         """P40. ★ 안전 정지 요구는 이 스캔의 P30 이 정한 것 — 같은 스캔에 시퀀서도 8 이 된다."""
-        self._in_p40 = True
-        try:
-            self._run_cmd(SEQ_CMDS)         # 시작(행 0 · 21~23 · 133~134) · 재개(행 38) 등
-        finally:
-            self._in_p40 = False
+        ran = self._run_cmd(SEQ_CMDS)       # 시작(행 0 · 21~23 · 133~134) · 재개(행 38) 등
         if self.seq_state != 3 or not self.running:
             # 블록 준비가 아니면 준비 타이머는 꺼진다(입력이 꺼지면 바로 꺼지는 TON)
             self.t_mfc_to.run(False, 0, now)
@@ -756,13 +753,26 @@ class PlcSim:
             self.t_mfc_dev.run(False, 0, now)
             self.mfc_dev_done = False
         if not self.running:
+            self.abort_req = False
             return
-        if self.safe_stop:
-            why = ("MFC 안정 대기 시간 초과 — 안전 정지" if self.mfc_to_done else
-                   "공정 중 MFC 편차 — 안전 정지" if self.mfc_dev_done else "안전 정지 요구")
+        # ★ 재개 스캔(행 38)은 스텝 타이머(행 41)가 돌지 않는다 — 다음 스텝 적재(행 112~129)가 그 뒤다
+        if not (ran and ran[0] == A.CMD_RESUME and ran[1] == A.RESULT_OK):
+            self._seq_steps(dt, now)        # 행 41~129
+        # ★ 안전 정지 · 즉시 중단은 스텝 처리 뒤(행 130)에 시퀀서에 적용한다
+        if self.running and (self.safe_stop or self.abort_req):
+            if self.safe_stop:
+                why = ("MFC 안정 대기 시간 초과 — 안전 정지" if self.mfc_to_done else
+                       "공정 중 MFC 편차 — 안전 정지" if self.mfc_dev_done else "안전 정지 요구")
+            else:
+                why = "운전자 즉시 중단"
             self._process_end(why, aborted=True)
-            return
+        self.abort_req = False
+
+    def _seq_steps(self, dt, now):
+        """P40 행 41~129 — 블록 준비 · 스텝 시간 · 스텝 · 사이클 · 블록 넘김."""
         if self.seq_state == 3:
+            # 시작 스캔 · 블록을 적재한 스캔에도 여기서 바로 준비한다(행 95 → 103 · 105 · 112) — 스텝을
+            # 적재한 스캔에는 스텝 타이머(행 41)가 돌지 않는다
             self._prep_tick(now)
             return
         if self.seq_state == 7:     # 일시정지 — 시간이 흐르지 않는다
@@ -847,9 +857,9 @@ class PlcSim:
                 if self.blk + 1 <= self._w(A.D_RCP_BLOCK_COUNT):
                     self._load_block_values(self.blk + 1)
                 else:
-                    # 행 65 → 67 · 74: 블록 번호는 올리고 행 80 은 적재를 건너뛴다(스텝은 그대로)
+                    # 행 65 → 67 · 74: 블록 번호는 올리고 행 80 은 적재를 건너뛴다(스텝 · 사이클은 그대로 —
+                    # SEQ_CYCLE 은 행 56(DINC) · 행 92(블록 적재)에서만 쓴다)
                     self.blk += 1
-                    self.cycle = 1
                 self._recipe_error(why)
                 return
         self._load_block(self.blk + 1)              # ⑤ 넘으면 _load_block 이 종료 처리
@@ -927,11 +937,13 @@ class PlcSim:
         벤트 끝: 벤트 요청 AND 대기압 입력 → 같은 스캔에 벤트 요청을 지운다.
         PMP_VAC_DONE: 펌핑 요청 중 ILK_VAC_OK 가 되면 래치, 펌핑 요청이 없어지면 풀림.
         펌핑 시간 초과는 펌핑 요청 AND IV-E 출력 AND NOT VAC_DONE 동안만 잰다(IV-E 가 열린 때부터)."""
+        if DEV.HAS_O3:
+            # D04050 복사 — 보조 출력(바이패스 펌프 · IV-B · O3 발생기)은 이것으로(한 스캔 늦게).
+            # ★ 모두 닫기가 D04050 을 지우는 것(P50 행 16)보다 앞이다 — 그래서 명령 평가보다 먼저 복사한다
+            self.aux_copy = self.man_aux
         self._run_cmd(PUMP_CMDS)            # 펌프 시작(행 3~6) · 정지 · 벤트 · 모두 닫기
         i0 = self.reg[A.D_INPUT0]
         ilk = self.reg[A.D_INTERLOCK]
-        if DEV.HAS_O3:
-            self.aux_copy = self.man_aux    # D04050 복사 — 바이패스 펌프 · IV-B 는 이것으로(한 스캔 늦게)
         if self._pump_blocking():
             self.pump_req = False
             self.exh_req = False
@@ -974,9 +986,14 @@ class PlcSim:
         if self.t_pump_fb.run(self.pump_on and not (i0 >> A.IN0_PUMP_RUN) & 1, 10.0, now):
             self._latch0(A.ALM0_PUMP)
         if DEV.HAS_O3:
-            # 바이패스 펌프 운전 피드백(T0031, 행 39): 출력 AND 운전 입력 꺼짐 10 s → 알람1 b5.
-            # IV-B 는 운전 입력이 없으면 바로 닫힌다(행 40 — P60 DO_IVB)
+            # 바이패스 펌프 출력(DO_BP_RUN, 행 37)과 IV-B(행 40)는 여기서 복사본으로 정한다.
+            # DO_IVB = 수동 IV-B 요청 AND 바이패스 펌프 운전 입력 AND NOT 바이패스 펌프 알람 입력
             i1 = self.reg[A.D_INPUT1]
+            cp = self.aux_copy & DEV.AUX_CMD_MASK
+            bp_run = bool((i1 >> A.IN1_BP_RUN) & 1) and not (i1 >> A.IN1_BP_ALM) & 1
+            self.bypass_pump_on = bool(cp & (1 << A.AUX_BYPASS_PUMP))
+            self.ivb_on = bool(cp & (1 << A.AUX_IVB)) and bp_run
+            # 바이패스 펌프 운전 피드백(T0031, 행 38~39): 이 스캔의 출력 AND 운전 입력 꺼짐 10 s → 알람1 b5
             if self.t_bp_fb.run(self.bypass_pump_on and not (i1 >> A.IN1_BP_RUN) & 1, 10.0, now):
                 self._latch1(A.ALM1_BYPASS_PUMP)
 
@@ -1022,14 +1039,10 @@ class PlcSim:
             want_rf = self.rf_step if self.running else bool(aux_req & (1 << A.AUX_RF))
             self.rf_on = want_rf and bool((ilk >> A.ILK_RF_OK) & 1)
         if DEV.HAS_O3:
-            i1 = self.reg[A.D_INPUT1]
-            bp_run = bool((i1 >> A.IN1_BP_RUN) & 1) and not (i1 >> A.IN1_BP_ALM) & 1
-            # ★ 바이패스 펌프 · IV-B 는 P45 의 D04050 복사본으로 — 명령 12 · 안전 정지 요구 한 스캔 뒤에 바뀐다
+            # ★ 바이패스 펌프 · IV-B 는 P45 가 정했다. O3 발생기도 P45 의 D04050 복사본(P60 행 9 의 M00219)으로 —
+            #   명령 12 · 모두 닫기 · 안전 정지 요구 한 스캔 뒤에 바뀐다
             cp = self.aux_copy & DEV.AUX_CMD_MASK
-            self.bypass_pump_on = bool(cp & (1 << A.AUX_BYPASS_PUMP))
-            # DO_IVB = 수동 IV-B 요청 AND 바이패스 펌프 운전 입력 AND NOT 바이패스 펌프 알람 입력
-            self.ivb_on = bool(cp & (1 << A.AUX_IVB)) and bp_run
-            self.o3_gen_on = bool(aux_req & (1 << A.AUX_O3_GEN)) and self.o3_ok
+            self.o3_gen_on = bool(cp & (1 << A.AUX_O3_GEN)) and self.o3_ok
             # 래더 P60 순서 그대로:
             #   렁 28 — 공정 밸브 허가(인터락 b4)가 없거나 동시 요청이면 밸브 요청 = 0 (위 out)
             #   렁 35 — '걸러진' 요청에서 PV-R(b5) 만 다시 본다 (VLV_TMP2 = 요청 AND h0020)
@@ -1319,7 +1332,7 @@ class PlcSim:
         self.reg[A.D_SEQ_BLOCK_PASS] = lo
         self.reg[A.D_SEQ_BLOCK_PASS + 1] = hi
         # 스텝 경과는 스텝 실행 중에만 의미가 있다
-        ms = int(self.step_ms) if self.seq_state == 4 else 0
+        ms = int(round(self.step_ms)) if self.seq_state == 4 else 0       # 가짜 시계 소수 오차(19.999…) 내림 방지
         lo, hi = A.split_dword(ms)
         self.reg[A.D_SEQ_STEP_MS] = lo
         self.reg[A.D_SEQ_STEP_MS + 1] = hi

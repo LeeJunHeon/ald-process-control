@@ -34,7 +34,7 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 import argparse  # noqa: E402
 
-from powderald import commands, device as DEV, window  # noqa: E402
+from powderald import commands, device as DEV, logger, window  # noqa: E402
 from powderald.server import create_app  # noqa: E402
 from powderald.state import state  # noqa: E402
 from powderald.version import APP_NAME  # noqa: E402
@@ -125,10 +125,16 @@ def main():
 
     if args.headless:
         import uvicorn
-        free = window.find_free_port(host, port) or port
-        print(f"[info] {DEV.NAME} headless — http://{host}:{free}")
+        why = window.wait_port(host, port)
+        if why:
+            # ★ 창 모드와 같게 — 다른 포트로 조용히 옮기지 않고 이유를 알리고 멈춘다
+            text = window.port_busy_text(host, port, why)
+            print(f"[error] {text}", flush=True)
+            logger.write("err", text)
+            sys.exit(2)
+        print(f"[info] {DEV.NAME} headless — http://{host}:{port}")
         from powderald.server import uvicorn_config
-        uvicorn.Server(uvicorn_config(app, host, free)).run()
+        uvicorn.Server(uvicorn_config(app, host, port)).run()
         return
     window.run(app, host, port, side)
 

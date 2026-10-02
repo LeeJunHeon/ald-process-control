@@ -33,8 +33,7 @@
         cv.addEventListener('dblclick', function () { zoom = null; draw(); });
       }
     });
-    var fb = d.querySelector('[data-dlact="folder"]');
-    if (fb) fb.disabled = !core.canOperate();
+    folderLock();
     if (core.tab === 'datalog') {
       if (!items.length) refresh();
       draw();
@@ -218,6 +217,16 @@
     draw();
   });
 
-  core.register('datalog', { render: render, update: function () {} });
+  /** '폴더 열기' — live 를 받을 때마다 정한다(끊김 · 멈춤 뒤에도 켜져 있지 않게), 툴팁에 이유 */
+  function folderLock() {
+    var fb = d.querySelector('[data-dlact="folder"]');
+    if (!fb) return;
+    var why = core.lockReason();
+    fb.disabled = !!why;
+    var tip = why ? why + ' — 쓸 수 없습니다' : '';
+    if (fb.title !== tip) fb.title = tip;
+  }
+
+  core.register('datalog', { render: render, update: function () { folderLock(); } });
   w.viewDatalog = { refresh: refresh, open: open, charts: charts };
 })(window, document);

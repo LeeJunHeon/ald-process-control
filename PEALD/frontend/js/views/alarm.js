@@ -93,6 +93,9 @@
     var plc = t.plc || {};
     if (t.offline) {
       out.push(['err', '서버 연결 끊김 — 이 화면은 다시 연결될 때까지 값을 보이지 않습니다.']);
+    } else if (plc.stalled) {
+      out.push(['err', 'PLC 하트비트 멈춤 — ' + (plc.addr || '') + ' 연결은 됐지만 PLC 가 스캔을 돌리지 않습니다' +
+        '(STOP 일 수 있습니다). 값은 표시하지 않고 명령을 보내지 않습니다.']);
     } else if (!plc.connected) {
       out.push(['err', 'PLC 연결 끊김 — ' + (plc.addr || '') + ' 에 접속하지 못했습니다. 값 표시와 명령이 멈춥니다.']);
     } else if (!plc.hb_ok) {

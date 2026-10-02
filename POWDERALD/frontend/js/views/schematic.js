@@ -74,7 +74,7 @@
     }));
     if (label !== false) {
       var t = el('text', {
-        x: cx, y: below ? cy + 13 : cy - 9, 'font-size': 7.5, 'text-anchor': 'middle',
+        x: cx, y: below ? cy + 14 : cy - 9, 'font-size': 9, 'text-anchor': 'middle',
         fill: 'var(--ink-faint)', 'font-family': 'var(--font-sans)'
       });
       t.textContent = tag;
@@ -95,12 +95,13 @@
     }));
   }
 
-  /** MFC 상자: 이름 · 현재값 / 설정값 */
+  /** MFC 상자: 이름 / 현재값 / 설정값 — 세 줄(★ 현재 · 설정을 한 줄에 두면 1000 sccm 에서 글자가 겹쳤다).
+   *  배관이 붙는 높이(y + 15)는 그대로. */
   function mfcBox(x, y, no, name) {
-    box(x, y, 70, 30, { stroke: 'var(--primary)' });
-    txt(x + 4, y + 11, 'MFC' + no + ' ' + name, { size: 7, fill: 'var(--ink-faint)' });
-    txt(x + 4, y + 24, '—', { size: 10, weight: 700, fill: 'var(--pv)', mono: true, bind: 'mfc' + no + 'pv' });
-    txt(x + 66, y + 24, '—', { size: 7, fill: 'var(--sv)', anchor: 'end', mono: true, bind: 'mfc' + no + 'sv' });
+    box(x, y, 70, 40, { stroke: 'var(--primary)' });
+    txt(x + 4, y + 11, 'MFC' + no + ' ' + name, { size: 7.5, fill: 'var(--ink-faint)' });
+    txt(x + 4, y + 24, '—', { size: 10.5, weight: 700, fill: 'var(--pv)', mono: true, bind: 'mfc' + no + 'pv' });
+    txt(x + 4, y + 36, '—', { size: 8, fill: 'var(--sv)', mono: true, bind: 'mfc' + no + 'sv' });
   }
 
   /** 가열 용기(캐니스터·트랩): 온도 채널을 함께 보여 준다 */
@@ -240,7 +241,10 @@
       '<span><i style="background:var(--flow)"></i>흐름</span>' +
       '<span><i style="background:var(--pipe)"></i>대기</span>' +
       '<span><i style="background:var(--exh)"></i>배기</span>' +
-      '<span><i style="background:var(--vessel);border:1px solid var(--vessel-line)"></i>가열</span>';
+      '<span><i style="background:var(--vessel);border:1px solid var(--vessel-line)"></i>가열</span>' +
+      '<span><svg width="14" height="9" style="vertical-align:-1px">' +
+      '<path d="M2,1 L7,4.5 L2,8 Z M12,1 L7,4.5 L12,8 Z" fill="none" stroke="var(--ink-faint)" stroke-width="1" ' +
+      'stroke-dasharray="1.5 1.5"/></svg> 모름</span>';
   }
 
   /* ===================== render / update ===================== */
@@ -286,6 +290,9 @@
     var st = core.state || {};
     var str = st.structure || {};
     var conn = !!(t.plc && t.plc.connected);
+    // ★ 서버 끊김 · PLC 끊김 · 하트비트 멈춤이면 밸브 · 배기 · 펌프 상태를 모른다 — '닫힘 · 쉼'으로 그리지 않고
+    //   흐린 점선('모름', CSS #schemSvg.unknown)으로
+    svg.classList.toggle('unknown', !conn);
 
     // --- 밸브 (D00010 실제 출력) ---
     // 요청(D04012)했는데 출력이 안 나간 밸브(허가 대기)는 점선으로 구분한다.
@@ -315,7 +322,7 @@
     for (var i = 1; i <= 2; i++) {
       var m = mfc[i - 1] || {};
       setSv('mfc' + i + 'pv', conn ? fmt.flow(m.pv) : fmt.DASH);
-      setSv('mfc' + i + 'sv', conn ? ('SV ' + fmt.flow(m.sv)) : 'SV ' + fmt.DASH);
+      setSv('mfc' + i + 'sv', '설정 ' + (conn ? fmt.flow(m.sv) : fmt.DASH));
     }
     var heaters = t.heaters || [];
     [1, 2, 4, 5, 6].forEach(function (ch) {

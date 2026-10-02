@@ -303,6 +303,18 @@
     // 입력 워드1(RF·O3 관련)은 아래 장비 전용 패널에서 이미 보여 준다 —
     // 같은 칩을 두 번 그리면 인터락 패널이 넘친다.
     core.html(box, out.join(''));
+    snapIlks(box);
+  }
+
+  /** 인터락 칩 칸 높이를 칩 줄 높이의 배수로 — 낮은 화면(1280×900 등)에서 마지막 줄이 반만 보이지 않게
+   *  (넘치는 줄은 스크롤로 본다). */
+  function snapIlks(box) {
+    var chip = box.querySelector('.chip');
+    if (!chip) return;
+    box.style.maxHeight = '';
+    var gap = 3, rowH = chip.offsetHeight + gap, h = box.clientHeight;
+    if (!rowH || !h || box.scrollHeight <= h + 1) return;
+    box.style.maxHeight = Math.max(rowH - gap, Math.floor((h + gap) / rowH) * rowH - gap) + 'px';
   }
 
   /** 입력 칩 한 개.
@@ -412,7 +424,15 @@
     });
     core.setText('lockMsg', msg);
     var lm = core.bind('lockMsg');
-    if (lm && lm.title !== msg) lm.title = msg;           // 한 줄 말줄임 — 마우스를 올리면 전체
+    if (lm && lm.title !== msg) lm.title = msg;           // 줄을 바꿔 다 보인다(툴팁에도 같은 글)
+    // '수동 조작…' — 서버 끊김 · PLC 끊김 · 멈춤이면 잠근다(값도 명령도 없다). 원격은 보기로 연다
+    var mo = core.bind('mnOpen');
+    if (mo) {
+      var why = t.offline ? '서버 연결 끊김' : p.stalled ? 'PLC 하트비트 멈춤' : !conn ? 'PLC 끊김' : '';
+      mo.disabled = !!why;
+      var mt = why ? why + ' — 수동 조작을 열 수 없습니다' : '';
+      if (mo.title !== mt) mo.title = mt;
+    }
     core.setText('schemNote', !conn ? core.downText() + ' — 값 없음'
       : (t.state ? t.state.name : ''));
   }

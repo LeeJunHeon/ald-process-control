@@ -68,14 +68,47 @@ def set_app_user_model_id():
 
 
 # ===================== 포트 =====================
+PORT_WAIT_S = 5.0       # 설정 포트가 쓰이고 있으면 이만큼 다시 시도한 뒤 이유를 알리고 멈춘다
+
+
+def port_probe(host: str, port: int) -> str:
+    """포트를 서버가 열 수 있는가 — 빈 문자열이면 된다, 아니면 이유.
+    ★ 실제 서버(uvicorn → asyncio.create_server)와 같은 소켓 옵션으로 확인한다: POSIX 는 SO_REUSEADDR 를 켜므로
+      빠르게 다시 시작해 TIME_WAIT 만 남은 포트도 열린다(옵션 없이 bind 하면 '사용 중'으로 잘못 본다).
+      Windows 는 asyncio 가 SO_REUSEADDR 를 켜지 않고(다른 프로그램의 포트를 빼앗을 수 있다), TIME_WAIT 만
+      남은 포트는 옵션 없이도 bind 된다."""
+    with socket.socket() as s:
+        if os.name == "posix":
+            s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+        try:
+            s.bind((host, port))
+            return ""
+        except OSError as e:
+            return f"{type(e).__name__}: {e}"
+
+
+def wait_port(host: str, port: int, total_s: float = None, step_s: float = 0.5) -> str:
+    """설정 포트를 잠시(PORT_WAIT_S) 다시 시도한다. 빈 문자열이면 열 수 있다, 아니면 마지막 이유.
+    ★ 다른 포트로 조용히 옮기지 않는다 — 열린 화면 · 원격 화면은 설정 포트를 계속 두드린다."""
+    total_s = PORT_WAIT_S if total_s is None else total_s
+    end = time.monotonic() + total_s
+    while True:
+        why = port_probe(host, port)
+        if not why or time.monotonic() >= end:
+            return why
+        time.sleep(step_s)
+
+
+def port_busy_text(host: str, port: int, why: str) -> str:
+    return (f"설정 포트 {host}:{port} 를 열 수 없습니다 — 다른 프로그램(또는 이미 떠 있는 이 프로그램)이 쓰고 "
+            f"있습니다. {PORT_WAIT_S:g} s 다시 시도했습니다. 쓰는 프로그램을 끄거나 설정 server.port 를 바꾸세요. ({why})")
+
+
 def find_free_port(host: str, start: int, tries: int = 10):
+    """비어 있는 포트(자체 점검처럼 내부용 포트를 고를 때만 — 설정 포트에는 wait_port)."""
     for p in range(start, start + tries):
-        with socket.socket() as s:
-            try:
-                s.bind((host, p))
-                return p
-            except OSError:
-                continue
+        if not port_probe(host, p):
+            return p
     return None
 
 
@@ -257,14 +290,13 @@ def run(app, host: str, port: int, side: str = None):
         _msgbox("데이터 폴더에 쓸 수 없습니다.\n"
                 f"{paths.DATA_DIR}\n\n로그와 알람 이력이 저장되지 않습니다.")
 
-    free = find_free_port(host, port)
-    if free is None:
-        _msgbox(f"사용 가능한 포트를 찾지 못했습니다 ({port}~{port + 9}).")
+    why = wait_port(host, port)
+    if why:
+        text = port_busy_text(host, port, why)
+        print(f"[error] {text}")
+        logger.write("err", text)
+        _msgbox(text)
         return
-    if free != port:
-        print(f"[info] 포트 {port} 사용 중 → {free} 사용")
-        logger.early("info", f"포트 {port} 사용 중 → {free} 사용")
-    port = free
 
     def run_server():
         global _SERVER_ERROR

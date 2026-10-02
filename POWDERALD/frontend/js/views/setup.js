@@ -196,13 +196,15 @@
 
   function update(t) {
     var conn = !!(t.plc && t.plc.connected);
-    core.setText('dgRtt', conn && t.plc.rtt_ms != null ? t.plc.rtt_ms + ' ms' : fmt.DASH);
+    // ★ PLC 하트비트 멈춤 — PLC 값은 모르지만 통신은 된다. PC 쪽 값(응답 · PC 하트비트 간격)은 보인다
+    var link = conn || !!(t.plc && t.plc.stalled);
+    core.setText('dgRtt', link && t.plc.rtt_ms != null ? t.plc.rtt_ms + ' ms' : fmt.DASH);
     core.setText('dgScan', conn && t.scan_max_ms != null ? core.scanText(t.scan_max_ms) : fmt.DASH);
     var sc = core.bind('dgScan');
     var stip = conn && t.scan_max_ms === 0 ? 'PLC 가 아직 쓰지 않음(D00080 = 0)' : '';
     if (sc && sc.title !== stip) sc.title = stip;
-    core.setText('dgHb', !conn ? fmt.DASH : (t.plc.hb_ok ? '정상' : '멈춤'));
-    core.setText('dgHbGap', conn && t.plc.hb_gap_max_ms != null
+    core.setText('dgHb', (t.plc || {}).stalled ? '멈춤' : !conn ? fmt.DASH : (t.plc.hb_ok ? '정상' : '멈춤'));
+    core.setText('dgHbGap', link && t.plc.hb_gap_max_ms != null
       ? t.plc.hb_gap_ms + ' ms (최대 ' + t.plc.hb_gap_max_ms + ' ms)' : fmt.DASH);
     var lg = t.loop || {};
     core.setText('dgLag', lg.recent_max_ms == null ? fmt.DASH
@@ -226,13 +228,15 @@
         var ev = r.eng == null ? fmt.DASH
           : r.unit === 'Torr' ? fmt.torr(r.eng)
             : (Number.isInteger(r.eng) ? String(r.eng) : fmt.num(r.eng, 1));
-        return '<tr' + (r.match ? '' : ' class="hl"') + '><td class="l">' + core.esc(r.name) +
+        return '<tr' + (r.match === false ? ' class="hl"' : '') + '><td class="l">' + core.esc(r.name) +
           '<div class="mono dim small">' + core.esc(r.addr) + '</div></td>' +
           '<td class="mono">' + (r.setting == null ? '<span class="unconf">없음</span>' : core.esc(r.setting)) + '</td>' +
           '<td class="mono">' + core.esc(r.written) + '</td>' +
           '<td class="mono">' + (r.readback == null ? fmt.DASH : core.esc(r.readback)) +
           '<div class="dim small">' + core.esc(ev) + (r.unit ? ' ' + core.esc(r.unit) : '') + '</div></td>' +
-          '<td>' + core.chip(r.match ? '✓ 일치' : '✕ 불일치', r.match ? 'ok' : 'stop') + '</td></tr>';
+          // 멈춤 · 끊김이면 되읽기를 모른다 — 일치 칸도 '—'
+          '<td>' + (r.match == null ? fmt.DASH : core.chip(r.match ? '✓ 일치' : '✕ 불일치', r.match ? 'ok' : 'stop')) +
+          '</td></tr>';
       }).join(''));
     } else if (body && !conn) {
       core.html(body, '<tr><td class="l dim" colspan="5">' + core.downText() + ' — 값 없음</td></tr>');
@@ -252,7 +256,7 @@
     var chip = core.bind('admChip');
     var local = core.canOperate();
     if (chip) {
-      core.html(chip, !local ? core.chip('원격 — 보기 전용', 'off')
+      core.html(chip, !local ? core.chip(core.lockReason() + ' — 편집 안 됨', 'off')
         : blocked ? core.chip('입력 막힘 ' + blocked + ' s', 'stop')
           : adm.unlocked && left > 0 ? core.chip('잠금 해제 · ' + Math.ceil(left / 60) + '분 남음', 'ok')
             : core.chip(adm.has_pin ? '잠김' : 'PIN 없음 — 처음 편집할 때 정합니다', 'warn'));

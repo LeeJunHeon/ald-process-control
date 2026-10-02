@@ -16,6 +16,10 @@
  *
  * 그 밖
  *   - 서버가 구간을 최대 2000 묶음(최소·최대·평균)으로 줄여 보낸다 — 평균은 선, 최소~최대는 옅은 띠.
+ *   - ★ 그리기 전에 보이는 구간만 자르고 플롯 폭보다 점이 많으면 화소 열마다 처음 · 최소 · 최대 · 끝만
+ *     남긴다(decimate.js — 실시간 1 시간 · 11 계열도 한 번 그리기 수 ms). 띠는 열마다 하나, 1 px 이상일 때만.
+ *   - 같은 그림이면(창이 1 px 도 안 움직였고 새 점이 없으면) 다시 그리지 않는다. 캔버스 크기는 바뀔 때만 바꾸고,
+ *     해상도는 실제 보이는 화소(CSS zoom × 기기 배율)에 맞춘다.
  *   - 묶음 사이가 gap 보다 벌어지면(꺼져 있던 구간) 선을 잇지 않는다.
  *   - 압력은 로그 축 — 0 이하 값은 그리지도 축 범위에 넣지도 않는다.
  *   - 설정값 선(…설정 · _sv)은 그 현재값과 같은 색의 점선(colorMap).
@@ -80,16 +84,93 @@
     return m ? { label: m[1], unit: m[2] === '°C' ? '℃' : m[2] } : { label: String(label), unit: '' };
   }
 
+  /* ===================== 묶음 라벨 ===================== */
+  /** 같은 값으로 묶인 이름들 → [{names, tail}]. 이름 = '채널 나머지' — 'CH1 현재' · 'CH1 설정' · 'CH1 Stage·챔버'.
+   *  ★ 현재와 설정이 같은 값이면 'CH1 현재 · 설정' 처럼 무엇이 묶였는지 남긴다(예전에는 꼬리 말을 빼
+   *    'CH1 · CH1' 이 됐다). 현재만 묶이면 꼬리 말은 모두에 공통일 때만('CH1–CH12'). */
+  function mergeSegs(labels) {
+    var order = [], byCh = {};
+    labels.forEach(function (lb) {
+      var parts = String(lb).split(' '), ch = parts[0];
+      var kind = isSetpoint(lb) ? 'sp' : 'pv';
+      if (!byCh[ch]) { byCh[ch] = { pv: null, sp: null }; order.push(ch); }
+      byCh[ch][kind] = lb;
+    });
+    var both = [], pv = [], sp = [];
+    order.forEach(function (ch) {
+      var x = byCh[ch];
+      if (x.pv && x.sp) both.push(ch); else if (x.sp) sp.push(ch); else pv.push(ch);
+    });
+    var segs = [];
+    if (both.length) segs.push({ names: both, tail: '현재 · 설정' });
+    if (pv.length) {
+      var last = function (lb) { var w = String(lb).split(' '); return w.length > 1 ? w[w.length - 1] : ''; };
+      var lw = last(byCh[pv[0]].pv);
+      var common = lw && pv.every(function (ch) { return last(byCh[ch].pv) === lw; });
+      // 설정과 함께 묶인 그룹이면 현재 쪽도 '현재'라고 적는다(무엇이 묶였는지)
+      segs.push({ names: pv, tail: common ? lw : (both.length || sp.length ? '현재' : '') });
+    }
+    if (sp.length) segs.push({ names: sp, tail: '설정' });
+    return segs;
+  }
+
+  function segText(segs) {
+    return segs.map(function (s) {
+      return (s.raw ? s.names.join(' · ') : runs(s.names)) + (s.tail ? ' ' + s.tail : '');
+    }).join(' · ');
+  }
+
+  /** ['CH1','CH2','CH3','CH5'] → 'CH1–CH3 · CH5' (이어지는 번호는 줄여 쓴다) */
+  function runs(names) {
+    var out = [], i = 0;
+    while (i < names.length) {
+      var m = /^(\D+)(\d+)$/.exec(names[i]), j = i;
+      while (m && j + 1 < names.length) {
+        var n = /^(\D+)(\d+)$/.exec(names[j + 1]);
+        if (!n || n[1] !== m[1] || Number(n[2]) !== Number(m[2]) + (j + 1 - i)) break;
+        j++;
+      }
+      out.push(j - i >= 2 ? names[i] + '–' + names[j] : names.slice(i, j + 1).join(' · '));
+      i = j + 1;
+    }
+    return out.join(' · ');
+  }
+
   /* ===================== 차트 ===================== */
   function HistChart(canvas, opts) {
     opts = opts || {};
     var st = { series: [], x0: 0, x1: 1, logY: false, noNeg: false, gap: Infinity, bands: [],
                dead: false, tol: null, xLabel: function (x) { return String(x); } };
     var drag = null, hoverX = null, hoverY = null, scroll = 0;
-    var lastRows = [], lastG = null;
+    var lastRows = [], lastG = null, lastSig = '', views = [];
     var g = canvas.getContext('2d');
 
-    function set(o) { for (var k in o) st[k] = o[k]; draw(); }
+    /** 그림을 바꾸는 것들의 요약 — 같으면 다시 그리지 않는다(창이 1 px 미만 움직임 · 새 점 없음). */
+    function signature() {
+      var W = canvas.clientWidth, H = canvas.clientHeight;
+      var cols = Math.max(1, W - PAD_L - PAD_R);
+      var px = (st.x1 - st.x0) / cols;
+      var parts = [W, H, scale(), Math.floor(st.x0 / px), Math.floor(st.x1 / px), st.logY, st.dead, st.gap,
+                   st.bands.length, hoverX, hoverY, drag ? drag.px1 : '', scroll];
+      st.series.forEach(function (se) {
+        var n = se.pts.length, lp = n ? se.pts[n - 1] : null;
+        parts.push(se.label, se.color, se.hidden ? 1 : 0, n, lp ? lp[0] : '', lp ? lp[3] : '');
+      });
+      return parts.join('|');
+    }
+
+    function set(o) {
+      for (var k in o) st[k] = o[k];
+      var sig = signature();
+      if (sig === lastSig) return;
+      draw();
+    }
+
+    /** CSS zoom 을 거친 실제 보이는 배율(getBoundingClientRect 에는 들어가고 clientWidth 에는 안 들어간다). */
+    function scale() {
+      var r = canvas.getBoundingClientRect();
+      return r.width && canvas.clientWidth ? r.width / canvas.clientWidth : 1;
+    }
 
     function geom() {
       var W = canvas.clientWidth, H = canvas.clientHeight;
@@ -108,17 +189,19 @@
 
     function range() {
       var lo = Infinity, hi = -Infinity;
-      st.series.forEach(function (se) {
+      function take(v) { if (okVal(v)) { if (v < lo) lo = v; if (v > hi) hi = v; } }
+      st.series.forEach(function (se, si) {
         if (se.hidden) return;
-        se.pts.forEach(function (p) {
+        var vw = views[si];
+        // ★ 로그 축은 0 이하를 범위에 넣지 않는다(1E-5 까지 늘어나 선이 바닥에 깔린다).
+        //   줄인 점(열마다 처음 · 최소 · 최대 · 끝)과 열 띠(최소 · 최대)로 보면 원래 점 전체와 범위가 같다
+        vw.line.forEach(function (p) {
           if (!p || p[0] < st.x0 || p[0] > st.x1) return;
-          // ★ 로그 축은 0 이하를 범위에 넣지 않는다(1E-5 까지 늘어나 선이 바닥에 깔린다)
-          for (var j = 1; j <= 3; j++) {
-            var v = p[j];
-            if (!okVal(v)) continue;
-            if (v < lo) lo = v;
-            if (v > hi) hi = v;
-          }
+          take(p[1]); take(p[2]); take(p[3]);
+        });
+        vw.band.forEach(function (b) {
+          if (b[0] < st.x0 || b[0] > st.x1) return;
+          take(b[1]); take(b[2]);
         });
       });
       if (!isFinite(lo)) { lo = st.logY ? 1e-3 : 0; hi = st.logY ? 1e3 : 1; }
@@ -207,13 +290,22 @@
     /* ---------- 그리기 ---------- */
     function draw() {
       if (!canvas.clientWidth) return;
-      var dpr = w.devicePixelRatio || 1;
+      lastSig = signature();
+      // ★ 해상도 = 실제 보이는 화소(기기 배율 × CSS zoom) — clientWidth × dpr 로만 두면 zoom 0.8~0.9 에서
+      //   백킹 스토어가 보이는 크기와 달라 글자가 흐리다. 크기는 바뀔 때만 바꾼다(바꾸면 캔버스를 다시 만든다)
+      var k = (w.devicePixelRatio || 1) * scale();
       var G = geom();
       lastG = G;
-      canvas.width = G.W * dpr; canvas.height = G.H * dpr;
-      g.setTransform(dpr, 0, 0, dpr, 0, 0);
+      var bw = Math.round(G.W * k), bh = Math.round(G.H * k);
+      if (canvas.width !== bw) canvas.width = bw;
+      if (canvas.height !== bh) canvas.height = bh;
+      g.setTransform(bw / G.W, 0, 0, bh / G.H, 0, 0);
       g.clearRect(0, 0, G.W, G.H);
       if (G.x1 <= G.x0 || G.y1 <= G.y0 || st.x1 <= st.x0) return;
+      var cols = Math.max(1, Math.round((G.x1 - G.x0) * k));
+      views = st.series.map(function (se) {
+        return se.hidden ? { line: [], band: [] } : Decimate.view(se.pts, st.x0, st.x1, st.gap, cols);
+      });
       var r = range();
       var grid = cssVar('--grid'), axis = cssVar('--axis');
       g.font = '10px ' + cssVar('--font-sans');
@@ -247,20 +339,21 @@
 
       g.save();
       g.beginPath(); g.rect(G.x0, G.y0, G.x1 - G.x0, G.y1 - G.y0); g.clip();
-      st.series.forEach(function (se) {
+      st.series.forEach(function (se, si) {
         if (se.hidden) return;
-        // 최소~최대 띠(설정값 점선에는 두지 않는다)
+        var vw = views[si];
+        // 최소~최대 띠(설정값 점선에는 두지 않는다) — 열마다 하나, 높이 1 px 이상일 때만
         if (!se.dashed) {
           g.fillStyle = se.color; g.globalAlpha = 0.15;
-          se.pts.forEach(function (p) {
-            if (!p || p[1] == null || p[2] == null) return;
-            var a = p[1], b = p[2];
+          vw.band.forEach(function (bd) {
+            var a = bd[1], b = bd[2];
             if (st.logY) {
               if (!(b > 0)) return;
-              if (!(a > 0)) a = p[3] > 0 ? p[3] : b;     // 0 묶음이 띠를 세로로 채우지 않게
+              if (!(a > 0)) a = b;                       // 0 묶음이 띠를 세로로 채우지 않게
             }
-            var x = xPos(p[0], G), ya = yPos(a, r, G), yb = yPos(b, r, G);
-            g.fillRect(x - 0.5, Math.min(ya, yb), 1.5, Math.max(1, Math.abs(ya - yb)));
+            var ya = yPos(a, r, G), yb = yPos(b, r, G);
+            if (Math.abs(ya - yb) < 1) return;
+            g.fillRect(xPos(bd[0], G) - 0.5, Math.min(ya, yb), 1.5, Math.abs(ya - yb));
           });
           g.globalAlpha = 1;
         }
@@ -268,11 +361,12 @@
         g.setLineDash(se.dashed ? [5, 3] : []);
         g.beginPath();
         var prev = null;
-        se.pts.forEach(function (p) {
+        vw.line.forEach(function (p) {
           if (!p || !okVal(p[3])) { prev = null; return; }
           var x = xPos(p[0], G), y = yPos(p[3], r, G);
-          // ★ 묶음 사이가 벌어지면(꺼져 있던 구간) 잇지 않는다
-          if (!prev || p[0] - prev[0] > st.gap) g.moveTo(x, y); else g.lineTo(x, y);
+          // ★ 묶음 사이가 벌어지면(꺼져 있던 구간) 잇지 않는다 — decimate 가 그 자리에 null 을 넣는다
+          //   (줄인 점끼리는 같은 구간이어도 gap 보다 벌어질 수 있어 여기서 간격으로 보지 않는다)
+          if (!prev) g.moveTo(x, y); else g.lineTo(x, y);
           prev = p;
         });
         g.stroke();
@@ -303,14 +397,16 @@
       var rows = [];
       st.series.forEach(function (se) {
         if (se.hidden) return;
-        var info = xc != null ? valueAt(se, xc) : lastIn(se);
+        // ★ 지시선 · 줄 자리는 늘 그 선의 오른쪽 끝 값 높이(머리 주석의 규칙) — hover 때도 커서 값은 띠의 글자로만
+        var end = lastIn(se);
+        var info = xc != null ? valueAt(se, xc) : end;
         var stale = !st.dead && xc == null && info && info.x < st.x1 - tol;
         var text = st.dead || !info ? fmt.DASH : valText(info.v);
         if (text !== fmt.DASH && se.unit) text += ' ' + se.unit;
         rows.push({ se: se, label: se.label, text: text, stale: stale,
                     when: stale ? st.xLabel(info.x, 0) : '',
-                    v: st.dead || !info ? null : info.v,
-                    want: st.dead || !info ? G.y1 : Math.max(G.y0, Math.min(G.y1, yPos(info.v, r, G))) });
+                    v: st.dead || !end ? null : end.v,
+                    want: st.dead || !end ? G.y1 : Math.max(G.y0, Math.min(G.y1, yPos(end.v, r, G))) });
       });
       var avail = G.y1 - G.y0;
       var rowH = rows.length ? Math.min(ROW_H, avail / rows.length) : ROW_H;
@@ -361,7 +457,7 @@
         g.font = 'bold 10px ' + sans; g.textAlign = 'left';
         g.fillStyle = e.stale ? faint : ink;
         var room = G.W - 4 - vw - 6 - (G.x1 + LEAD_W + 2);
-        e.shown = ellipsize(e.label, room);
+        e.shown = fitLabel(e, room);
         g.fillText(e.shown, G.x1 + LEAD_W + 2, e.ly);
         e.rowH = rowH;
       });
@@ -385,32 +481,26 @@
       });
       out.forEach(function (e) {
         if (e.group.length < 2) return;
-        // 꼬리 말('현재' · '설정')은 묶인 이름 모두에 공통일 때만 — 아니면 'CH1–CH12' 만
-        //   ('CH1 Stage·챔버' … 'CH12 예비 12' 를 묶으며 'Stage·챔버' 가 붙던 것)
-        var last = function (x) { var w = x.label.split(' '); return w.length > 1 ? w[w.length - 1] : ''; };
-        var lw = last(e);
-        var tail = lw && e.group.every(function (x) { return last(x) === lw; }) ? ' ' + lw : '';
         e.full = e.group.map(function (x) { return x.label; }).join(' · ');
-        e.label = runs(e.group.map(function (x) { return x.label.split(' ')[0]; })) + tail;
+        e.segs = mergeSegs(e.group.map(function (x) { return x.label; }));
+        e.label = segText(e.segs);
         e.want = e.group.reduce(function (s, x) { return s + x.want; }, 0) / e.group.length;
       });
       return out;
     }
 
-    /** ['CH1','CH2','CH3','CH5'] → 'CH1–CH3 · CH5' (이어지는 번호는 줄여 쓴다) */
-    function runs(names) {
-      var out = [], i = 0;
-      while (i < names.length) {
-        var m = /^(\D+)(\d+)$/.exec(names[i]), j = i;
-        while (m && j + 1 < names.length) {
-          var n = /^(\D+)(\d+)$/.exec(names[j + 1]);
-          if (!n || n[1] !== m[1] || Number(n[2]) !== Number(m[2]) + (j + 1 - i)) break;
-          j++;
-        }
-        out.push(j - i >= 2 ? names[i] + '–' + names[j] : names.slice(i, j + 1).join(' · '));
-        i = j + 1;
-      }
-      return out.join(' · ');
+    function fitLabel(e, room) {
+      if (g.measureText(e.label).width <= room || !e.segs) return ellipsize(e.label, room);
+      // ★ 긴 묶음 — 무엇이 묶였는지('현재 · 설정' 등)는 남기고 채널 목록만 'CH4 외 5' 처럼 줄인다
+      var short = e.segs.map(function (s) {
+        return { names: s.names.length > 1 ? [s.names[0] + ' 외 ' + (s.names.length - 1)] : s.names,
+                 tail: s.tail, raw: true };
+      });
+      var t = segText(short);
+      if (g.measureText(t).width <= room) return t;
+      var n = e.group.length;
+      t = e.segs[0].names[0] + ' 외 ' + (n - 1) + '줄';
+      return ellipsize(t, room);
     }
 
     function ellipsize(text, room) {
@@ -485,9 +575,14 @@
       set: set, draw: draw, state: st,
       /** 시험·확인용: 지금 띠의 줄들과 커서 → 차트 좌표 */
       debug: function () {
-        return { rows: lastRows.map(function (e) { return { label: e.shown, ly: e.ly, text: e.text, stale: e.stale }; }),
-                 hoverX: hoverX, geom: lastG };
-      }
+        return { rows: lastRows.map(function (e) {
+                   return { label: e.shown, ly: e.ly, want: e.want, text: e.text, stale: e.stale };
+                 }),
+                 hoverX: hoverX, geom: lastG,
+                 drawn: views.map(function (v) { return v.line.length; }) };
+      },
+      /** 시험 · 확인용: 마우스 위치(캔버스 좌표)를 놓고 다시 그린다 */
+      hoverAt: function (x, y) { hoverX = x; hoverY = y; draw(); }
     };
   }
 
@@ -496,5 +591,7 @@
   HistChart.baseOf = baseOf;
   HistChart.isSetpoint = isSetpoint;
   HistChart.splitUnit = splitUnit;
+  HistChart.mergeSegs = mergeSegs;
+  HistChart.segText = segText;
   w.HistChart = HistChart;
 })(window, document);

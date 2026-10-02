@@ -64,7 +64,7 @@ def uvicorn_config(app, host: str, port: int):
 _ASSET_FILES = ["css/tokens.css", "css/style.css", "js/fmt.js", "js/core.js", "js/app.js",
                 "js/views/main.js", "js/views/schematic.js", "js/views/trend.js",
                 "js/views/alarm.js", "js/views/setup.js", "js/views/recipe.js",
-                "js/views/manual.js", "js/views/datalog.js", "js/chart.js"]
+                "js/views/manual.js", "js/views/datalog.js", "js/decimate.js", "js/chart.js"]
 
 
 def create_app(config_path: str = "", single_instance: bool = True,
@@ -84,6 +84,10 @@ def create_app(config_path: str = "", single_instance: bool = True,
     state.install_config(cfg, problems, source)
     for lv, msg in problems:
         logger.write(lv, f"설정 확인 필요 — {msg}")
+    try:
+        state.alarms.load_recent()      # 다시 시작해도 알람 이력이 비지 않게(오늘 · 어제 파일)
+    except Exception as e:  # noqa: BLE001
+        logger.write("warn", f"알람 이력 불러오기 실패(빈 이력으로 시작): {type(e).__name__}: {e}")
     trendlog_mod.cleanup((cfg.get("log") or {}).get("trend_keep_days", 90))
     low = trendlog_mod.disk_warning()
     if low:

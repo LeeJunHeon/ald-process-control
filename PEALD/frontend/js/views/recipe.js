@@ -167,12 +167,14 @@
       var b = core.bind(k);
       if (!b) return;
       var block = !core.canOperate() || ((run || flow) && k !== 'rcSaveAs');
+      // 열린 레시피가 없으면 저장 · 다른 이름 · 이름 바꾸기 · 삭제 · 올리기 · 시작 모두 잠근다(눌러도 알림만이었다)
+      if (!cur) block = true;
       // 이름 바꾸기 · 삭제 답을 기다리는 동안 저장 · 이름 바꾸기 · 삭제를 잠근다
       if ((renaming || deleting) && k !== 'rcUpload' && k !== 'rcStart') block = true;
       if (k === 'rcUpload' || k === 'rcStart') block = block || !core.plcOk();
       b.disabled = block;
     });
-    core.setText('rcRunNote', !core.canOperate() ? '보기 전용 — 저장 · 올리기는 이 PC 에서만'
+    core.setText('rcRunNote', !core.canOperate() ? core.lockReason() + ' — 저장 · 올리기를 할 수 없습니다'
       : run ? '공정 중입니다 — 저장·올리기는 공정이 끝난 뒤에 하세요'
         : (flow ? '시작 절차 진행 중 — 끝나거나 대기 취소 뒤에 바꿀 수 있습니다' : ''));
     var conn = core.plcOk() + '|' + core.offline;           // PLC 끊김 ↔ 서버 끊김도 다시 그린다
@@ -206,7 +208,12 @@
     var row = e.closest('.plcrow');
     if (row) row.classList.toggle('stale', !conn);
     var pre = conn ? '' : core.chip(core.downText(), 'off') + ' <span class="dim">마지막으로 읽은 것:</span> ';
-    if (!p.number) { core.html(e, pre + '<span class="dim">PLC 레시피 정보를 아직 읽지 않았습니다</span>'); return; }
+    if (!('number' in p)) { core.html(e, pre + '<span class="dim">PLC 레시피 정보를 아직 읽지 않았습니다</span>'); return; }
+    if (!p.number) {
+      // 읽었는데 번호가 0 — PLC 에 올라간 레시피 표가 없다
+      core.html(e, pre + '<span class="dim">PLC 에 올라간 레시피 표가 없습니다(번호 0)</span>');
+      return;
+    }
     core.html(e, pre + core.chip(p.plc_ok ? '✓ PLC 검사 통과' : '✕ PLC 검사 미통과', p.plc_ok ? 'ok' : 'warn') +
       ' <b>' + core.esc(p.name || '(이름 모름)') + '</b>' +
       ' <span class="mono dim">번호 ' + core.esc(p.number) + ' · 스텝 ' + core.esc(p.step_count) +
@@ -216,6 +223,9 @@
 
   function drawEmpty() {
     drawn = false;
+    core.setText('rcName', '열린 레시피 없음');
+    var dt0 = core.bind('rcDirty');
+    if (dt0) dt0.hidden = true;
     var box = core.bind('rcEdit');
     if (box) box.innerHTML =
       '<div class="empty" style="padding:36px 20px;line-height:2">' +
@@ -379,7 +389,7 @@
       bs.textContent = b ? ('1 사이클 ' + fmt.ms(b.cycle_ms) + ' s × ' + b.repeat +
         '회 = ' + fmt.hms(b.total_ms / 1000)) : '';
     }
-    core.setText('rcName', curName || '(저장 안 함)');
+    core.setText('rcName', !cur ? '열린 레시피 없음' : (curName || '(저장 안 함)'));
     var dt = core.bind('rcDirty');
     if (dt) dt.hidden = !dirty;
   }

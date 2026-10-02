@@ -802,7 +802,7 @@ def test_c8_pump_no_feedback_alarm_then_pump_stops(cfg):
     fs = FakeSim(cfg)
     s = fs.sim
     s.set_fault("pump_nofb", True)
-    assert s._execute(A.CMD_PUMP_START) == A.RESULT_OK
+    assert fs.cmd(A.CMD_PUMP_START) == A.RESULT_OK
     fs.step(int(9.8 / 0.02))
     assert s.pump_on and not alm0(s, A.ALM0_PUMP)
     fs.step(int(0.3 / 0.02))

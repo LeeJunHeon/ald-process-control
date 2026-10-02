@@ -100,13 +100,18 @@
     if (sm && !sm.hidden) renderSimPanel();
   }
 
-  /** PLC 하트비트 멈춤(STOP 등) — 연결은 돼 있어도 PLC 값은 멈춘 옛 값이다. 화면에는 끊김처럼 '—' 로
-   *  보여 주고(알람도 모름) 조작을 잠근다. plc.stalled 로 머리말 · 잠금 문구를 구분한다. */
+  /** PLC 하트비트 멈춤(STOP 등) — 연결은 돼 있어도 PLC 값은 멈춘 옛 값이다. 화면에는 PLC 값을 '—' 로
+   *  보여 주고(알람도 모름) 조작을 잠근다. ★ 멈춤은 plc.stalled 로 따로 든다 — 각 화면이 끊김이 아니라 '멈춤'
+   *  문구를 쓴다. PC 쪽 값(응답 시간 · PC 하트비트 간격 · 루프 지연 · 데이터 로그)은 멈춤 동안에도 보인다.
+   *  PRM 표는 되읽기 · 일치를 모른다('—'). */
   function blankStalled(t) {
     var p = t.plc || {};
+    var prm = (p.prm || []).map(function (r) {
+      return Object.assign({}, r, { readback: null, eng: null, match: null });
+    });
     return { clock: t.clock, date: t.date, alarm_popup_seq: t.alarm_popup_seq, alarm_hist_ver: t.alarm_hist_ver,
-             datalog: t.datalog, scan_max_ms: t.scan_max_ms,
-             plc: Object.assign({}, p, { connected: false, stalled: true }),
+             datalog: t.datalog, loop: t.loop,
+             plc: Object.assign({}, p, { connected: false, stalled: true, prm: prm, prm_mismatch: [] }),
              alarms: [], heaters: [], mfc: [], process: {}, manual: {}, seq: {}, extra: {}, pressure: {} };
   }
 
@@ -457,10 +462,9 @@
         '<td class="mono">' + esc(a.since) + '</td>' +
         '<td class="l">' + esc(a.name) + '</td></tr>';
     }).join('');
-    // 서버 · PLC 가 끊겼으면 알람을 모른다 — '없습니다' 가 아니라 '알 수 없음'
+    // 서버 · PLC 가 끊겼거나 PLC 가 멈췄으면 알람을 모른다 — '없습니다' 가 아니라 '알 수 없음'
     var known = !t.offline && t.plc && t.plc.connected;
-    html(tbl, !known ? '<tr><td class="empty">' + (t.offline ? '서버' : 'PLC') +
-      ' 연결이 끊겨 지금 알람을 알 수 없습니다</td></tr>'
+    html(tbl, !known ? '<tr><td class="empty">' + downWhy(t) + ' 지금 알람을 알 수 없습니다</td></tr>'
       : rows || '<tr><td class="empty">현재 알람이 없습니다</td></tr>');
     // 원격은 '닫기' 만 — 확인 · 리셋은 조작이다
     var op = canOperate();
@@ -562,11 +566,35 @@
     return !offline && !!(lastState && (lastState.access || {}).local) && !!(lastState.sim_faults || []).length;
   }
 
-  function canOperate() {
-    if (offline) return false;
-    if (!(lastState && (lastState.access || {}).local)) return false;
-    var p = (lastState.live || {}).plc;
-    return !idBlocked(p) && !(p && p.stalled);
+  function canOperate() { return !lockReason(); }
+
+  /** 조작할 수 없는 이유('' = 조작 가능) — 서버 끊김 · 원격 · 다른 장비 · 장비 ID 없음 · PLC 하트비트 멈춤.
+   *  ★ 이유를 나눠 쓴다 — 끊김 · 멈춤인데 이 PC 운전자에게 '원격 — 보기 전용'이라 하지 않게. */
+  function lockReason() {
+    if (offline) return '서버 연결 끊김';
+    if (!(lastState && (lastState.access || {}).local)) return '원격 접속 — 보기 전용';
+    var p = (lastState.live || {}).plc || {};
+    if (p.id_state === 'wrong') return '다른 장비의 PLC';
+    if (p.id_state === 'missing') return 'PLC 장비 ID 없음';
+    if (p.stalled) return 'PLC 하트비트 멈춤';
+    return '';
+  }
+
+  /** PLC 가 필요한 조작을 못 하는 이유 — 위 이유 + PLC 끊김 · 주소 없음 */
+  function plcReason() {
+    var why = lockReason();
+    if (why) return why;
+    var p = ((lastState || {}).live || {}).plc || {};
+    if (p.config_error) return 'PLC 주소 없음';
+    return p.connected ? '' : 'PLC 끊김';
+  }
+
+  /** '서버 연결이 끊겨' · 'PLC 하트비트가 멈춰' · 'PLC 연결이 끊겨' — 값을 모르는 이유(문장 앞부분) */
+  function downWhy(t) {
+    t = t || ((lastState || {}).live || {});
+    if (offline || t.offline) return '서버 연결이 끊겨';
+    if ((t.plc || {}).stalled) return 'PLC 하트비트가 멈춰';
+    return 'PLC 연결이 끊겨';
   }
 
   w.core = {
@@ -590,6 +618,11 @@
       } catch (e) { console.error('late render ' + name, e); }
     },
     canOperate: canOperate,
+    lockReason: lockReason,
+    plcReason: plcReason,
+    downWhy: downWhy,
+    /** PLC 하트비트 멈춤(연결은 됨)인가 */
+    stalled: function () { return !offline && !!(((lastState || {}).live || {}).plc || {}).stalled; },
     /** 이 PC(로컬) 접속인가 — 종료 단추처럼 PLC 와 무관한 것만 이걸로 판단한다 */
     isLocal: function () { return !offline && !!(lastState && (lastState.access || {}).local); },
     /** 마지막으로 받은 권한이 이 PC 였는가 — 서버가 끊겨도 '프로그램 종료'(force_close)는 누를 수 있게 */
