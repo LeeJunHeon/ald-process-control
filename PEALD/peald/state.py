@@ -34,23 +34,29 @@ _ALARM_TS = re.compile(r"\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}$")
 _ALARM_CODE = re.compile(r"A[01]-\d{2}$")
 
 
-def _alarm_rows(path: str, tail: int = ALARM_TAIL_BYTES) -> list:
-    """알람 CSV 의 끝 tail 바이트만 읽어 온전한 줄만 돌려준다. 깨진 글자는 바꿔 읽고(errors=replace),
-    끊긴 줄(쓰다 꺼져 등급이 '중' 까지만 있는 줄 등)은 버린다."""
+def _alarm_rows(path: str, tail: int = ALARM_TAIL_BYTES):
+    """알람 CSV 의 끝 tail 바이트만 읽어 온전한 줄만 돌려준다 — (줄 목록, 읽은 바이트 수). 깨진 글자는 바꿔 읽고
+    (errors=replace), 끊긴 줄(쓰다 꺼져 등급이 '중' 까지만 있는 줄 등)은 버린다."""
     import csv
-    import io
     with open(path, "rb") as f:
         f.seek(0, os.SEEK_END)
         size = f.tell()
         start = max(0, size - tail)
         f.seek(start)
         raw = f.read()
+    nread = len(raw)
     if start > 0:
         cut = raw.find(b"\n")
         raw = raw[cut + 1:] if cut >= 0 else b""        # 중간부터 읽었으면 첫 (잘린) 줄은 버린다
-    text = raw.decode("utf-8", errors="replace").lstrip("\ufeff")
+    # \u2605 v0.4.13: NUL \uc740 \uac78\ub7ec \uc77d\uace0(\uc804\uc6d0\uc774 \ub04a\uae30\uba74 \ud30c\uc77c \ub05d\uc774 NUL \ub85c \ucc44\uc6cc\uc9c8 \uc218 \uc788\ub2e4 \u2014 128 kB \ub118\uac8c \uc774\uc5b4\uc9c0\uba74 csv \uce78 \ud06c\uae30
+    #   \uc624\ub958\ub85c \ud30c\uc77c \uc804\uccb4\ub97c \ubc84\ub838\ub2e4), \uc904\ub9c8\ub2e4 \ub530\ub85c \uc77d\ub294\ub2e4(\ud55c \uc904\uc758 \uc624\ub958\uac00 \ub2e4\ub978 \uc904\uc744 \ubc84\ub9ac\uc9c0 \uc54a\uac8c)
+    text = raw.decode("utf-8", errors="replace").lstrip("\ufeff").replace("\x00", "")
     out = []
-    for r in csv.reader(io.StringIO(text, newline="")):
+    for line in text.splitlines():
+        try:
+            r = next(csv.reader([line]), [])
+        except csv.Error:
+            continue
         if len(r) < 5:
             continue
         ts, kind, code, name, sev = (c.strip() for c in r[:5])
@@ -59,7 +65,7 @@ def _alarm_rows(path: str, tail: int = ALARM_TAIL_BYTES) -> list:
         if kind != "발생" and not kind.startswith("해제"):
             continue
         out.append((ts, kind, code, name, sev))
-    return out
+    return out, nread
 
 
 class AlarmTracker:
@@ -129,12 +135,15 @@ class AlarmTracker:
         from . import paths
         now = now or datetime.datetime.now()
         rows = []
+        self.read_bytes = 0             # 이번에 읽은 바이트 수(시험 · 확인용)
         for d in (now - datetime.timedelta(days=1), now):
             p = os.path.join(paths.ALARMS_DIR, f"alarms-{d:%Y%m%d}.csv")
             if not os.path.exists(p):
                 continue
             try:
-                rows += _alarm_rows(p)          # ★ 끝에서만 · 깨진 글자 바꿔 읽기 · 끊긴 줄 버림
+                got, nread = _alarm_rows(p)     # ★ 끝에서만 · 깨진 글자 바꿔 읽기 · 끊긴 줄 버림
+                rows += got
+                self.read_bytes += nread
             except (OSError, ValueError, csv.Error) as e:
                 logger.write("warn", f"알람 이력 불러오기 실패({os.path.basename(p)}): {e}")
                 continue

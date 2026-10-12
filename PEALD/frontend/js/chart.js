@@ -20,7 +20,10 @@
  *     남긴다(decimate.js — 실시간 1 시간 · 11 계열도 한 번 그리기 수 ms). 띠는 열마다 하나, 1 px 이상일 때만.
  *   - ★ 같은 그림이면 다시 그리지 않는다(v0.4.12): 창이 1 px 이상 움직였거나, 새 점이 마지막 보이는 열의
  *     처음 · 최소 · 최대 · 끝(과 띠) 화소를 바꿨을 때만(Decimate.tailKey — 지난 그림의 y 축으로 화소를 잰다).
- *     점 개수 · 마지막 점이 바뀌었다고 다시 그리지 않는다(1 시간 보기에서 5 Hz 로 다시 그리던 것). 캔버스 크기는 바뀔 때만 바꾸고,
+ *     점 개수 · 마지막 점이 바뀌었다고 다시 그리지 않는다(1 시간 보기에서 5 Hz 로 다시 그리던 것).
+ *     ★ v0.4.13: 열은 절대 시각으로 센다(Decimate.grid — 멈춘 계열이 x0 움직임마다 다시 그리게 하던 것), 계열마다
+ *     '마지막 점이 tol 보다 오래됨'도 서명에 넣는다(한 계열 끊김을 바로). 그림이 같아도 띠의 글자(값 · 흐림 · 시각)가
+ *     바뀌었으면 띠 영역만 지우고 다시 쓴다(최대 초당 1 번). 캔버스 크기는 바뀔 때만 바꾸고,
  *     해상도는 실제 보이는 화소(CSS zoom × 기기 배율)에 맞춘다.
  *   - 묶음 사이가 gap 보다 벌어지면(꺼져 있던 구간) 선을 잇지 않는다.
  *   - 압력은 로그 축 — 0 이하 값은 그리지도 축 범위에 넣지도 않는다.
@@ -37,6 +40,7 @@
 
   var PAD_L = 52, PAD_R = 196, PAD_T = 10, PAD_B = 30;
   var ROW_H = 13, ROW_MIN = 12, LEAD_W = 14;     // 줄 간격은 12 px 아래로 줄이지 않는다(글자 10 px)
+  var BAND_MIN_MS = 1000;                          // 띠 글자만 다시 쓰는 것은 초당 1 번까지(v0.4.13)
   var PALETTE_N = 12;
 
   function cssVar(n) { return getComputedStyle(d.documentElement).getPropertyValue(n).trim(); }
@@ -145,6 +149,8 @@
                dead: false, tol: null, xLabel: function (x) { return String(x); } };
     var drag = null, hoverX = null, hoverY = null, scroll = 0;
     var lastRows = [], lastG = null, lastR = null, lastSig = '', views = [];
+    var lastBandText = '', lastBandAt = 0;
+    var clock = opts.now || Date.now;           // 시험은 가짜 시계를 준다
     var g = canvas.getContext('2d');
 
     /** 그림을 바꾸는 것들의 요약 — 같으면 다시 그리지 않는다.
@@ -163,18 +169,51 @@
       } : function (v) { return v; };
       var parts = [W, H, k, Math.floor(st.x0 / px), Math.floor(st.x1 / px), st.logY, st.dead, st.gap,
                    st.bands.length, hoverX, hoverY, drag ? drag.px1 : '', scroll];
+      var tol = tolerance();
       st.series.forEach(function (se) {
         parts.push(se.label, se.color, se.hidden ? 1 : 0,
-                   se.hidden ? '' : Decimate.tailKey(se.pts, st.x0, st.x1, dcols, ypx));
+                   se.hidden ? '' : Decimate.tailKey(se.pts, st.x0, st.x1, dcols, ypx),
+                   // ★ v0.4.13: 이 계열의 마지막 점이 tol 보다 오래됐나(drawBand 의 흐림과 같은 판정) — 한 계열만
+                   //   끊긴 것(CH1 통신 끊김 등)이 창이 1 px 움직일 때까지 늦게 보이던 것
+                   se.hidden ? '' : (staleOf(se, tol) ? 's' : ''));
       });
       return parts.join('|');
+    }
+
+    /** 오른쪽 끝 값이 tol 보다 오래됐나(띠 글자 흐림) — 커서를 올리지 않았을 때 */
+    function staleOf(se, tol) {
+      var end = lastIn(se);
+      return !st.dead && hoverX == null && !!end && end.x < st.x1 - tol;
+    }
+
+    /** 띠에 보이는 글자(값 · 흐림 · 시각)의 요약 — 플롯은 그대로 두고 띠만 다시 쓸지 정한다(v0.4.13). */
+    function bandText() {
+      if (hoverX != null) return '';
+      var tol = tolerance();
+      return st.series.map(function (se) {
+        if (se.hidden) return '';
+        var end = lastIn(se);
+        var text = st.dead || !end ? fmt.DASH : valText(end.v);
+        return text + (staleOf(se, tol) ? '~' + st.xLabel(end.x, 0) : '');
+      }).join('|');
     }
 
     function set(o) {
       for (var k in o) st[k] = o[k];
       var sig = signature();
-      if (sig === lastSig) return;
-      draw();
+      if (sig !== lastSig) { draw(); return; }
+      // ★ 그림이 같아도 띠의 글자(화소보다 작은 변화)가 바뀌었으면 띠만 지우고 다시 쓴다 — 최대 초당 1 번.
+      //   줄 자리 · 지시선은 서명이 같으면(마지막 값의 화소가 같으면) 그대로 맞다
+      if (!lastG || !lastR || clock() - lastBandAt < BAND_MIN_MS) return;
+      if (bandText() !== lastBandText) redrawBand();
+    }
+
+    function redrawBand() {
+      var G = lastG;
+      g.clearRect(G.x1 + 1, G.y0 - 2, G.W - G.x1, G.y1 - G.y0 + 4);     // drawBand 의 잘라 그리기 영역
+      drawBand(G, lastR, null);
+      lastBandText = bandText();
+      lastBandAt = clock();
     }
 
     /** CSS zoom 을 거친 실제 보이는 배율(getBoundingClientRect 에는 들어가고 clientWidth 에는 안 들어간다). */
@@ -376,7 +415,7 @@
             var rowsPx = bd.n + (st.logY ? 0 : (bd.hs || 0) * perUnit);   // 점마다 칸 높이(최소 1 px)의 합
             var stack = Math.max(1, rowsPx * 1.5 * k / h);
             g.globalAlpha = Math.min(0.9, 1 - Math.pow(0.85, stack));
-            g.fillRect(G.x0 + bd.col * colW, Math.min(ya, yb), Math.max(colW, 1 / k), h);
+            g.fillRect(xPos(bd.xs, G), Math.min(ya, yb), Math.max(colW, 1 / k), h);   // 절대 시각 열(v0.4.13)
           });
           g.globalAlpha = 1;
         }
@@ -412,6 +451,8 @@
       drawBand(G, r, hx);
       if (hx != null) drawCursor(G, hx);
       lastSig = signature();          // 이번 그림의 y 축으로 다시 — 다음 비교가 같은 축 기준이 되게
+      lastBandText = bandText();
+      lastBandAt = clock();
     }
 
     /* ---------- 라벨 띠 ---------- */

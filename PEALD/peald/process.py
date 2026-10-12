@@ -710,9 +710,14 @@ class ProcessRunner:
             rep = f"/{reps}" if reps else ""
             return f"사이클 후 정지 (블록 {blk} · 사이클 {cyc}{rep})"
         if seq == 8 and A.bit(s[A.D_ALARM0], A.ALM0_RECIPE):
-            why = self._table_fault(blk, s[A.D_SEQ_STEP])
-            if self._b13_rose(s) or why:
-                return f"중단 (레시피 표 오류 — {why or f'블록 {blk} 적재 거절'})"
+            if not (self.active_table or {}).get("words"):
+                # 표 없이 이어받았다 — 남은 b13 인지 가릴 표가 없으니 이번 공정 중 선 것만 표 오류로
+                if self._b13_rose(s):
+                    return f"중단 (레시피 표 오류 — 블록 {blk} · 표 모름)"
+            else:
+                why = self._table_fault(blk, s[A.D_SEQ_STEP])
+                if self._b13_rose(s) or why:
+                    return f"중단 (레시피 표 오류 — {why or f'블록 {blk} 적재 거절'})"
         if self._abort_sent:
             return "중단 (운전자 중단)"
         if self._abort_unknown:
@@ -889,46 +894,68 @@ class ProcessRunner:
         return out
 
     # ===================== PLC 가 이미 돌고 있을 때 =====================
-    async def adopt_running(self, push_log):
-        """PC 를 다시 켰는데 PLC 가 이미 공정 중이면 레시피를 되찾아 이어 간다."""
+    def adopt_wanted(self) -> bool:
+        """이어받기를 시도할 때인가 — PLC 가 공정 중인데 이 PC 가 맡은 공정이 없고(active_run 거짓),
+        이 PC 의 시작 절차 · 끝 처리(중단 결과 · b13 대기 · 미뤄 둔 끝) 중이 아니다.
+        ★ 골라 둔 레시피는 막지 않는다 — 이어받으면 PLC 에 올라간 레시피로 바뀐다."""
         link = self.state.link
-        if not (link and link.connected):
-            return
-        if link.status[A.D_STATE] not in RUNNING_STATES:
-            return
-        if self.recipe:
-            return
-        # ★ v0.4.12: b13 은 되읽기 전 상태로 — 되읽는 동안 선 b13 은 '이번 공정 중 선 것'이다
+        if not (link and link.connected) or link.status[A.D_STATE] not in RUNNING_STATES:
+            return False
+        return not (self.active_run or self.busy or self._abort_pending
+                    or self._b13_wait is not None or self._end_deferred is not None)
+
+    async def adopt_running(self, push_log) -> bool:
+        """PC 를 다시 켰는데(또는 링크가 다시 붙었는데) PLC 가 이미 공정 중이면 레시피를 되찾아 이어 간다.
+        server 의 이어받기 루프가 링크가 붙어 있는 동안 몇 초마다 부른다(adopt_wanted 일 때만 실제로 한다).
+        이어받았으면 True.
+        ★ b13 은 늘 되읽기 전 상태로 정한다(되읽는 동안 선 b13 은 이번 공정 것).
+        ★ 되읽기가 세 번 다 실패하면 이름 · 표 없이 이어받는다 — 데이터 로그를 열고 끝 판정을 한다(표가 있어야
+          하는 이유 글만 '표 모름'). 되읽는 중 끊기면 로그를 남기고 다음 시도로 넘긴다."""
+        if not self.adopt_wanted():
+            return False
+        link = self.state.link
         b13_pre = A.bit(link.status[A.D_ALARM0], A.ALM0_RECIPE)
         words = None
-        for i in range(ADOPT_READ_TRIES):             # 되읽기가 실패하면 다시(한 번 놓쳤다고 이어받기를 버리지 않는다)
+        for i in range(ADOPT_READ_TRIES):             # 되읽기가 실패하면 다시(한 번 놓쳤다고 버리지 않는다)
             if i:
                 await asyncio.sleep(ADOPT_READ_GAP_S)
             if not link.connected:
-                return
+                break
             words = await link.read_recipe_area()
             if words:
                 break
-        if not words:
-            await push_log(f"PLC 가 공정 중인데 레시피 표를 {ADOPT_READ_TRIES}번 읽지 못했습니다 — 이어받지 않습니다", "warn")
-            return
-        # ★ 되읽는 동안 공정이 끝났거나 다른 레시피가 열렸으면 이어받지 않는다
-        if not (link.connected and link.status[A.D_STATE] in RUNNING_STATES) or self.recipe:
-            return
-        info = R.from_plc_words(words)
-        name = storage.find_by_number(info["number"])
-        # 끝 판정의 표 근거는 PLC 에 실제로 올라가 있는 표(되읽은 것)
-        if name:
-            self.select(name)
-            self.run = {"name": name, "recipe": self.recipe, "table": dict(self.table or {}, words=list(words))}
-            await push_log(f"PLC 가 이미 공정 중입니다 — 레시피 [{name}] "
-                           f"(번호 {info['number']})로 이어 갑니다", "warn")
+        if not link.connected:
+            await push_log("PLC 가 공정 중인데 레시피 표를 되읽는 중 연결이 끊겼습니다 — 다시 붙으면 이어받기를 "
+                           "다시 시도합니다", "warn")
+            return False
+        # ★ 되읽는 동안 공정이 끝났거나 이 PC 가 공정을 맡았으면 이어받지 않는다
+        if not self.adopt_wanted():
+            return False
+        if words:
+            info = R.from_plc_words(words)
+            name = storage.find_by_number(info["number"])
+            # 끝 판정의 표 근거는 PLC 에 실제로 올라가 있는 표(되읽은 것)
+            if name and self.select(name)[0]:
+                self.run = {"name": name, "recipe": self.recipe,
+                            "table": dict(self.table or {}, words=list(words))}
+                await push_log(f"PLC 가 이미 공정 중입니다 — 레시피 [{name}] "
+                               f"(번호 {info['number']})로 이어 갑니다", "warn")
+            else:
+                self.recipe = None
+                self.recipe_name = f"(PLC 번호 {info['number']})"
+                self.table = {"number": info["number"], "checksum": info["checksum"]}
+                self.state.recipe_check = {}
+                self.run = {"name": self.recipe_name, "recipe": None, "table": dict(self.table, words=list(words))}
+                await push_log(f"PLC 가 이미 공정 중입니다 — 번호 {info['number']} 에 맞는 "
+                               f"로컬 레시피가 없어 이름 없이 표시합니다", "warn")
         else:
-            self.recipe_name = f"(PLC 번호 {info['number']})"
-            self.table = {"number": info["number"], "checksum": info["checksum"]}
-            self.run = {"name": self.recipe_name, "recipe": None, "table": dict(self.table, words=list(words))}
-            await push_log(f"PLC 가 이미 공정 중입니다 — 번호 {info['number']} 에 맞는 "
-                           f"로컬 레시피가 없어 이름 없이 표시합니다", "warn")
+            self.recipe = None
+            self.recipe_name = ADOPT_NO_TABLE_NAME
+            self.table = None
+            self.state.recipe_check = {}
+            self.run = {"name": self.recipe_name, "recipe": None, "table": None}
+            await push_log(f"PLC 가 이미 공정 중인데 레시피 표를 {ADOPT_READ_TRIES}번 읽지 못했습니다 — 표 없이 "
+                           "이어 갑니다(데이터 로그 · 끝 판정은 하고, 표가 필요한 이유는 '표 모름')", "warn")
         self._was_running = True
         self.started_at = time.time()
         self.active_run = True                  # 이어받은 공정도 데이터 로그 구간
@@ -939,10 +966,13 @@ class ProcessRunner:
         self._b13_cleared = False
         self._abort_sent = self._abort_pending = self._abort_unknown = False
         self._end_deferred = self._b13_wait = None
+        return True
 
 
 ADOPT_READ_TRIES = 3     # 이어받을 때 PLC 레시피 표 되읽기 시도 횟수
 ADOPT_READ_GAP_S = 0.5   # 그 사이 간격
+ADOPT_RETRY_S = 3.0      # PLC 가 공정 중인데 맡은 공정이 없으면 이만큼마다 이어받기를 다시 시도(server)
+ADOPT_NO_TABLE_NAME = "(PLC 레시피 — 표 모름)"
 B13_WAIT_S = 1.0        # 시퀀서 8 로 끝났을 때 레시피 표 오류(b13)가 공개되기를 기다리는 시간
 ABORT_GRACE_S = 1.0     # 결과를 못 받은 즉시 중단 뒤 이만큼 지나도 공정 중이면 중단이 닿지 않은 것
 

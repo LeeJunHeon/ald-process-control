@@ -201,12 +201,13 @@ def prm_problems(cfg: dict) -> list:
 
 
 def host_valid(host) -> bool:
-    """server.host 형식 — 빈 값(모든 주소) · localhost · IPv4/IPv6 주소만. 이름은 받지 않는다(Host 검사와 같은 규칙)."""
+    """server.host 형식 — 빈 값(= 기본 127.0.0.1) · localhost(대소문자 상관없음) · IPv4/IPv6 주소만. 이름은 받지
+    않는다(Host 검사와 같은 규칙). 모든 주소에서 받으려면 0.0.0.0(IPv4) 또는 ::(IPv6)."""
     if host is None:
         return True
     if not isinstance(host, str) or host != host.strip():
         return False
-    if host in ("", "localhost"):
+    if host == "" or host.lower() == "localhost":
         return True
     try:
         ipaddress.ip_address(host)
@@ -228,8 +229,8 @@ def validate(cfg: dict) -> list:
         p.append(("err", f"server.port 값이 올바르지 않습니다: {srv.get('port')!r}"))
     if not host_valid(srv.get("host")):
         # ★ v0.4.12: 이름 · 공백 · 잘못된 주소 — 서버를 열지 못하고 멈춘다(포트를 먼저 묶을 때 같은 이유로)
-        p.append(("err", f"server.host 형식이 올바르지 않습니다: {srv.get('host')!r} — 빈 값(모든 주소) · "
-                         "localhost · IP 주소만 씁니다"))
+        p.append(("err", f"server.host 형식이 올바르지 않습니다: {srv.get('host')!r} — 빈 값(= 127.0.0.1) · "
+                         "localhost · IP 주소만 씁니다(모든 주소는 0.0.0.0 또는 ::)"))
     if (cfg.get("window") or {}).get("side") not in ("left", "right"):
         p.append(("warn", "window.side 는 left 또는 right 여야 합니다"))
 

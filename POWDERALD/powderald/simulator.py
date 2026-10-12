@@ -210,6 +210,7 @@ class PlcSim:
         self.group_pass = 0
         self.step_ms = 0.0          # 현재 스텝 경과 (실제 시간)
         self.step_dur = 0           # 실효 스텝 시간
+        self.step_long = False      # 긴 스텝(원래 시간 > 60 s — 100 ms 타이머 · D00026 100 ms 단위)
         self.step_flags = 0
         self.seq_valves = 0         # 시퀀서가 요구하는 밸브
         self.prev_valves = 0        # 직전 출력('새로 열리는 밸브' 판정용)
@@ -731,7 +732,10 @@ class PlcSim:
         vmin = self._prm(A.D_PRM_VALVE_MIN_MS)      # 래더 비교는 부호 있는 16비트
         if (valves & ~self.prev_valves) and t < vmin:
             t = vmin
-        if t > 60_000:
+        # ★ v0.4.13: 긴 스텝(100 ms 타이머) 판정은 레시피의 원래 시간으로(래더 행 124~125 — STG_TIME > 60000).
+        #   100 ms 로 내린 뒤로 판정하면 원래 60,001~60,099 ms 가 60,000 이 되어 짧은 스텝(1 ms 공개)으로 다뤄졌다
+        self.step_long = t > 60_000
+        if self.step_long:
             t = (t // 100) * 100        # 100 ms 타이머 — 나머지는 버린다
 
         self.step_flags = flags
@@ -1349,7 +1353,7 @@ class PlcSim:
         #   공개한다. 가짜 시계 소수 오차(19.999…)는 아주 작은 여유로 푼다
         if self.seq_state == 4:
             ms = int(self.step_ms + TIME_EPS_MS)
-            if self.step_dur > 60_000:
+            if self.step_long:
                 ms = (ms // 100) * 100
         else:
             ms = 0

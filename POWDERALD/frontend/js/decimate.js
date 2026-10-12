@@ -10,7 +10,8 @@
  *   (계열당 최대 4 × 열 수). 끊김(앞 점과 gap 보다 벌어짐)이 있으면 그 자리에서 열 묶음을 새로 시작하고 line 에
  *   null 을 넣는다 — ★ 그리는 쪽은 null 에서만 선을 끊는다(줄인 점끼리는 같은 구간이어도 gap 보다 벌어질 수 있다).
  *   최소 · 최대 띠는 열마다 하나 [x, 최소, 최대].
- *   ★ v0.4.12: 띠 배열에 속성 n(점 수) · col(열 번호, 줄이지 않은 경로는 null) · hs(묶음 높이 합 Σ 최대 − 최소)를
+ *   ★ v0.4.12: 띠 배열에 속성 n(점 수) · col(열 번호, 줄이지 않은 경로는 null) · hs(묶음 높이 합 Σ 최대 − 최소) ·
+ *   xs(v0.4.13 — 열이 시작하는 x, 줄이지 않은 경로는 null)를
  *   붙인다 — 그리는 쪽이 띠 진하기를 줄이기 전 모양(점마다 옅은 칸을 겹쳐 그리던 것)에 맞추는 데 쓴다.
  *   반환 { line: [점…], band: [[x, 최소, 최대]…], lo: 첫 보이는 index, hi: 끝 index }
  *
@@ -47,10 +48,26 @@
 
   function finite(v) { return v != null && isFinite(v); }
 
-  function bandOf(x, lo, hi, n, col, hs) {
+  function bandOf(x, lo, hi, n, col, hs, xs) {
     var b = [x, lo, hi];
-    b.n = n; b.col = col; b.hs = hs;
+    b.n = n; b.col = col; b.hs = hs; b.xs = xs;
     return b;
+  }
+
+  /** ★ v0.4.13: 화소 열을 절대 시각으로 센다 — 열 = floor(t / 열 폭) − floor(x0 / 열 폭). 실시간 창은 x0 이 5 Hz 로
+   *  조금씩 움직이는데, 열을 x0 부터 재면 열 경계가 화소의 일부만큼씩 밀려 새 점이 없는 계열(PLC 멈춤 · '—')의
+   *  마지막 열 묶음이 매번 바뀌었다(그래서 계속 다시 그렸다). 첫 열은 x0 앞에서 시작할 수 있다(그리는 쪽이 자른다).
+   *  last = 창 안 점이 가질 수 있는 마지막 열 — x1 이 열 경계에 딱 걸리면 x1 의 점이 열을 하나 더 만들지 않게. */
+  var EPS = 1e-9;
+  function grid(x0, x1, cols) {
+    var w = (x1 - x0 > 0 ? x1 - x0 : 1) / cols;
+    var base = Math.floor(x0 / w + EPS);
+    return {
+      w: w, base: base,
+      last: Math.max(0, Math.ceil(x1 / w - EPS) - 1 - base),
+      col: function (t) { return Math.floor(t / w + EPS) - base; },
+      start: function (c) { return (base + c) * w; }
+    };
   }
 
   function view(pts, x0, x1, gap, cols) {
@@ -62,7 +79,6 @@
     cols = Math.max(1, Math.floor(cols || 1));
     var line = [], band = [];
     var n = hi - lo;
-    var span = x1 - x0 > 0 ? x1 - x0 : 1;
     if (n <= cols) {
       var px = null;
       for (var i = lo; i < hi; i++) {
@@ -76,7 +92,8 @@
       return { line: line, band: band, lo: lo, hi: hi };
     }
     // 열 묶음: 처음 · 최소 · 최대 · 끝(평균 기준), 띠는 열마다 최소~최대 하나
-    var cur = -1, first = null, mn = null, mx = null, last = null, bl = Infinity, bh = -Infinity, prevX = null;
+    var G = grid(x0, x1, cols);
+    var cur = null, first = null, mn = null, mx = null, last = null, bl = Infinity, bh = -Infinity, prevX = null;
     var cnt = 0, hsum = 0;
     function flush() {
       if (first === null) return;
@@ -84,14 +101,14 @@
       keep.sort(function (a, b) { return a[0] - b[0]; });
       var seen = null;
       keep.forEach(function (q) { if (q !== seen) { line.push(q); seen = q; } });
-      if (bh > bl) band.push(bandOf(first[0], bl, bh, cnt, cur, hsum));
+      if (bh > bl) band.push(bandOf(first[0], bl, bh, cnt, cur, hsum, G.start(cur)));
       first = mn = mx = last = null; bl = Infinity; bh = -Infinity; cnt = 0; hsum = 0;
     }
     for (var j = lo; j < hi; j++) {
       var q = pts[j];
       if (!q) continue;
-      var c = Math.floor((q[0] - x0) / span * cols);
-      if (q[0] >= x0 && q[0] <= x1) c = Math.min(cols - 1, c);      // x1 의 점이 열을 하나 더 만들지 않게
+      var c = G.col(q[0]);
+      if (q[0] >= x0 && q[0] <= x1) c = Math.min(G.last, c);        // x1 의 점이 열을 하나 더 만들지 않게
       // 끊김 — 앞 점과 gap 보다 벌어지면 묶음을 새로 시작하고 선을 끊는다(null)
       var brk = useGap && prevX !== null && q[0] - prevX > gap;
       if (c !== cur || brk) { flush(); cur = c; }
@@ -115,12 +132,12 @@
   function tailKey(pts, x0, x1, cols, ypx) {
     pts = pts || [];
     cols = Math.max(1, Math.floor(cols || 1));
-    var span = x1 - x0 > 0 ? x1 - x0 : 1;
+    var G = grid(x0, x1, cols);
     var i = upperBound(pts, x1) - 1;
     while (i >= 0 && !pts[i]) i--;
     if (i < 0 || pts[i][0] < x0) return '-';
-    var c = Math.min(cols - 1, Math.floor((pts[i][0] - x0) / span * cols));
-    var from = x0 + c * span / cols;            // 그 열이 시작하는 x
+    var c = Math.min(G.last, G.col(pts[i][0]));
+    var from = G.start(c);                      // 그 열이 시작하는 x(절대 열 — x0 이 조금 움직여도 같다)
     var first = null, last = null, mn = Infinity, mx = -Infinity, bl = Infinity, bh = -Infinity;
     for (var j = i; j >= 0; j--) {
       var p = pts[j];
@@ -136,7 +153,7 @@
       if (finite(p[2]) && p[2] > bh) bh = p[2];
     }
     function px(v) { return v === null || !isFinite(v) ? 'x' : String(ypx(v)); }
-    return [c, px(first), px(mn), px(mx), px(last), px(bl), px(bh)].join(',');
+    return [G.base + c, px(first), px(mn), px(mx), px(last), px(bl), px(bh)].join(',');
   }
 
   /* ---------- 실시간 저장 ---------- */
@@ -190,7 +207,7 @@
 
   Live.prototype.clear = function () { this.pts.length = 0; this.rawFrom = 0; };
 
-  var api = { view: view, tailKey: tailKey, Live: Live, lowerBound: lowerBound, upperBound: upperBound };
+  var api = { view: view, tailKey: tailKey, grid: grid, Live: Live, lowerBound: lowerBound, upperBound: upperBound };
   if (typeof module !== 'undefined' && module.exports) module.exports = api;
   else root.Decimate = api;
 })(typeof window !== 'undefined' ? window : this);

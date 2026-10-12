@@ -128,6 +128,14 @@ def alarm_event(kind: str, code: str, name: str, severity: str):
         ts = datetime.datetime.now()
         path = os.path.join(paths.ALARMS_DIR, f"alarms-{ts:%Y%m%d}.csv")
         new = not os.path.exists(path)
+        if not new:
+            # ★ v0.4.13: 줄 끝 없이 끊긴 줄(쓰다 전원이 끊김)이 있으면 줄바꿈부터 — 아니면 다음 줄이 그 줄에 붙어 사라진다
+            with open(path, "rb+") as fb:
+                fb.seek(0, os.SEEK_END)
+                if fb.tell() > 0:
+                    fb.seek(-1, os.SEEK_END)
+                    if fb.read(1) != b"\n":
+                        fb.write(b"\r\n")
         with open(path, "a", encoding="utf-8-sig", newline="") as fp:
             w = csv.writer(fp)
             if new:

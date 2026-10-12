@@ -70,6 +70,12 @@ def set_app_user_model_id():
 
 # ===================== 포트 =====================
 PORT_WAIT_S = 5.0       # 설정 포트가 쓰이고 있으면 이만큼 다시 시도한 뒤 이유를 알리고 멈춘다
+LISTEN_BACKLOG = 2048   # uvicorn 기본 backlog 와 같게(묶자마자 listen)
+# ★ v0.4.13 Windows: SO_EXCLUSIVEADDRUSE 로 묶는다. 이 PC(Windows 11)에서 확인한 것 — 옵션 없이 0.0.0.0:P 로 들으면
+#   같은 사용자의 다른 프로세스가 127.0.0.1:P 를 (옵션이 없어도) 묶을 수 있고, 그러면 127.0.0.1:P 접속을 그쪽이 받는다.
+#   SO_EXCLUSIVEADDRUSE 면 10013 으로 거절된다. 같은 주소끼리는 옵션 없이도 이미 거절(10048 · 10013). 빠른 다시 시작
+#   (우리 쪽 TIME_WAIT 만 남은 포트)은 SO_EXCLUSIVEADDRUSE 로도 바로 다시 묶였다(0.00 s). POSIX 는 쓰지 않는다
+EXCLUSIVE_BIND = os.name == "nt"
 
 
 def bind_sockets(host: str, port: int) -> list:
@@ -77,27 +83,40 @@ def bind_sockets(host: str, port: int) -> list:
     끼거나, IPv4 로만 확인해 '::' · '::1' 을 늘 '사용 중'으로 보던 것 · localhost 를 127.0.0.1 로만 보던 것).
     asyncio.create_server(uvicorn)와 같게: getaddrinfo(AF_UNSPEC · AI_PASSIVE)의 주소마다 하나씩, IPv6 는 V6ONLY,
     POSIX 만 SO_REUSEADDR(TIME_WAIT 만 남은 포트도 열린다 — Windows 는 옵션 없이도 열린다). 실패하면 연 것을 닫고
-    OSError(이름을 못 풀면 socket.gaierror). 돌려준 소켓은 uvicorn Server.run(sockets=…) 에 넘긴다."""
+    OSError(이름을 못 풀면 socket.gaierror). 돌려준 소켓은 uvicorn Server.run(sockets=…) 에 넘긴다.
+    ★ v0.4.13: 묶은 소켓은 바로 listen() 한다 — POSIX 는 SO_REUSEADDR 라 listen 전에는 두 번째 실행도 같은 포트를
+      묶을 수 있었다(늦게 listen 하는 쪽이 uvicorn 안에서, PLC 링크 · 시뮬레이터를 띄운 뒤 실패).
+    ★ v0.4.13: 만들 수 없는 family(EAFNOSUPPORT — ::1 은 풀리는데 IPv6 소켓이 없는 PC 의 'localhost')는 asyncio 처럼
+      건너뛴다. 하나도 못 묶을 때만 실패(이유는 실제 오류)."""
     if not host_valid(host):
         raise OSError(f"server.host 형식이 올바르지 않습니다: {host!r} (빈 값 · localhost · IP 주소)")
     infos = socket.getaddrinfo(host or None, port, socket.AF_UNSPEC, socket.SOCK_STREAM, 0, socket.AI_PASSIVE)
-    socks, seen = [], set()
+    socks, seen, skipped = [], set(), None
     try:
         for af, st, proto, _cn, sa in infos:
             if (af, sa) in seen:
                 continue
             seen.add((af, sa))
-            s = socket.socket(af, st, proto)
+            try:
+                s = socket.socket(af, st, proto)
+            except OSError as e:            # 이 PC 에서 만들 수 없는 family — 그것만 건너뛴다
+                skipped = e
+                continue
             socks.append(s)
             if os.name == "posix":
                 s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+            elif EXCLUSIVE_BIND and hasattr(socket, "SO_EXCLUSIVEADDRUSE"):
+                s.setsockopt(socket.SOL_SOCKET, socket.SO_EXCLUSIVEADDRUSE, 1)
             if af == getattr(socket, "AF_INET6", None) and hasattr(socket, "IPPROTO_IPV6"):
                 s.setsockopt(socket.IPPROTO_IPV6, socket.IPV6_V6ONLY, 1)
             s.bind(sa)
+            s.listen(LISTEN_BACKLOG)
     except BaseException:
         close_sockets(socks)
         raise
     if not socks:
+        if skipped is not None:
+            raise skipped
         raise OSError(f"{host!r} 의 주소를 찾지 못했습니다")
     return socks
 
@@ -159,8 +178,8 @@ def url_host(host: str) -> str:
 
 def port_busy_text(host: str, port: int, why: str) -> str:
     if not host_valid(host) or "gaierror" in why:
-        return (f"설정 server.host {host!r} 로 서버를 열 수 없습니다 — 빈 값(모든 주소) · localhost · IP 주소만 "
-                f"씁니다. 설정을 고치세요. ({why})")
+        return (f"설정 server.host {host!r} 로 서버를 열 수 없습니다 — 빈 값(= 127.0.0.1) · localhost · IP 주소만 "
+                f"씁니다(모든 주소는 0.0.0.0 또는 ::). 설정을 고치세요. ({why})")
     return (f"설정 포트 {host}:{port} 를 열 수 없습니다 — 다른 프로그램(또는 이미 떠 있는 이 프로그램)이 쓰고 "
             f"있습니다. {PORT_WAIT_S:g} s 다시 시도했습니다. 쓰는 프로그램을 끄거나 설정 server.port 를 바꾸세요. ({why})")
 
@@ -174,14 +193,21 @@ def find_free_port(host: str, start: int, tries: int = 10):
 
 
 def _wait_server_ready(host: str, port: int, timeout_s: float = 20.0) -> bool:
-    """서버 소켓이 열릴 때까지 기다린다. 창이 먼저 뜨면 WebView2 가 연결 거부 화면을
-    띄우고 재시도하지 않는다."""
+    """서버가 답할 때까지 기다린다. 창이 먼저 뜨면 WebView2 가 연결 거부 화면을
+    띄우고 재시도하지 않는다.
+    ★ v0.4.13: 소켓은 미리 묶어 listen 하므로 '연결이 된다'만으로는 서버(lifespan)가 준비됐는지 모른다 — /health 가
+      답할 때까지 본다."""
+    import urllib.request
     deadline = time.monotonic() + timeout_s
-    h = view_host(host)
+    url = f"http://{url_host(host)}:{port}/health"
+    opener = urllib.request.build_opener(urllib.request.ProxyHandler({}))     # 시스템 프록시를 타지 않게
     while time.monotonic() < deadline:
-        with contextlib.suppress(OSError):
-            with socket.create_connection((h, port), 0.3):
-                return True
+        if _SERVER_ERROR:
+            return False
+        with contextlib.suppress(OSError, ValueError):
+            with opener.open(url, timeout=1.0) as r:
+                if r.status == 200:
+                    return True
         time.sleep(0.1)
     return False
 

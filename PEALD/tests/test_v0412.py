@@ -24,7 +24,7 @@ from peald import paths
 from peald import process
 from peald import window
 from peald.config import host_valid
-from peald.state import AlarmTracker, ALARM_UNKNOWN, state
+from peald.state import AlarmTracker, ALARM_UNKNOWN, ALARM_TAIL_BYTES, state
 
 from conftest import FakeSim, free_port
 from test_v047 import rig                                                  # noqa: F401  (픽스처)
@@ -320,11 +320,11 @@ def test_b1_large_file_reads_only_the_tail():
     rows.append(["2026-10-02 08:59:59", "발생", "A0-14", "가스 누출", "중대"])
     _alarm_file(now, rows)
     t = AlarmTracker()
-    t0 = time.perf_counter()
     n = t.load_recent(now)
-    took = time.perf_counter() - t0
     assert n == 200 and t.history[0]["code"] == "A0-14", t.history[:2]
-    assert took < 0.5, took                                         # 통째로 읽던 것 1.65 s
+    # v0.4.13: 걸린 시간(시점에 기댐) 대신 읽은 바이트 수로 — 끝 1 MB 만(파일은 7 MB 남짓)
+    size = os.path.getsize(os.path.join(paths.ALARMS_DIR, f"alarms-{now:%Y%m%d}.csv"))
+    assert size > 3 * ALARM_TAIL_BYTES and t.read_bytes == ALARM_TAIL_BYTES, (size, t.read_bytes)
 
 
 def test_b1_rereported_after_restart_reuses_closed_row():
@@ -378,19 +378,22 @@ async def test_b2_adopt_retries_and_takes_b13_before_read(cfg, monkeypatch):
         state.link = None
 
 
-async def test_b2_adopt_gives_up_when_read_keeps_failing(cfg, monkeypatch):
+async def test_b2_adopt_without_table_when_read_keeps_failing(cfg, monkeypatch):
+    """v0.4.13(B1): 되읽기가 세 번 다 실패하면 이름 · 표 없이 이어받는다(예전: 이어받지 않음) — b13 은 되읽기 전 값."""
     monkeypatch.setattr(process, "ADOPT_READ_GAP_S", 0.0)
     r, _tbl = _runner(cfg)
     logs = []
 
     async def read_area():
         return None
-    state.link = types.SimpleNamespace(connected=True, status=_s(4, st=A.STATE_RUN), read_recipe_area=read_area)
+    state.link = types.SimpleNamespace(connected=True, status=_s(4, st=A.STATE_RUN, a0=1 << A.ALM0_RECIPE),
+                                       read_recipe_area=read_area)
     try:
         async def log(m, *_a):
             logs.append(m)
-        await r.adopt_running(log)
-        assert not r.active_run and r.run is None
+        assert await r.adopt_running(log) is True
+        assert r.active_run and r.run is not None and r.active_table is None
+        assert r._b13_pre is True
         assert any("읽지 못했습니다" in m for m in logs)
     finally:
         state.link = None

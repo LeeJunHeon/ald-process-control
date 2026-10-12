@@ -144,8 +144,8 @@ def create_app(config_path: str = "", single_instance: bool = True,
                 logger.write("err", sim_server.error)
         link.start()
         tasks = loops.start_all()
-        # PC 를 다시 켰을 때 PLC 가 이미 공정 중이면 레시피를 되찾아 이어 간다.
-        tasks.append(asyncio.create_task(_adopt_later()))
+        # PC 를 다시 켰을 때(또는 링크가 다시 붙었을 때) PLC 가 이미 공정 중이면 레시피를 되찾아 이어 간다.
+        tasks.append(asyncio.create_task(_adopt_loop()))
         try:
             yield
         finally:
@@ -171,15 +171,23 @@ def create_app(config_path: str = "", single_instance: bool = True,
     return app
 
 
-async def _adopt_later():
-    """링크가 붙을 때까지 기다렸다가 진행 중인 공정을 이어받는다."""
+async def _adopt_loop():
+    """★ v0.4.13: PLC 가 공정 중인데 이 PC 가 맡은 공정이 없으면(active_run 거짓) 링크가 붙어 있는 동안 몇 초마다
+    이어받기를 시도한다 — 처음 붙을 때 · 다시 붙을 때 모두, 시간 제한 없이(예전에는 시작 뒤 20 s 안에 한 번만).
+    이 PC 의 시작 절차 · 끝 처리 중에는 하지 않는다(ProcessRunner.adopt_wanted)."""
     from .connection import push_log
-    for _ in range(100):
-        await asyncio.sleep(0.2)
-        if state.link and state.link.connected:
-            with contextlib.suppress(Exception):
-                await state.runner.adopt_running(push_log)
-            return
+    from .process import ADOPT_RETRY_S
+    while True:
+        await asyncio.sleep(ADOPT_RETRY_S)
+        r = state.runner
+        if r is None or not r.adopt_wanted():
+            continue
+        try:
+            await r.adopt_running(push_log)
+        except asyncio.CancelledError:
+            raise
+        except Exception as e:  # noqa: BLE001
+            logger.write("warn", f"이어받기 오류 — {type(e).__name__}: {logger.clean(e, 200)}")
 
 
 def _asset_version() -> str:

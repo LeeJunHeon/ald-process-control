@@ -238,6 +238,7 @@ def test_pause_at_block_end_even_if_not_allowed(cfg):
 
 def test_resume_continues(cfg):
     sim, _r = loaded(cfg, [mkblock("A", 2, [mkstep("a", 50, pause_ok=True)])])
+    o3_permit(sim)                          # v0.4.13: cmd() 한 스캔에 알람1 b3 이 래치되지 않게 — Powder 는 O3 허가를 세운 채로
     sim._process_start()
     sim.pause_req = True
     run(sim, ms=60, step_ms=10)
@@ -267,6 +268,7 @@ def test_pause_during_block_prep_stops_at_first_allowed_step(cfg):
     """블록 준비 중 일시정지도 받는다 — 첫 '정지 허용 스텝 끝'에서 멈춘다."""
     sim, _r = loaded(cfg, [mkblock("A", 1, [mkstep("a", 50), mkstep("b", 50, pause_ok=True),
                                             mkstep("c", 50)])], stable_s=1)
+    o3_permit(sim)                          # v0.4.13: cmd() 한 스캔에 알람1 b3 이 래치되지 않게 — Powder 는 O3 허가를 세운 채로
     sim._process_start()
     run(sim, ms=100, step_ms=10)
     assert sim.seq_state == 3 and sim.reg[A.D_STATE] == A.STATE_READY
@@ -288,6 +290,7 @@ def test_pause_accepted_while_stop_after_cycle_reserved(cfg):
 def test_resume_results(cfg):
     """재개 — 일시정지(7) 아니면 2, 7 인데 안전 정지 요구면 1."""
     sim, _r = loaded(cfg, [mkblock("A", 2, [mkstep("a", 50, pause_ok=True)])])
+    o3_permit(sim)                          # v0.4.13: cmd() 한 스캔에 알람1 b3 이 래치되지 않게 — Powder 는 O3 허가를 세운 채로
     sim._process_start()
     run(sim, ms=20, step_ms=10)
     assert cmd(sim, A.CMD_RESUME) == A.RESULT_STATE
@@ -301,6 +304,7 @@ def test_resume_results(cfg):
 
 def test_stop_after_cycle(cfg):
     sim, _r = loaded(cfg, [mkblock("A", 10, [mkstep("a", 50)])])
+    o3_permit(sim)                          # v0.4.13: cmd() 한 스캔에 알람1 b3 이 래치되지 않게 — Powder 는 O3 허가를 세운 채로
     sim._process_start()
     run(sim, ms=20, step_ms=10)
     assert cmd(sim, A.CMD_STOP_AFTER_CYCLE) == A.RESULT_OK
