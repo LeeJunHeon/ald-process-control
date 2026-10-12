@@ -1,0 +1,94 @@
+/* ============================================================
+ * terms.js — 화면 공통 용어 사전 (v0.5.0).
+ *
+ * ★ 장비 · 신호 · 상태 · 칸 이름 · 표 머리 · 탭 · 단추 라벨 같은 '용어'는 여기서만 정한다(영문).
+ *   장비 구조의 이름(밸브 · 입력 · 인터락 · 알람 · 히터/MFC 기본 이름)은 서버의 device.py 가 정하고
+ *   화면은 받은 그대로 쓴다. 데이터 로그 머리 · 트렌드 내보내기 열 이름도 같은 용어다.
+ * ★ 문장(확인 창 · 안내 · 오류 설명 · 툴팁 설명 · 이벤트 로그)은 한글로 둔다 — 여기에 넣지 않는다.
+ * ★ index.html 의 고정 라벨은 data-t="키" 로 이 사전에서 채운다(T.apply).
+ * ============================================================ */
+(function (root) {
+  'use strict';
+
+  var D = {
+    // 탭
+    'tab.main': 'Operation', 'tab.recipe': 'Recipe', 'tab.trend': 'Trend', 'tab.datalog': 'Data Log',
+    'tab.alarm': 'Alarm/Log', 'tab.setup': 'Settings',
+    // 칸
+    'panel.pid': 'P&ID', 'panel.process': 'Process', 'panel.vac': 'Pressure / Exhaust / Interlock',
+    'panel.heater': 'Heater', 'panel.mfc': 'MFC', 'panel.rfpcv': 'RF / PCV', 'panel.o3': 'O3',
+    'panel.savedRecipes': 'Saved Recipes', 'panel.edit': 'Edit', 'panel.check': 'Check',
+    'panel.datalog': 'Process Data Log', 'panel.table': 'Table', 'panel.recipeCopy': 'Recipe Copy',
+    'panel.alarms': 'Active Alarms', 'panel.notices': 'Program Notices', 'panel.alarmHist': 'Alarm History',
+    'panel.log': 'Program Log', 'panel.manual': 'Manual',
+    'chart.pressure': 'Pressure (Torr)', 'chart.temp': 'Temperature (℃)', 'chart.mfc': 'MFC Flow (sccm)',
+    'chart.heater': 'Heater (℃)', 'chart.mfcShort': 'MFC (sccm)', 'chart.device': 'Device',
+    // 장비
+    'eq.chamber': 'Process Chamber', 'eq.reactor': 'Powder Reactor', 'eq.can1': 'Canister 1',
+    'eq.can2': 'Canister 2', 'eq.can3': 'Canister 3', 'eq.h2o': 'H2O Canister R', 'eq.pline': 'Precursor Line',
+    'eq.manifold': 'Reactant Manifold', 'eq.trap': 'Trap', 'eq.dryPump': 'Dry Pump', 'eq.exhPump': 'Exhaust Pump',
+    'eq.bypassPump': 'Bypass Pump', 'eq.o3gen': 'O3 Generator', 'eq.vent': 'Vent', 'eq.rf': 'RF Power / Matcher',
+    'eq.electrode': 'RF Electrode', 'eq.stage': 'Stage', 'eq.bed': 'Powder Bed', 'eq.lid': 'Lid',
+    'eq.hingeLid': 'Hinge Lid', 'eq.assist': 'Assist N2', 'eq.o2': 'O2 Supply', 'eq.exhIso': 'Exhaust Isolation',
+    'eq.plcAuto': 'PLC Auto', 'eq.exhaust': 'Exhaust', 'eq.pcv': 'Inline PCV', 'eq.chamberTemp': 'Chamber Temp',
+    'eq.precursor': 'Precursor', 'eq.reactant': 'Reactant', 'eq.reactantO3': 'Reactant (O3)', 'eq.pump': 'Pump',
+    // 값
+    'v.setpoint': 'Setpoint', 'v.actual': 'Actual', 'v.output': 'Output', 'v.power': 'Power', 'v.status': 'Status',
+    'v.fullScale': 'Full Scale', 'v.gas': 'Gas', 'v.block': 'Block', 'v.step': 'Step', 'v.cycle': 'Cycle',
+    'v.group': 'Group', 'v.elapsed': 'Elapsed', 'v.remaining': 'Remaining', 'v.planned': 'Planned',
+    'v.recipe': 'Recipe', 'v.channel': 'Channel', 'v.target': 'Target', 'v.position': 'Position',
+    'v.forward': 'Forward', 'v.reflected': 'Reflected', 'v.number': 'No.', 'v.estimate': 'Est.',
+    'v.severity': 'Severity', 'v.raised': 'Raised', 'v.cleared': 'Cleared', 'v.code': 'Code', 'v.message': 'Message',
+    'v.time': 'Time', 'v.name': 'Name', 'v.memo': 'Memo', 'v.repeat': 'Repeat', 'v.ms': 'Time ms',
+    'v.stepName': 'Step Name', 'v.pauseOk': 'Pause OK', 'v.fromBlock': 'From Block', 'v.toBlock': 'To Block',
+    'v.access': 'Access', 'v.station': 'Station', 'v.enabled': 'Enabled', 'v.limit': 'Overtemp Limit ℃',
+    'v.defaultSv': 'Default Setpoint ℃', 'v.confirmed': 'Confirmed', 'v.item': 'Item', 'v.before': 'Before',
+    'v.after': 'After', 'v.raw': 'PRM Raw', 'v.written': 'Written Raw', 'v.readback': 'Readback', 'v.match': 'Match',
+    // 상태
+    's.open': 'Open', 's.closed': 'Closed', 's.unknown': 'Unknown', 's.on': 'ON', 's.off': 'OFF',
+    's.normal': 'Normal', 's.limitUnset': 'Limit Unset', 's.idle': 'Idle', 's.running': 'Running',
+    's.paused': 'Paused', 's.pending': 'Pending', 's.commLost': 'Comm Lost', 's.ctrlAlarm': 'Controller Alarm',
+    's.tableOk': 'Table OK', 's.tableNg': 'Table NG', 's.noAlarm': 'No Alarm', 's.critical': 'Critical',
+    's.warning': 'Warning', 's.flow': 'Flow', 's.idlePipe': 'Idle', 's.exhaust': 'Exhaust', 's.heated': 'Heated',
+    's.serverLost': 'Server Lost', 's.plcLost': 'PLC Lost', 's.plcStalled': 'PLC Stalled', 's.noAddress': 'No PLC Address',
+    's.feedbackOk': 'Feedback OK', 's.noFeedback': 'No Feedback', 's.match': 'Match', 's.mismatch': 'Mismatch',
+    's.unconfirmed': 'Unconfirmed', 's.thisPc': 'This PC', 's.viewOnly': 'View Only', 's.recording': 'Recording',
+    's.locked': 'Locked', 's.unlocked': 'Unlocked', 's.notSaved': 'Not Saved',
+    // 단추
+    'b.start': 'Start', 'b.pause': 'Pause', 'b.resume': 'Resume', 'b.stopAfterCycle': 'Stop after Cycle',
+    'b.abort': 'Abort', 'b.cancelWait': 'Cancel Wait', 'b.manual': 'Manual…', 'b.pumpStart': 'Pumping Start',
+    'b.pumpStop': 'Pumping Stop', 'b.vent': 'Vent', 'b.closeAll': 'Close All Valves', 'b.ack': 'Alarm Ack',
+    'b.reset': 'Alarm Reset', 'b.exit': 'Exit', 'b.apply': 'Apply', 'b.open': 'Open', 'b.close': 'Close',
+    'b.unlock': 'Unlock', 'b.lock': 'Lock', 'b.cancel': 'Cancel', 'b.ok': 'OK', 'b.run': 'Run', 'b.on': 'ON',
+    'b.off': 'OFF', 'b.new': 'New', 'b.save': 'Save', 'b.saveAs': 'Save As', 'b.rename': 'Rename',
+    'b.delete': 'Delete', 'b.upload': 'Upload to PLC', 'b.startRecipe': 'Start with This', 'b.live': 'Live',
+    'b.history': 'History', 'b.load': 'Load', 'b.undo': 'Undo', 'b.exportCsv': 'Export CSV',
+    'b.openFolder': 'Open Folder', 'b.refresh': 'Refresh', 'b.chart': 'Chart', 'b.table': 'Table',
+    'b.recipe': 'Recipe', 'b.prev': 'Prev 200', 'b.next': 'Next 200', 'b.addStep': '+ Step', 'b.addGroup': '+ Group',
+    'b.deleteBlock': 'Delete Block', 'b.revert': 'Revert', 'b.review': 'Review & Save', 'b.changePin': 'Change PIN',
+    'b.setPin': 'Set PIN', 'b.backupFolder': 'Open Backup Folder', 'b.ackBuzzer': 'Ack (Buzzer Off)',
+    'b.mfcApply': 'Apply MFC', 'b.heaterApply': 'Apply Heater', 'b.o3On': 'O3 Line ON', 'b.o3Off': 'O3 Line OFF',
+    'b.rfOn': 'RF ON', 'b.rfOff': 'RF OFF', 'b.pumping': 'Pumping',
+    // 머리
+    'h.simulator': 'Simulator', 'h.control': 'Process Control'
+  };
+
+  function T(key, fallback) {
+    return Object.prototype.hasOwnProperty.call(D, key) ? D[key] : (fallback == null ? key : fallback);
+  }
+  T.dict = D;
+  /** data-t="키" 인 요소의 글자를 사전으로 채운다(자식 요소가 있는 칸은 첫 글자 마디만). */
+  T.apply = function (scope) {
+    if (!scope || !scope.querySelectorAll) return;
+    Array.prototype.forEach.call(scope.querySelectorAll('[data-t]'), function (e) {
+      var v = T(e.getAttribute('data-t'));
+      var first = e.firstChild;
+      if (first && first.nodeType === 3) first.nodeValue = v;
+      else if (!e.children.length) e.textContent = v;
+      else e.insertBefore(e.ownerDocument.createTextNode(v), first);
+    });
+  };
+
+  if (typeof module !== 'undefined' && module.exports) module.exports = T;
+  else root.T = T;
+})(typeof window !== 'undefined' ? window : this);

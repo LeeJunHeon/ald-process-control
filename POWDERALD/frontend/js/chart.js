@@ -48,18 +48,21 @@
 
   /* ===================== 색 · 설정값 짝 ===================== */
   /** 설정값 이름 → 짝이 되는 현재값 이름. 트렌드 열 키(h1_sv · rf_sv)와 데이터 로그 머리
-   *  ('CH1 … 설정 ℃' · 'RF 설정 W' · 'PCV 목표 %') 둘 다 받는다. */
+   *  ('CH1 … Setpoint ℃' · 'RF Setpoint W' · 'PCV Target %') 둘 다 받는다.
+   *  ★ v0.5.0: 영문 용어. 옛 한글 이름('… 설정 ℃' · 'RF 설정 W' · 'PCV 목표 %')도 그대로 알아본다. */
   function baseOf(name) {
     var s = String(name);
     if (s === 'rf_sv') return 'rf_fwd';
     s = s.replace(/_sv$/, '_pv');
+    s = s.replace(/ Setpoint( |$)/, ' Actual$1').replace(/^RF Actual/, 'RF Forward').replace(/^PCV Target/, 'PCV Position');
     s = s.replace(/ 설정( |$)/, ' 현재$1').replace(/^RF 현재/, 'RF 순방향').replace(/^PCV 목표/, 'PCV 개도');
     return s;
   }
 
   function isSetpoint(name) {
     var s = String(name);
-    return /_sv$/.test(s) || / 설정( |$)/.test(s) || /^PCV 목표/.test(s);
+    return /_sv$/.test(s) || / Setpoint( |$)/.test(s) || /^PCV Target/.test(s) ||
+      / 설정( |$)/.test(s) || /^PCV 목표/.test(s);
   }
 
   /** 한 그래프 안의 열 → {color, dashed, on}. 보이는 현재값끼리 색이 겹치지 않고,
@@ -109,15 +112,18 @@
       if (x.pv && x.sp) both.push(ch); else if (x.sp) sp.push(ch); else pv.push(ch);
     });
     var segs = [];
-    if (both.length) segs.push({ names: both, tail: '현재 · 설정' });
+    // 꼬리 말은 라벨의 말로 — 영문 라벨이면 'Actual · Setpoint', 옛 한글 라벨이면 '현재 · 설정'
+    var ko = labels.some(function (lb) { return /[가-힣]/.test(String(lb)); });
+    var W = ko ? { both: '현재 · 설정', pv: '현재', sp: '설정' } : { both: 'Actual · Setpoint', pv: 'Actual', sp: 'Setpoint' };
+    if (both.length) segs.push({ names: both, tail: W.both });
     if (pv.length) {
       var last = function (lb) { var w = String(lb).split(' '); return w.length > 1 ? w[w.length - 1] : ''; };
       var lw = last(byCh[pv[0]].pv);
       var common = lw && pv.every(function (ch) { return last(byCh[ch].pv) === lw; });
       // 설정과 함께 묶인 그룹이면 현재 쪽도 '현재'라고 적는다(무엇이 묶였는지)
-      segs.push({ names: pv, tail: common ? lw : (both.length || sp.length ? '현재' : '') });
+      segs.push({ names: pv, tail: common ? lw : (both.length || sp.length ? W.pv : '') });
     }
-    if (sp.length) segs.push({ names: sp, tail: '설정' });
+    if (sp.length) segs.push({ names: sp, tail: W.sp });
     return segs;
   }
 
@@ -376,7 +382,7 @@
       st.bands.forEach(function (b, i) {
         if (b.x1 < st.x0 || b.x0 > st.x1) return;
         var a = Math.max(G.x0, xPos(b.x0, G)), z = Math.min(G.x1, xPos(b.x1, G));
-        g.fillStyle = (b.alt ? cssVar('--band-b') : cssVar('--band-a')) || (i % 2 ? '#8881' : '#8882');
+        g.fillStyle = b.alt ? cssVar('--band-b') : cssVar('--band-a');
         g.fillRect(a, G.y0, Math.max(1, z - a), G.y1 - G.y0);
       });
 

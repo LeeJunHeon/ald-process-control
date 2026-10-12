@@ -413,7 +413,7 @@ def test_datalog_one_file_across_disconnect_and_closes_after_limit(cfg, monkeypa
         assert state.datalog.path == first
         with open(first, encoding="utf-8-sig") as f:
             rows = list(csv.reader(f))
-        down = [r for r in rows[1:] if r[2] == "PLC 끊김"]
+        down = [r for r in rows[1:] if r[2] == "PLC Lost"]          # v0.5.0 영문 상태 이름
         assert len(down) == 3
         assert all(c == "" for r in down for c in r[3:])          # 0x0000 · 0 을 지어내지 않는다
         assert len([n for n in os.listdir(paths.DATALOG_DIR) if n.endswith(".csv")]) == 1

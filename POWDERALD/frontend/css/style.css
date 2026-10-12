@@ -133,7 +133,7 @@ header {
 .btn:hover:not(:disabled) { background: var(--panel-2); border-color: var(--ink-dim); }
 .btn:disabled { opacity: .40; cursor: not-allowed; }
 .btn.primary { background: var(--primary); border-color: var(--primary); color: var(--primary-ink); }
-.btn.danger { background: var(--stop); border-color: var(--stop); color: #fff; }
+.btn.danger { background: var(--stop); border-color: var(--stop); color: var(--stop-ink); }
 /* ★ 채운 단추는 hover 에도 배경색을 지킨다 — 배경만 --panel-2 로 바뀌면 흰 글자가 사라진다(밝은 테마) */
 .btn.primary:hover:not(:disabled) { background: var(--primary); border-color: var(--ink); filter: brightness(1.12); }
 .btn.danger:hover:not(:disabled)  { background: var(--stop); border-color: var(--ink); filter: brightness(1.12); }
@@ -222,16 +222,16 @@ header {
 .kv { display: flex; justify-content: space-between; align-items: baseline; margin-bottom: 1px; }
 .kv .k { font-size: var(--fs-md); font-weight: 600; }
 .kv .v { font-size: var(--fs-md); font-weight: 700; font-family: var(--font-mono); }
-.gauges { display: flex; gap: var(--sp-2); margin-bottom: var(--sp-1); }
+.gauges { display: flex; gap: var(--sp-2); margin-bottom: 2px; }
 .gauge {
-  flex: 1; min-width: 0; padding: var(--sp-1) var(--sp-3);
+  flex: 1; min-width: 0; padding: 2px var(--sp-3);
   border: 1px solid var(--line); border-radius: var(--r-2); background: var(--panel-2);
 }
 .gauge .k { font-size: var(--fs-sm); color: var(--ink-faint); }
 .gauge .v { font-size: var(--fs-xl); font-weight: 700; color: var(--primary); font-family: var(--font-mono); }
 .gauge .v .u { font-size: var(--fs-sm); color: var(--ink-faint); font-weight: 400; margin-left: 3px; }
-.ilks { display: flex; flex-wrap: wrap; gap: var(--sp-1); margin-top: var(--sp-2); }
-.ilks .chip { padding: 1px 6px; font-size: var(--fs-xs); }
+.ilks { display: flex; flex-wrap: wrap; gap: 3px; margin-top: var(--sp-1); }
+.ilks .chip { padding: 0 6px; font-size: var(--fs-xs); }
 
 .cmdbar {
   flex: 0 0 auto; display: flex; align-items: center; gap: var(--sp-2);
@@ -339,13 +339,15 @@ header {
 
 /* ===================== 공정 진행 (운전 탭) ===================== */
 .bar {
-  height: 8px; margin: var(--sp-2) 0 var(--sp-1);
+  height: 8px; margin: var(--sp-1) 0 2px;
   background: var(--neutral-bg); border: 1px solid var(--line); border-radius: 999px;
   overflow: hidden;
 }
 .bar > span { display: block; height: 100%; width: 0; background: var(--ok); transition: width .3s linear; }
 .bar > span.warn { background: var(--warn); }
 .steplist { display: flex; flex-wrap: wrap; gap: var(--sp-1); margin-bottom: var(--sp-1); }
+/* 비어 있는 줄이 자리를 차지하면 그만큼 아래 패널이 눌린다. */
+.steplist:empty, .ck-list:empty { display: none; }
 .steplist .st {
   padding: 1px 6px; border: 1px solid var(--line); border-radius: var(--r-1);
   font-size: var(--fs-xs); color: var(--ink-faint); background: var(--panel-2);
@@ -358,7 +360,8 @@ header {
 .ck-list { display: flex; flex-wrap: wrap; gap: var(--sp-1); }
 .ck-list .chip { padding: 1px 6px; font-size: var(--fs-xs); }
 .procmsg { font-size: var(--fs-sm); color: var(--warn); min-height: 14px; }
-.procbar { display: flex; flex-wrap: wrap; gap: var(--sp-1); margin-top: var(--sp-2); }
+.procbar { display: flex; flex-wrap: wrap; gap: var(--sp-1); margin-top: var(--sp-1); }
+.procbar .btn { padding: 2px 8px; }
 
 /* ===================== 레시피 탭 ===================== */
 .rcbar {
@@ -559,7 +562,7 @@ header {
 .trendbar .right { white-space: nowrap; }
 
 /* 다른 장비의 PLC — 머리에 빨간 띠 */
-.idband { flex: 0 0 auto; padding: 6px var(--sp-5); background: var(--stop); color: #fff;
+.idband { flex: 0 0 auto; padding: 6px var(--sp-5); background: var(--stop); color: var(--stop-ink);
   font-weight: 700; font-size: var(--fs-lg); text-align: center; }
 
 /* v0.4.2 — 범례 색 표시 · PRM 표 폭 */
@@ -612,3 +615,116 @@ header {
 /* ===================== v0.4.16 ===================== */
 /* 공정 진행 칸 값 — 낱말 중간에서 끊지 않는다('(다른 장비 공정)' 이 끊겨 칩을 다음 줄로 밀던 것) */
 .kv .v { word-break: keep-all; }
+
+/* ===================== v0.5.0 — 색 정리 · 용어 · 배관도 조작 ===================== */
+/* 색 규칙(tokens.css): 무채색 바탕 · 상태색 넷(초록 · 노랑 · 빨강 · 흐름 파랑) · 장비색은 머리 배지만 */
+body { font-variant-numeric: tabular-nums; }
+.accentbar { height: 1px; background: var(--line-2); }
+.tab.on { border-bottom-color: var(--ink); }
+.btn:focus-visible, .tab:focus-visible, .sw:focus-visible, .cb:focus-visible, .mn-v:focus-visible,
+.rc-item:focus-visible, .dl-item:focus-visible, .inp:focus-visible, input:focus-visible, select:focus-visible,
+.fp-btn:focus-visible { outline-color: var(--ink-dim); }
+
+/* ---- 단추(A5): 기본은 회색 외곽선 하나. Start 만 채움, Abort 는 빨강 외곽선. 막힌 단추는 흐리게 ---- */
+.btn.primary { background: var(--panel); border-color: var(--line-2); color: var(--ink); }
+.btn.primary:hover:not(:disabled) { background: var(--panel-2); border-color: var(--ink-dim); filter: none; }
+.btn.start { background: var(--primary); border-color: var(--primary); color: var(--primary-ink); }
+.btn.start:hover:not(:disabled) { background: var(--primary); border-color: var(--primary); filter: brightness(1.12); }
+.btn.danger, .btn.danger-line, .btn.abort { background: var(--panel); border-color: var(--stop-line); color: var(--stop); }
+.btn.danger:hover:not(:disabled), .btn.danger-line:hover:not(:disabled), .btn.abort:hover:not(:disabled) {
+  background: var(--stop-bg); border-color: var(--stop); filter: none; }
+.btn:disabled { opacity: .38; }
+
+/* ---- 칩: 색 바탕 없음. 정상은 회색 글자 + 초록 점, 문제만 노랑 · 빨강 글자 ---- */
+.chip { background: transparent; border-color: var(--line-2); color: var(--ink-dim); }
+.chip.ok { background: transparent; border-color: var(--line-2); color: var(--ink-dim); }
+.chip.ok::before { content: ''; flex: 0 0 auto; width: 6px; height: 6px; border-radius: 50%; background: var(--ok); }
+.chip.warn { background: transparent; border-color: var(--warn-line); color: var(--warn); }
+.chip.stop { background: transparent; border-color: var(--stop-line); color: var(--stop); }
+.chip.info, .chip.off { background: transparent; border-color: var(--line); color: var(--ink-faint); }
+.chip.accent { background: transparent; border-color: var(--line-2); color: var(--ink-dim); }
+.unconf { background: transparent; }
+
+/* ---- 머리 상태 표시(A6): 무채색 작은 표시, 알람이 있을 때만 빨강 ---- */
+header .chip, header .chip.big { padding: 2px 9px; font-size: var(--fs-md); border-color: var(--line); color: var(--ink-dim); }
+header .chip.ok::before { display: none; }
+header .chip.alarm { border-color: var(--stop-line); color: var(--stop); }
+.clock .t { font-size: var(--fs-xl); font-weight: 600; }
+
+/* ---- 숫자(A2): 현재값 = 기본 글자색, 설정값 = 흐린 회색, 단위는 작게 흐린 회색. 같은 종류는 같은 크기 · 굵기 ---- */
+.tbl td.pv { color: var(--pv); font-weight: 600; font-family: var(--font-mono); }
+.tbl td.sv { color: var(--sv); font-weight: 600; font-family: var(--font-mono); }
+.gauge .v { color: var(--pv); font-weight: 600; }
+.kv .v { color: var(--pv); font-weight: 600; }
+.kv .v .sv, .num-sv { color: var(--sv); }
+.u, .unit { color: var(--ink-faint); font-size: var(--fs-sm); font-weight: 400; }
+
+/* ---- 상태 점 목록(A4): 이름 + 작은 상태 점, 2~3 열 격자. 문제인 항목만 노랑 · 빨강 ---- */
+.stl { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 1px var(--sp-3); margin-top: var(--sp-1); }
+.stl.c2 { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+.stl:empty { display: none; }
+.sti { display: flex; align-items: center; gap: 5px; min-width: 0; font-size: var(--fs-sm); color: var(--ink-faint);
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis; line-height: 1.5; }
+.sti > i { flex: 0 0 auto; width: 7px; height: 7px; border-radius: 50%; background: var(--off); }
+.sti.ok > i { background: var(--ok); }
+.sti.warn { color: var(--warn); font-weight: 600; }
+.sti.warn > i { background: var(--warn); }
+.sti.stop { color: var(--stop); font-weight: 600; }
+.sti.stop > i { background: var(--stop); }
+.sti.more { color: var(--ink-faint); }
+#view-main .ilks.stl { display: grid; }
+
+/* ---- 그 밖 무채색으로 ---- */
+.steplist .st.on { color: var(--ink); background: var(--panel); border-color: var(--ink-dim); }
+.rc-item.on, .dl-item.on { background: var(--sel-bg); }
+.rc-btab.on { border-color: var(--ink-dim); }
+.rc-btab.add { color: var(--ink); }
+.modal-box { border: 1px solid var(--line-2); }
+.modal-head .dev { color: var(--ink); }
+.cfgbar { border-color: var(--line-2); }
+.mn-lock { border-color: var(--line-2); background: var(--panel-2); }
+.mn-v.on { background: transparent; border-color: var(--ok-line); }
+.mn-v.req { background: transparent; border-color: var(--warn-line); }
+.sw.on { background: var(--ok-bg); border-color: var(--ok-line); }
+.sw.on::after { background: var(--ok); }
+.mn-lock .sw.on { background: var(--warn-bg); border-color: var(--warn-line); }
+.mn-lock .sw.on::after { background: var(--warn); }
+#simModal .sw.on { background: var(--stop-bg); border-color: var(--stop-line); }
+#simModal .sw.on::after { background: var(--stop); }
+.ck.ok { background: transparent; border-color: var(--line); color: var(--ink-dim); }
+.ck.warn { background: transparent; }
+.ck.err { background: transparent; }
+.toast.ok, .toast.info { background: var(--panel); }
+.toast.warn { background: var(--panel); }
+.toast.err { background: var(--panel); }
+.pcnotice.warn, .pcnotice.err { background: var(--panel-2); }
+
+/* ---- 배관도 조작(HMI, C1~C3) ---- */
+#schemSvg [data-fp] { cursor: pointer; outline: none; }
+#schemSvg [data-fp] .fp-hit { fill: transparent; stroke: transparent; stroke-width: 1.5; }
+#schemSvg [data-fp]:hover .fp-hit, #schemSvg [data-fp]:focus .fp-hit, #schemSvg [data-fp].fp-on .fp-hit {
+  stroke: var(--hmi-hover); }
+.faceplate {
+  position: absolute; z-index: 70; width: 236px;
+  background: var(--panel); border: 1px solid var(--line-2); border-radius: var(--r-3);
+  box-shadow: var(--shadow-lg); font-size: var(--fs-md); color: var(--ink);
+}
+.faceplate[hidden] { display: none; }
+.fp-head { display: flex; align-items: center; gap: var(--sp-2); padding: var(--sp-2) var(--sp-3);
+  border-bottom: 1px solid var(--line); font-weight: 700; }
+.fp-head .fp-tag { font-family: var(--font-mono); }
+.fp-head .fp-x { margin-left: auto; border: none; background: transparent; color: var(--ink-faint); cursor: pointer;
+  font-size: var(--fs-lg); padding: 0 2px; }
+.fp-body { padding: var(--sp-2) var(--sp-3); display: flex; flex-direction: column; gap: var(--sp-1); }
+.fp-row { display: flex; align-items: center; gap: var(--sp-2); }
+.fp-row .k { color: var(--ink-faint); font-size: var(--fs-sm); flex: 0 0 78px; }
+.fp-row .v { font-family: var(--font-mono); font-weight: 600; }
+.fp-row input { width: 80px; padding: 2px 6px; border: 1px solid var(--line-2); border-radius: var(--r-1);
+  background: var(--panel-2); color: var(--ink); font-family: var(--font-mono); text-align: right; }
+.fp-btns { display: flex; flex-wrap: wrap; gap: var(--sp-1); margin-top: var(--sp-1); }
+.fp-why { font-size: var(--fs-sm); color: var(--warn); }
+.fp-why:empty, .fp-res:empty { display: none; }
+.fp-res { font-size: var(--fs-sm); color: var(--ink-dim); }
+.fp-res.ok { color: var(--ok); }
+.fp-res.err { color: var(--stop); }
+.schem-wrap { position: relative; }

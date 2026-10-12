@@ -196,15 +196,15 @@ STATE_PAUSE = 4
 STATE_STOPPING = 5                  # 사이클 후 정지 중
 STATE_SAFE_STOP = 6                 # 안전 정지
 STATE_NAMES = {
-    STATE_INIT: "초기화", STATE_IDLE: "대기", STATE_READY: "공정 준비",
-    STATE_RUN: "공정 중", STATE_PAUSE: "일시정지",
-    STATE_STOPPING: "사이클 후 정지 중", STATE_SAFE_STOP: "안전 정지",
+    STATE_INIT: "Init", STATE_IDLE: "Idle", STATE_READY: "Ready",
+    STATE_RUN: "Running", STATE_PAUSE: "Paused",
+    STATE_STOPPING: "Stopping after Cycle", STATE_SAFE_STOP: "Safe Stop",
 }
 
 # ===================== 시퀀서 상태 (D00020) =====================
 SEQ_NAMES = {
-    0: "대기", 1: "조건 확인", 2: "표 복사", 3: "블록 준비", 4: "스텝 실행",
-    5: "다음 스텝 계산", 6: "완료", 7: "일시정지", 8: "중단",
+    0: "Idle", 1: "Check", 2: "Table Copy", 3: "Block Prep", 4: "Step Run",
+    5: "Next Step", 6: "Done", 7: "Paused", 8: "Aborted",
 }
 
 # ===================== 명령 코드 (D01002) =====================

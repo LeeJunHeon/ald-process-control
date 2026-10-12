@@ -651,7 +651,7 @@ async def test_datalog_writes_csv(wired, tmp_path):
         rows = list(csv.reader(f))
     assert len(rows) == 4, "머리글 + 3줄이어야 한다"
     assert len(rows[0]) == len(rows[1]), "머리글과 값의 열 수가 다르다"
-    assert rows[0][0] == "시각" and "CVG Torr" in rows[0]
+    assert rows[0][0] == "Time" and "CVG Torr" in rows[0]
     assert os.path.exists(os.path.join(paths.DATALOG_DIR, dl.name + ".recipe.json"))
 
 
@@ -818,9 +818,9 @@ def _meta_and_list(name):
 
 
 @pytest.mark.parametrize("how,want", [
-    ("pc_hb", "PC 통신 끊김"),
-    ("emo", "비상정지"),
-    ("mfc", "MFC 이상"),
+    ("pc_hb", "PC Link Lost"),                      # v0.5.0: 알람 이름은 영문 용어(device.py)
+    ("emo", "EMO"),
+    ("mfc", "MFC Fault"),
 ])
 async def test_aborted_process_is_never_normal(wired, how, want):
     """PC 하트비트 끊김·비상정지·MFC 편차 중단 → 모두 '중단 (안전 정지 — 알람)'.

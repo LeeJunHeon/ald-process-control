@@ -49,6 +49,7 @@
       case 'notice':
         core.toast(msg.msg, msg.level);
         if (w.viewManual && w.viewManual.onNotice) w.viewManual.onNotice();
+        if (w.viewFaceplate && w.viewFaceplate.onNotice) w.viewFaceplate.onNotice(msg);   // 배관도 조작 창 결과
         break;
       case 'log':
         if (core.state) {

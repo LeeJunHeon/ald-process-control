@@ -193,9 +193,9 @@
         '" tabindex="0" role="button" data-rcopen="' + core.esc(r.name) + '">' +
         '<div class="n">' + core.esc(r.name) + '</div>' +
         '<div class="m">' + core.esc(r.memo || '') + '</div>' +
-        '<div class="s mono">블록 ' + core.esc(r.block_count) + ' · 번호 ' + core.esc(r.number) +
+        '<div class="s mono">' + T('v.block') + ' ' + core.esc(r.block_count) + ' · ' + T('v.number') + ' ' + core.esc(r.number) +
         (r.modified ? ' · ' + core.esc(r.modified) : '') + '</div></div>';
-    }).join('') : '<div class="empty">저장된 레시피가 없습니다 — [새로]를 누르세요</div>');
+    }).join('') : '<div class="empty">저장된 레시피가 없습니다 — [New]를 누르세요</div>');
   }
 
   /** 지금 PLC 에 올라가 있는 레시피 한 줄. */
@@ -214,10 +214,10 @@
       core.html(e, pre + '<span class="dim">PLC 에 올라간 레시피 표가 없습니다(번호 0)</span>');
       return;
     }
-    core.html(e, pre + core.chip(p.plc_ok ? '✓ PLC 검사 통과' : '✕ PLC 검사 미통과', p.plc_ok ? 'ok' : 'warn') +
+    core.html(e, pre + core.chip(p.plc_ok ? 'PLC Check OK' : '✕ PLC Check NG', p.plc_ok ? 'ok' : 'warn') +
       ' <b>' + core.esc(p.name || '(이름 모름)') + '</b>' +
-      ' <span class="mono dim">번호 ' + core.esc(p.number) + ' · 스텝 ' + core.esc(p.step_count) +
-      ' · 블록 ' + core.esc(p.block_count) + ' · 합계 ' + fmt.hex16(p.checksum) + '</span>' +
+      ' <span class="mono dim">' + T('v.number') + ' ' + core.esc(p.number) + ' · ' + T('v.step') + ' ' + core.esc(p.step_count) +
+      ' · ' + T('v.block') + ' ' + core.esc(p.block_count) + ' · Sum ' + fmt.hex16(p.checksum) + '</span>' +
       (p.name ? '' : ' <span class="warn-txt">이 번호에 맞는 로컬 레시피가 없습니다</span>'));
   }
 
@@ -246,15 +246,15 @@
 
     var html =
       '<div class="rc-head">' +
-      '<label>이름<input type="text" data-rcf="name" maxlength="' + core.esc(lim.name_max || 80) +
+      '<label>' + T('v.name') + '<input type="text" data-rcf="name" maxlength="' + core.esc(lim.name_max || 80) +
       '" value="' + core.esc(cur.name || '') + '"></label>' +
-      '<label class="grow">메모<input type="text" data-rcf="memo" maxlength="' + core.esc(lim.memo_max || 500) +
+      '<label class="grow">' + T('v.memo') + '<input type="text" data-rcf="memo" maxlength="' + core.esc(lim.memo_max || 500) +
       '" value="' + core.esc(cur.memo || '') + '"></label>' +
       '</div>' +
       '<div class="rc-tabs">' + blocks.map(function (b, i) {
         return '<button class="rc-btab' + (i + 1 === sel.block ? ' on' : '') +
           '" data-rcblk="' + (i + 1) + '">' + (i + 1) + '. ' +
-          core.esc(b.name || '블록') + '</button>';
+          core.esc(b.name || T('v.block')) + '</button>';
       }).join('') +
       '<button class="rc-btab add" data-rcadd="block" title="블록 추가">＋</button>' +
       '</div>';
@@ -271,9 +271,9 @@
     var mfc = arr(b.mfc_sccm);
     var h = '<div class="rc-block">' +
       '<div class="rc-brow">' +
-      '<label>블록 이름<input type="text" data-rcb="name" maxlength="' + core.esc(lim.label_max || 40) +
+      '<label>Block Name<input type="text" data-rcb="name" maxlength="' + core.esc(lim.label_max || 40) +
       '" value="' + core.esc(b.name || '') + '"></label>' +
-      '<label>반복(사이클)<input type="number" min="1" max="' + core.esc(lim.block_repeat_max || 1000000) +
+      '<label>Repeat (Cycle)<input type="number" min="1" max="' + core.esc(lim.block_repeat_max || 1000000) +
       '" data-rcb="repeat" value="' + attr(b.repeat) + '"></label>';
     for (var i = 0; i < (lim.mfc_count || 0); i++) {
       h += '<label>MFC' + (i + 1) + ' sccm<input type="number" min="0" step="0.1" ' +
@@ -288,18 +288,18 @@
         attr(b.rf_w) + '"></label>';
     }
     if ((core.state.device || {}).has_o3) {
-      h += '<label>O3 설정<input type="number" min="0" step="0.1" data-rcb="o3" value="' +
+      h += '<label>O3 Setpoint<input type="number" min="0" step="0.1" data-rcb="o3" value="' +
         attr(b.o3) + '"></label>';
     }
-    h += '<button class="btn sm danger-line" data-rcdel="block" title="이 블록 삭제">블록 삭제</button>' +
+    h += '<button class="btn sm danger-line" data-rcdel="block" title="이 블록 삭제">' + T('b.deleteBlock') + '</button>' +
       '</div>';
 
     // 스텝 표
     var valves = lim.recipe_valves || [];
-    h += '<table class="tbl rc-steps"><thead><tr><th>#</th><th class="l">스텝 이름</th><th>시간 ms</th>' +
+    h += '<table class="tbl rc-steps"><thead><tr><th>#</th><th class="l">' + T('v.stepName') + '</th><th>' + T('v.ms') + '</th>' +
       valves.map(function (v) { return '<th class="vh">' + core.esc(v) + '</th>'; }).join('') +
       ((core.state.device || {}).has_rf ? '<th class="vh">RF</th>' : '') +
-      '<th class="vh" title="이 스텝에서 일시정지를 받아도 안전한가">정지<br>허용</th>' +
+      '<th class="vh" title="이 스텝에서 일시정지를 받아도 안전한가">Pause<br>OK</th>' +
       '<th></th></tr></thead><tbody>';
     arr(b.steps).forEach(function (st, i) {
       st = st || {};
@@ -319,7 +319,7 @@
         '<td><button class="xbtn" data-rcdel="step" title="이 스텝 삭제">✕</button></td></tr>';
     });
     h += '</tbody></table>' +
-      '<div class="rc-brow"><button class="btn sm" data-rcadd="step">＋ 스텝 추가</button>' +
+      '<div class="rc-brow"><button class="btn sm" data-rcadd="step">' + T('b.addStep') + '</button>' +
       '<span class="dim mono" data-bind="rcBlkSum"></span></div>' +
       '</div>';
     return h;
@@ -342,22 +342,22 @@
     var full = gs.length >= (lim.group_max || 5);
     var why = full ? '반복 그룹은 최대 ' + (lim.group_max || 5) + '개입니다'
       : !room ? '마지막 그룹 뒤에 남은 블록이 없습니다 — 블록을 더하거나 그룹 범위를 줄이세요' : '';
-    var h = '<div class="rc-groups"><div class="rc-ghead">반복 그룹' +
+    var h = '<div class="rc-groups"><div class="rc-ghead">Repeat Group' +
       '<span class="hint">블록 여러 개를 묶어 다시 돌립니다. 겹치게 둘 수 없습니다.' +
       (why ? ' <span class="warn-txt">' + core.esc(why) + '</span>' : '') + '</span>' +
       '<button class="btn sm" data-rcadd="group"' + (why ? ' disabled title="' + core.esc(why) + '"' : '') +
-      '>＋ 그룹</button></div>';
-    if (!gs.length) h += '<div class="dim">없음</div>';
+      '>' + T('b.addGroup') + '</button></div>';
+    if (!gs.length) h += '<div class="dim">None</div>';
     gs.forEach(function (g, i) {
       // ★ 키는 서버·저장 파일·PLC 표와 같은 from_block / to_block (from / to 가 아니다)
       g = g || {};
       h += '<div class="rc-grow" data-rcgroup="' + (i + 1) + '">' +
         '<span class="mono">' + (i + 1) + '</span>' +
-        '<label>시작 블록<input type="number" min="1" max="' + n + '" data-rcg="from_block" value="' +
+        '<label>' + T('v.fromBlock') + '<input type="number" min="1" max="' + n + '" data-rcg="from_block" value="' +
         attr(g.from_block) + '"></label>' +
-        '<label>끝 블록<input type="number" min="1" max="' + n + '" data-rcg="to_block" value="' +
+        '<label>' + T('v.toBlock') + '<input type="number" min="1" max="' + n + '" data-rcg="to_block" value="' +
         attr(g.to_block) + '"></label>' +
-        '<label>반복<input type="number" min="1" max="' + core.esc(lim.group_repeat_max || 32767) +
+        '<label>' + T('v.repeat') + '<input type="number" min="1" max="' + core.esc(lim.group_repeat_max || 32767) +
         '" data-rcg="repeat" value="' + attr(g.repeat) + '"></label>' +
         '<button class="xbtn" data-rcdel="group">✕</button></div>';
     });
@@ -376,18 +376,18 @@
     var sm = core.bind('rcSum');
     if (sm) {
       sm.innerHTML = !cur ? '' :
-        '<span class="mono">번호 ' + (summary.number == null ? fmt.DASH : summary.number) + '</span>' +
-        ' · 스텝 ' + (summary.step_count || 0) + ' / ' + (lim.step_max || 100) +
-        ' · 블록 ' + (summary.block_count || 0) + ' / ' + (lim.block_max || 10) +
-        ' · 그룹 ' + (summary.group_count || 0) + ' / ' + (lim.group_max || 5) +
-        ' · 예상 <b>' + fmt.hms((summary.total_ms || 0) / 1000) + '</b>' +
+        '<span class="mono">' + T('v.number') + ' ' + (summary.number == null ? fmt.DASH : summary.number) + '</span>' +
+        ' · ' + T('v.step') + ' ' + (summary.step_count || 0) + ' / ' + (lim.step_max || 100) +
+        ' · ' + T('v.block') + ' ' + (summary.block_count || 0) + ' / ' + (lim.block_max || 10) +
+        ' · ' + T('v.group') + ' ' + (summary.group_count || 0) + ' / ' + (lim.group_max || 5) +
+        ' · ' + T('v.estimate') + ' <b>' + fmt.hms((summary.total_ms || 0) / 1000) + '</b>' +
         (summary.prep_ms ? ' <span class="dim">(블록 준비 ' + fmt.ms(summary.prep_ms, 0) + ' s 포함)</span>' : '');
     }
     var bs = core.bind('rcBlkSum');
     if (bs) {
       var b = (summary.blocks || [])[sel.block - 1];
-      bs.textContent = b ? ('1 사이클 ' + fmt.ms(b.cycle_ms) + ' s × ' + b.repeat +
-        '회 = ' + fmt.hms(b.total_ms / 1000)) : '';
+      bs.textContent = b ? ('1 cycle ' + fmt.ms(b.cycle_ms) + ' s × ' + b.repeat +
+        ' = ' + fmt.hms(b.total_ms / 1000)) : '';
     }
     core.setText('rcName', !cur ? '열린 레시피 없음' : (curName || '(저장 안 함)'));
     var dt = core.bind('rcDirty');
@@ -396,8 +396,8 @@
 
   function row(x, lvl) {
     var where = [];
-    if (x.block) where.push('블록 ' + x.block);
-    if (x.step) where.push('스텝 ' + x.step);
+    if (x.block) where.push(T('v.block') + ' ' + x.block);
+    if (x.step) where.push(T('v.step') + ' ' + x.step);
     return '<div class="ck ' + lvl + '" data-rcgo="' +
       core.esc([x.block || '', x.step || '', x.field || ''].join('|')) + '">' +
       (where.length ? '<span class="loc">' + where.join(' · ') + '</span>' : '') +
@@ -550,14 +550,14 @@
       }
       var mfc = [];
       for (var i = 0; i < (lim.mfc_count || 0); i++) mfc.push(0);
-      cur.blocks.push({ name: '블록 ' + (cur.blocks.length + 1), repeat: 1, mfc_sccm: mfc, steps: [] });
+      cur.blocks.push({ name: 'Block ' + (cur.blocks.length + 1), repeat: 1, mfc_sccm: mfc, steps: [] });
       sel.block = cur.blocks.length;
     } else if (what === 'step') {
       var b = curBlock();
       if (!b) return;
       b.steps = b.steps || [];
       cur.blocks.reduce(function (n, x) { return n + (x.steps || []).length; }, 0);
-      b.steps.push({ name: '스텝 ' + (b.steps.length + 1), time_ms: 100, valves: [], pause_ok: false });
+      b.steps.push({ name: 'Step ' + (b.steps.length + 1), time_ms: 100, valves: [], pause_ok: false });
     } else if (what === 'group') {
       cur.groups = cur.groups || [];
       if (cur.groups.length >= (lim.group_max || 5)) {
@@ -576,7 +576,7 @@
     var what = btn.dataset.rcdel;
     if (what === 'block') {
       core.confirmAsk('블록을 지울까요?', '블록 ' + sel.block + ' 과 그 안의 스텝이 모두 사라집니다.',
-        '삭제', function () {
+        T('b.delete'), function () {
           cur.blocks.splice(sel.block - 1, 1);
           sel.block = Math.max(1, sel.block - 1);
           draw(); validateSoon();
@@ -632,7 +632,7 @@
       for (var i = 0; i < (lim.mfc_count || 0); i++) mk.push(0);
       cur = {
         format: lim.format, name: '', memo: '',
-        blocks: [{ name: '블록 1', repeat: 1, mfc_sccm: mk, steps: [] }], groups: []
+        blocks: [{ name: 'Block 1', repeat: 1, mfc_sccm: mk, steps: [] }], groups: []
       };
       curName = '';
       saving = null;
@@ -652,7 +652,7 @@
       return;
     }
     if (which === 'saveas') {
-      askName('다른 이름으로 저장', cur.name || '', function (nm) {
+      askName(T('b.saveAs'), cur.name || '', function (nm) {
         // ★ 이미 있는 이름이면 덮어쓰기 확인 — PLC 에 올린 레시피를 조용히 바꾸지 않게
         if (exists(nm)) { confirmOverwrite(nm); return; }
         cur.name = nm;
@@ -665,7 +665,7 @@
     if (which === 'rename') {
       if (!curName) { core.toast('먼저 저장하세요', 'warn'); return; }
       if (renaming) { core.toast('이름 바꾸기 답을 기다리는 중입니다', 'warn'); return; }
-      askName('이름 바꾸기', curName, function (nm) {
+      askName(T('b.rename'), curName, function (nm) {
         // ★ 서버 답(recipe_renamed)이 ok 일 때만 이름을 바꾼다
         if (!w.app.send('recipe_rename', { name: curName, new_name: nm })) return;
         renaming = { old: curName, new: nm };
@@ -678,7 +678,7 @@
       if (!curName) { core.toast('저장된 레시피가 아닙니다', 'warn'); return; }
       core.confirmAsk('레시피를 삭제할까요?',
         '<b>' + core.esc(curName) + '</b> 파일을 지웁니다. 되돌릴 수 없습니다.',
-        '삭제', function () {
+        T('b.delete'), function () {
           // ★ 서버 답(recipe_deleted)이 ok 일 때만 편집기를 비운다
           if (!w.app.send('recipe_delete', { name: curName })) return;
           deleting = curName;
@@ -696,14 +696,14 @@
       core.confirmAsk('PLC 에 레시피를 올릴까요?',
         '<b>' + core.esc(curName) + '</b> (번호 ' + summary.number + ')<br>' +
         'PLC 레시피 표 영역을 덮어씁니다. 공정 중에는 올릴 수 없습니다.',
-        '올리기', function () { w.app.send('recipe_upload', { name: curName }); });
+        T('b.upload'), function () { w.app.send('recipe_upload', { name: curName }); });
       return;
     }
     if (which === 'start') {
       if (!curName || dirty) { core.toast('먼저 저장하세요 — 저장된 내용으로 시작합니다', 'warn'); return; }
       w.app.send('recipe_select', { name: curName });
       core.setTab('main');
-      core.toast('운전 탭에서 시작 조건을 확인하고 [공정 시작]을 누르세요', 'info');
+      core.toast('Operation 탭에서 시작 조건을 확인하고 [Start]를 누르세요', 'info');
     }
   }
 
@@ -722,10 +722,10 @@
   /** 이름 입력 — 브라우저 prompt 는 pywebview 창에서 동작이 제각각이라 쓰지 않는다. */
   function askName(title, initial, cb) {
     core.confirmAsk(title,
-      '<label class="onelabel">이름<input type="text" id="rcAskName" value="' +
+      '<label class="onelabel">' + T('v.name') + '<input type="text" id="rcAskName" value="' +
       core.esc(initial) + '" maxlength="' + core.esc(lim.name_max || 80) + '"></label>' +
       '<div class="hint">\\ / : * ? " &lt; &gt; | 는 쓸 수 없습니다.</div>',
-      '확인', function () {
+      T('b.ok'), function () {
         var e = d.getElementById('rcAskName');
         var nm = e ? (e.value || '').trim() : '';
         if (!nm) { core.toast('이름을 넣으세요', 'warn'); return; }

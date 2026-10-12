@@ -45,25 +45,25 @@
   },
 
   "mfc": [
-    { "no": 1, "name": "전구체 캐리어", "gas": "N2", "full_scale_sccm": 1000, "confirmed": false },
-    { "no": 2, "name": "어시스트",     "gas": "N2", "full_scale_sccm": 1000, "confirmed": false },
-    { "no": 3, "name": "반응물 퍼지",   "gas": "N2", "full_scale_sccm": 1000, "confirmed": false },
+    { "no": 1, "name": "Precursor Carrier", "gas": "N2", "full_scale_sccm": 1000, "confirmed": false },
+    { "no": 2, "name": "Assist",     "gas": "N2", "full_scale_sccm": 1000, "confirmed": false },
+    { "no": 3, "name": "Reactant Purge",   "gas": "N2", "full_scale_sccm": 1000, "confirmed": false },
     { "no": 4, "name": "O2",          "gas": "O2", "full_scale_sccm": null, "confirmed": false }
   ],
 
   "heaters": [
-    { "ch": 1,  "name": "Stage·챔버",  "enabled": true,  "max_c": 300, "default_sv": 200 },
-    { "ch": 2,  "name": "전구체 라인",  "enabled": true,  "max_c": 120, "default_sv": 80 },
-    { "ch": 3,  "name": "반응물 라인",  "enabled": true,  "max_c": 120, "default_sv": 80 },
-    { "ch": 4,  "name": "캐니스터2",   "enabled": true,  "max_c": 120, "default_sv": 60 },
-    { "ch": 5,  "name": "캐니스터3",   "enabled": true,  "max_c": 120, "default_sv": 60 },
-    { "ch": 6,  "name": "트랩",       "enabled": true,  "max_c": 450, "default_sv": 150 },
-    { "ch": 7,  "name": "예비 7",     "enabled": false, "max_c": null, "default_sv": null },
-    { "ch": 8,  "name": "예비 8",     "enabled": false, "max_c": null, "default_sv": null },
-    { "ch": 9,  "name": "예비 9",     "enabled": false, "max_c": null, "default_sv": null },
-    { "ch": 10, "name": "예비 10",    "enabled": false, "max_c": null, "default_sv": null },
-    { "ch": 11, "name": "예비 11",    "enabled": false, "max_c": null, "default_sv": null },
-    { "ch": 12, "name": "예비 12",    "enabled": false, "max_c": null, "default_sv": null }
+    { "ch": 1,  "name": "Stage/Chamber",  "enabled": true,  "max_c": 300, "default_sv": 200 },
+    { "ch": 2,  "name": "Precursor Line",  "enabled": true,  "max_c": 120, "default_sv": 80 },
+    { "ch": 3,  "name": "Reactant Line",  "enabled": true,  "max_c": 120, "default_sv": 80 },
+    { "ch": 4,  "name": "Canister 2",   "enabled": true,  "max_c": 120, "default_sv": 60 },
+    { "ch": 5,  "name": "Canister 3",   "enabled": true,  "max_c": 120, "default_sv": 60 },
+    { "ch": 6,  "name": "Trap",       "enabled": true,  "max_c": 450, "default_sv": 150 },
+    { "ch": 7,  "name": "Spare 7",     "enabled": false, "max_c": null, "default_sv": null },
+    { "ch": 8,  "name": "Spare 8",     "enabled": false, "max_c": null, "default_sv": null },
+    { "ch": 9,  "name": "Spare 9",     "enabled": false, "max_c": null, "default_sv": null },
+    { "ch": 10, "name": "Spare 10",    "enabled": false, "max_c": null, "default_sv": null },
+    { "ch": 11, "name": "Spare 11",    "enabled": false, "max_c": null, "default_sv": null },
+    { "ch": 12, "name": "Spare 12",    "enabled": false, "max_c": null, "default_sv": null }
   ],
 
   "rf": {

@@ -64,7 +64,8 @@ def uvicorn_config(app, host: str, port: int):
                           #   메시지로 풀려 폭주 비용을 키운다(창 · headless · 자체 점검 공통 설정)
                           ws_per_message_deflate=False)
 
-_ASSET_FILES = ["css/tokens.css", "css/style.css", "js/fmt.js", "js/core.js", "js/app.js",
+_ASSET_FILES = ["css/tokens.css", "css/style.css", "js/terms.js", "js/ops.js", "js/views/faceplate.js",
+                "js/fmt.js", "js/core.js", "js/app.js",
                 "js/views/main.js", "js/views/schematic.js", "js/views/trend.js",
                 "js/views/alarm.js", "js/views/setup.js", "js/views/recipe.js",
                 "js/views/manual.js", "js/views/datalog.js", "js/decimate.js", "js/chart.js"]

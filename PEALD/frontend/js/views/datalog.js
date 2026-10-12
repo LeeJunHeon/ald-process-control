@@ -68,7 +68,7 @@
         '<div class="b">' + core.esc(it.recipe || '') +
         (it.number != null ? ' <span class="dim">#' + core.esc(it.number) + '</span>' : '') +
         '<span class="dim right">' + (it.took_s != null ? fmt.hms(it.took_s) : fmt.DASH) +
-        (it.rows != null ? ' · ' + core.esc(it.rows) + '줄' : '') + (it.guessed ? ' (추정)' : '') + '</span></div></div>';
+        (it.rows != null ? ' · ' + core.esc(it.rows) + ' rows' : '') + (it.guessed ? ' (추정)' : '') + '</span></div></div>';
     }).join('') || '<div class="empty">데이터 로그가 없습니다</div>';
   }
 
@@ -88,7 +88,7 @@
       if (box) {
         box.innerHTML = core.chip(m.result || '—', m.level || (/정상/.test(m.result || '') ? 'ok' : 'warn')) + ' ' +
           '<span class="dim">' + core.esc(m.recipe || '') + (m.number != null ? ' #' + core.esc(m.number) : '') +
-          ' · ' + (m.took_s != null ? fmt.hms(m.took_s) : fmt.DASH) + ' · ' + (m.rows != null ? core.esc(m.rows) + '줄' : '') +
+          ' · ' + (m.took_s != null ? fmt.hms(m.took_s) : fmt.DASH) + ' · ' + (m.rows != null ? core.esc(m.rows) + ' rows' : '') +
           (m.guessed ? ' · 메타 없음(CSV 로 추정)' : '') + '</span>';
       }
       buildPicker();
@@ -141,7 +141,7 @@
     });
     var bands = (data.segments || []).map(function (s, i) {
       return { x0: s.t0, x1: s.t1, alt: i % 2 === 1,
-               label: '블록 ' + s.block + ' · 스텝 ' + s.step + (s.name ? ' — ' + s.name : '') };
+               label: T('v.block') + ' ' + s.block + ' · ' + T('v.step') + ' ' + s.step + (s.name ? ' — ' + s.name : '') };
     });
     var xp = core.bind('dlXPanel');
     if (xp) xp.hidden = !per.x.length;
@@ -154,7 +154,7 @@
   }
 
   function xLabel(s, span, full) {
-    return (full ? '경과 ' : '') + fmt.hms(s);
+    return (full ? T('v.elapsed') + ' ' : '') + fmt.hms(s);
   }
 
   function setView(v) {
@@ -182,7 +182,7 @@
           return '<tr>' + r.map(function (c) { return '<td>' + core.esc(c) + '</td>'; }).join('') + '</tr>';
         }).join('') + '</tbody>';
         core.setText('dlPage', (js.total ? (js.offset + 1) + '~' + Math.min(js.total, js.offset + 200) : 0) +
-          ' / ' + (js.total || 0) + '줄');
+          ' / ' + (js.total || 0) + ' rows');
         dataTotal = js.total || 0;
       });
   }

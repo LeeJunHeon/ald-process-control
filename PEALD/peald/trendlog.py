@@ -37,29 +37,29 @@ FUTURE_S = 3600                  # 끝 시각은 지금 + 1 h 까지만
 
 def _cols():
     """(열 이름, SQL 종류, 배율, 묶음, 이름, 단위). 배율 10 = 저장값 ×10 정수."""
-    out = [("p", "REAL", 1, "p", "CVG 압력", "Torr"),
-           ("cm", "REAL", 1, "p", "CM 압력", "Torr")]
+    out = [("p", "REAL", 1, "p", "CVG Pressure", "Torr"),
+           ("cm", "REAL", 1, "p", "CM Pressure", "Torr")]
     for no in range(1, DEV.MFC_COUNT + 1):
-        out.append((f"mfc{no}_pv", "INTEGER", 10, "m", f"MFC{no} 현재", "sccm"))
-        out.append((f"mfc{no}_sv", "INTEGER", 10, "m", f"MFC{no} 설정", "sccm"))
+        out.append((f"mfc{no}_pv", "INTEGER", 10, "m", f"MFC{no} Actual", "sccm"))
+        out.append((f"mfc{no}_sv", "INTEGER", 10, "m", f"MFC{no} Setpoint", "sccm"))
     for ch in range(1, DEV.HEATER_COUNT + 1):
-        out.append((f"h{ch}_pv", "INTEGER", 10, "t", f"CH{ch} 현재", "℃"))
-        out.append((f"h{ch}_sv", "INTEGER", 10, "t", f"CH{ch} 설정", "℃"))
+        out.append((f"h{ch}_pv", "INTEGER", 10, "t", f"CH{ch} Actual", "℃"))
+        out.append((f"h{ch}_sv", "INTEGER", 10, "t", f"CH{ch} Setpoint", "℃"))
     if DEV.HAS_RF:
-        out += [("rf_fwd", "INTEGER", 10, "x", "RF 순방향", "W"),
-                ("rf_ref", "INTEGER", 10, "x", "RF 반사", "W"),
-                ("rf_sv", "INTEGER", 10, "x", "RF 설정", "W")]
+        out += [("rf_fwd", "INTEGER", 10, "x", "RF Forward", "W"),
+                ("rf_ref", "INTEGER", 10, "x", "RF Reflected", "W"),
+                ("rf_sv", "INTEGER", 10, "x", "RF Setpoint", "W")]
     if DEV.HAS_PCV:
-        out += [("pcv_pv", "INTEGER", 10, "x", "PCV 개도", "%"),
-                ("pcv_sv", "INTEGER", 10, "x", "PCV 목표", "%")]
+        out += [("pcv_pv", "INTEGER", 10, "x", "PCV Position", "%"),
+                ("pcv_sv", "INTEGER", 10, "x", "PCV Target", "%")]
     if DEV.HAS_O3:
-        out += [("o3_pv", "INTEGER", 10, "x", "O3 현재", ""),
-                ("o3_sv", "INTEGER", 10, "x", "O3 설정", "")]
-    out += [("valves", "INTEGER", 1, "w", "밸브 출력 워드", ""),
-            ("aux", "INTEGER", 1, "w", "보조 출력 워드", ""),
-            ("state", "INTEGER", 1, "w", "장비 상태", ""),
-            ("blk", "INTEGER", 1, "w", "블록", ""),
-            ("step", "INTEGER", 1, "w", "스텝", "")]
+        out += [("o3_pv", "INTEGER", 10, "x", "O3 Actual", ""),
+                ("o3_sv", "INTEGER", 10, "x", "O3 Setpoint", "")]
+    out += [("valves", "INTEGER", 1, "w", "Valve Word", ""),
+            ("aux", "INTEGER", 1, "w", "Aux Word", ""),
+            ("state", "INTEGER", 1, "w", "State", ""),
+            ("blk", "INTEGER", 1, "w", "Block", ""),
+            ("step", "INTEGER", 1, "w", "Step", "")]
     return out
 
 
@@ -279,7 +279,7 @@ class TrendLog:
         # 1 MiB 버퍼 — 8 KB 마다 쓰기(GIL 놓기 · 다시 잡기)로 루프가 차례를 놓치지 않게
         with open(path, "w", encoding="utf-8-sig", newline="", buffering=1 << 20) as f:
             w = csv.writer(f)
-            w.writerow(logger.csv_row(["시각"] + [labels[c] for c in COL_NAMES]))
+            w.writerow(logger.csv_row(["Time"] + [labels[c] for c in COL_NAMES]))
             n = 0
             for r in self.raw_rows(t0, t1):
                 ts = datetime.datetime.fromtimestamp(r[0]).strftime("%Y-%m-%d %H:%M:%S")

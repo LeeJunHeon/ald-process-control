@@ -40,85 +40,85 @@ def _add(path, kind, label, nullable=False, restart=False):
 
 
 # --- PLC 파라미터 ---
-_add("params.pc_wdt_ms", "int", "PC 하트비트 끊김 판정 ms")
-_add("params.base_press_torr", "num", "공정 시작 베이스 압력 Torr", nullable=True)
-_add("params.pump_timeout_s", "int", "베이스 도달 제한 s")
-_add("params.vent_timeout_s", "int", "대기압 도달 제한 s")
-_add("params.mfc_stable_s", "int", "MFC 안정 판정 s")
-_add("params.mfc_tol_sccm", "num", "MFC1 허용 편차 sccm", nullable=True)
-_add("params.mfc_timeout_s", "int", "MFC 안정 제한 s")
-_add("params.valve_min_ms", "int", "펄스 밸브 최소 열림 ms")
+_add("params.pc_wdt_ms", "int", "PC Heartbeat Timeout ms")
+_add("params.base_press_torr", "num", "Base Pressure Torr", nullable=True)
+_add("params.pump_timeout_s", "int", "Pump-down Timeout s")
+_add("params.vent_timeout_s", "int", "Vent Timeout s")
+_add("params.mfc_stable_s", "int", "MFC Stable Time s")
+_add("params.mfc_tol_sccm", "num", "MFC1 Tolerance sccm", nullable=True)
+_add("params.mfc_timeout_s", "int", "MFC Stable Timeout s")
+_add("params.valve_min_ms", "int", "Pulse Valve Min Open ms")
 if DEV.HAS_RF:
-    _add("params.rf_max_w", "num", "RF 설정 상한 W", nullable=True)
-    _add("params.rf_ref_max_w", "num", "반사 전력 한계 W", nullable=True)
-    _add("params.rf_ref_ms", "int", "반사 초과 허용 ms")
-    _add("params.rf_p_max_torr", "num", "RF 허가 최대 압력 Torr", nullable=True)
+    _add("params.rf_max_w", "num", "RF Setpoint Max W", nullable=True)
+    _add("params.rf_ref_max_w", "num", "RF Reflected Limit W", nullable=True)
+    _add("params.rf_ref_ms", "int", "RF Reflected Over ms")
+    _add("params.rf_p_max_torr", "num", "RF Permit Max Pressure Torr", nullable=True)
 if DEV.HAS_O3:
-    _add("params.o3_max", "num", "O3 설정 상한", nullable=True)
+    _add("params.o3_max", "num", "O3 Setpoint Max", nullable=True)
 
 # --- MFC (개수는 장비 고정) ---
 for _no in range(1, DEV.MFC_COUNT + 1):
-    _add(f"mfc.{_no}.name", "str", f"MFC{_no} 이름")
-    _add(f"mfc.{_no}.gas", "str", f"MFC{_no} 가스")
-    _add(f"mfc.{_no}.full_scale_sccm", "num", f"MFC{_no} 풀스케일 sccm", nullable=True)
-    _add(f"mfc.{_no}.confirmed", "bool", f"MFC{_no} 환산 확정")
+    _add(f"mfc.{_no}.name", "str", f"MFC{_no} Name")
+    _add(f"mfc.{_no}.gas", "str", f"MFC{_no} Gas")
+    _add(f"mfc.{_no}.full_scale_sccm", "num", f"MFC{_no} Full Scale sccm", nullable=True)
+    _add(f"mfc.{_no}.confirmed", "bool", f"MFC{_no} Confirmed")
 
 # --- 히터 ---
 for _ch in range(1, DEV.HEATER_COUNT + 1):
-    _add(f"heaters.{_ch}.name", "str", f"CH{_ch} 이름")
-    _add(f"heaters.{_ch}.enabled", "bool", f"CH{_ch} 사용")
-    _add(f"heaters.{_ch}.max_c", "num", f"CH{_ch} 과온 한계 ℃", nullable=True)
-    _add(f"heaters.{_ch}.default_sv", "num", f"CH{_ch} 기본 목표 ℃", nullable=True)
-    _add(f"heaters.{_ch}.station", "int", f"CH{_ch} 온도조절기 국번")
+    _add(f"heaters.{_ch}.name", "str", f"CH{_ch} Name")
+    _add(f"heaters.{_ch}.enabled", "bool", f"CH{_ch} Enabled")
+    _add(f"heaters.{_ch}.max_c", "num", f"CH{_ch} Overtemp Limit ℃", nullable=True)
+    _add(f"heaters.{_ch}.default_sv", "num", f"CH{_ch} Default Setpoint ℃", nullable=True)
+    _add(f"heaters.{_ch}.station", "int", f"CH{_ch} TC Station")
 
 # --- 환산 ---
-_add("analog.raw_max", "int", "아날로그 원시값 최대")
-_add("analog.confirmed", "bool", "아날로그 확정")
+_add("analog.raw_max", "int", "Analog Raw Max")
+_add("analog.confirmed", "bool", "Analog Confirmed")
 for _g in ("cvg", "cm"):
     _n = "CVG" if _g == "cvg" else "CM"
     if _g == "cm":
-        _add("pressure.cm.installed", "bool", "CM 설치")
-    _add(f"pressure.{_g}.mode", "str", f"{_n} 방식")
-    _add(f"pressure.{_g}.volt_max", "num", f"{_n} 최대 전압 V")
-    _add(f"pressure.{_g}.torr_at_0v", "num", f"{_n} 0 V 압력 Torr")
+        _add("pressure.cm.installed", "bool", "CM Installed")
+    _add(f"pressure.{_g}.mode", "str", f"{_n} Mode")
+    _add(f"pressure.{_g}.volt_max", "num", f"{_n} Max Voltage V")
+    _add(f"pressure.{_g}.torr_at_0v", "num", f"{_n} Pressure at 0 V Torr")
     _add(f"pressure.{_g}.decades_per_volt", "num", f"{_n} decade/V")
     _add(f"pressure.{_g}.torr_per_volt", "num", f"{_n} Torr/V")
-    _add(f"pressure.{_g}.confirmed", "bool", f"{_n} 환산 확정")
+    _add(f"pressure.{_g}.confirmed", "bool", f"{_n} Confirmed")
 if DEV.HAS_RF:
-    _add("rf.max_w", "num", "RF 원시값 최대에 해당하는 W", nullable=True)
-    _add("rf.confirmed", "bool", "RF 환산 확정")
+    _add("rf.max_w", "num", "RF Full Scale W", nullable=True)
+    _add("rf.confirmed", "bool", "RF Confirmed")
 if DEV.HAS_PCV:
-    _add("pcv.full_pct", "num", "PCV 원시값 최대에 해당하는 %")
-    _add("pcv.confirmed", "bool", "PCV 환산 확정")
+    _add("pcv.full_pct", "num", "PCV Full Scale %")
+    _add("pcv.confirmed", "bool", "PCV Confirmed")
 if DEV.HAS_O3:
-    _add("o3.unit", "str", "O3 단위")
-    _add("o3.full", "num", "O3 원시값 최대에 해당하는 값", nullable=True)
-    _add("o3.confirmed", "bool", "O3 환산 확정")
+    _add("o3.unit", "str", "O3 Unit")
+    _add("o3.full", "num", "O3 Full Scale", nullable=True)
+    _add("o3.confirmed", "bool", "O3 Confirmed")
 
 # --- 공정 ---
-_add("process.base_wait_timeout_s", "num", "베이스 압력 대기 제한 s")
-_add("process.base_stable_s", "num", "베이스 압력 안정 시간 s")
-_add("process.heater_ready.enabled", "bool", "시작 조건에 히터 안정 포함")
-_add("process.heater_ready.band_c", "num", "히터 안정 범위 ±℃")
-_add("process.heater_ready.stable_s", "num", "히터 안정 유지 s")
+_add("process.base_wait_timeout_s", "num", "Base Wait Timeout s")
+_add("process.base_stable_s", "num", "Base Stable Time s")
+_add("process.heater_ready.enabled", "bool", "Heater Ready in Start Check")
+_add("process.heater_ready.band_c", "num", "Heater Ready Band ±℃")
+_add("process.heater_ready.stable_s", "num", "Heater Ready Hold s")
 if DEV.HAS_O3:
-    _add("process.o3_off_delay_s", "num", "O3 끄기 뒤 바이패스 닫기 지연 s")
+    _add("process.o3_off_delay_s", "num", "O3 Off Bypass Delay s")
 
 # --- 로그 ---
-_add("log.keep_days", "int", "프로그램 로그 보존 일")
-_add("log.datalog_interval_s", "num", "데이터 로그 주기 s")
-_add("log.datalog_keep_days", "int", "데이터 로그 보존 일")
-_add("log.trend_keep_days", "int", "트렌드 이력 보존 일")
+_add("log.keep_days", "int", "Program Log Keep days")
+_add("log.datalog_interval_s", "num", "Data Log Interval s")
+_add("log.datalog_keep_days", "int", "Data Log Keep days")
+_add("log.trend_keep_days", "int", "Trend Keep days")
 
 # --- PLC 연결 (다시 시작해야 반영) ---
-_add("plc.host", "str", "PLC 주소", restart=True)
-_add("plc.port", "int", "PLC 포트", restart=True)
+_add("plc.host", "str", "PLC Address", restart=True)
+_add("plc.port", "int", "PLC Port", restart=True)
 _add("plc.unit_id", "int", "Unit ID", restart=True)
-_add("plc.timeout_ms", "int", "응답 제한 ms", restart=True)
-_add("plc.poll_ms", "int", "상태 읽기 주기 ms", restart=True)
-_add("plc.heartbeat_ms", "int", "하트비트 주기 ms", restart=True)
-_add("plc.simulate", "bool", "내장 시뮬레이터 사용", restart=True)
-_add("plc.require_device_id", "bool", "장비 ID 필수 (0 이면 막음)", restart=True)
+_add("plc.timeout_ms", "int", "Response Timeout ms", restart=True)
+_add("plc.poll_ms", "int", "Poll Interval ms", restart=True)
+_add("plc.heartbeat_ms", "int", "Heartbeat Interval ms", restart=True)
+_add("plc.simulate", "bool", "Use Built-in Simulator", restart=True)
+_add("plc.require_device_id", "bool", "Require Device ID", restart=True)
 
 FIELDS = {f["path"]: f for f in _F}
 

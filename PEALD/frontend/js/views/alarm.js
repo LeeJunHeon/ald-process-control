@@ -61,23 +61,24 @@
     lastSig = sig;
 
     if (!known) {
-      core.setText('alarmCount', '알 수 없음');
+      core.setText('alarmCount', T('s.unknown'));
       var why = t.offline ? '서버 연결이 끊겨' : p.stalled ? 'PLC 하트비트가 멈춰' : 'PLC 연결이 끊겨';
       tbl.innerHTML = '<tbody><tr><td class="empty" colspan="4">' + why +
         ' 지금 알람을 알 수 없습니다</td></tr></tbody>';
       return;
     }
     var crit = alarms.filter(function (a) { return a.crit; }).length;
-    core.setText('alarmCount', '중대 ' + crit + ' · 경고 ' + (alarms.length - crit));
+    core.setText('alarmCount', T('s.critical') + ' ' + crit + ' · ' + T('s.warning') + ' ' + (alarms.length - crit));
 
     if (!alarms.length) {
       tbl.innerHTML = '<tbody><tr><td class="empty" colspan="4">현재 알람이 없습니다</td></tr></tbody>';
       return;
     }
-    var html = '<thead><tr><th>등급</th><th>발생</th><th>코드</th><th class="l">내용</th></tr></thead><tbody>';
+    var html = '<thead><tr><th>' + T('v.severity') + '</th><th>' + T('v.raised') + '</th><th>' + T('v.code') +
+      '</th><th class="l">' + T('v.message') + '</th></tr></thead><tbody>';
     alarms.forEach(function (a) {
       html += '<tr class="' + (a.crit ? 'hl' : '') + '">' +
-        '<td>' + core.chip(a.crit ? '중대' : '경고', a.crit ? 'stop' : 'warn') + '</td>' +
+        '<td>' + core.chip(a.crit ? T('s.critical') : T('s.warning'), a.crit ? 'stop' : 'warn') + '</td>' +
         '<td class="mono">' + core.esc(a.since) + '</td>' +
         '<td class="mono">' + core.esc(a.code) + '</td>' +
         '<td class="l">' + core.esc(a.name) + '</td></tr>';
@@ -124,11 +125,12 @@
       tbl.innerHTML = '<tbody><tr><td class="empty" colspan="5">이력이 없습니다</td></tr></tbody>';
       return;
     }
-    var html = '<thead><tr><th>발생</th><th>해제</th><th>등급</th><th>코드</th><th class="l">내용</th></tr></thead><tbody>';
+    var html = '<thead><tr><th>' + T('v.raised') + '</th><th>' + T('v.cleared') + '</th><th>' + T('v.severity') +
+      '</th><th>' + T('v.code') + '</th><th class="l">' + T('v.message') + '</th></tr></thead><tbody>';
     h.forEach(function (a) {
       html += '<tr><td class="mono">' + core.esc((a.date || '') + ' ' + a.since) + '</td>' +
         '<td class="mono">' + core.esc(a.cleared || fmt.DASH) + '</td>' +
-        '<td>' + core.chip(a.crit ? '중대' : '경고', a.crit ? 'stop' : 'warn') + '</td>' +
+        '<td>' + core.chip(a.crit ? T('s.critical') : T('s.warning'), a.crit ? 'stop' : 'warn') + '</td>' +
         '<td class="mono">' + core.esc(a.code) + '</td>' +
         '<td class="l">' + core.esc(a.name) + '</td></tr>';
     });

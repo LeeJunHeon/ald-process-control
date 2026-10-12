@@ -86,13 +86,13 @@
           }).join('') + '</select>';
       }
       return '<input class="inp' + chg + (f.kind === 'str' ? '' : ' num') + '" data-cfg="' + path + '" value="' +
-        core.esc(v == null ? '' : v) + '"' + (f.nullable ? ' placeholder="없음"' : '') + (extra || '') + '>';
+        core.esc(v == null ? '' : v) + '"' + (f.nullable ? ' placeholder="None"' : '') + (extra || '') + '>';
     }
 
     function row(path, unit) {
       var f = F[path];
       if (!f) return '';
-      return '<tr><td class="l">' + core.esc(f.label) + (f.restart ? ' <span class="chip warn">다시 시작</span>' : '') +
+      return '<tr><td class="l">' + core.esc(f.label) + (f.restart ? ' <span class="chip warn">Restart</span>' : '') +
         '</td><td>' + inp(path) + (unit ? '<span class="unit">' + unit + '</span>' : '') + '</td></tr>';
     }
 
@@ -100,59 +100,59 @@
 
     var adminBody =
       '<div class="adm-row"><span data-bind="admChip"></span><span class="right">' +
-      '<button class="btn sm primary" data-adm="unlock" data-bind="admUnlock">잠금 해제</button>' +
-      '<button class="btn sm" data-adm="lock" data-bind="admLock">잠금</button>' +
-      '<button class="btn sm" data-adm="change" data-bind="admChange">PIN 바꾸기</button></span></div>' +
+      '<button class="btn sm primary" data-adm="unlock" data-bind="admUnlock">' + T('b.unlock') + '</button>' +
+      '<button class="btn sm" data-adm="lock" data-bind="admLock">' + T('b.lock') + '</button>' +
+      '<button class="btn sm" data-adm="change" data-bind="admChange">' + T('b.changePin') + '</button></span></div>' +
       '<div class="hint" style="margin-top:6px">설정 편집에만 PIN 이 필요합니다(레시피·수동 조작은 그대로). ' +
       '10 분 동안 조작이 없거나 공정이 시작되면 다시 잠깁니다. PIN 을 잊었으면 프로그램을 끄고 ' +
       'data/admin_pin.json 을 지운 뒤 다시 켜서 새로 정합니다.</div>';
 
     var plc = c.plc || {};
     L.innerHTML =
-      panel('관리자', '', adminBody) +
-      panel('설정 파일', srcChip(c.source),
+      panel('Admin', '', adminBody) +
+      panel('Config File', srcChip(c.source),
         '<div style="font-weight:700;font-size:var(--fs-xl)">' + core.esc(c.path_name || fmt.DASH) + '</div>' +
         '<div class="hint" style="margin-top:4px">' +
         (c.source === 'example'
           ? '⚠ 예시 설정으로 실행 중입니다. 처음 저장할 때 exe 옆에 config.json 을 만듭니다.'
           : '저장할 때마다 이전 파일을 data/config_backup 에 백업합니다(최근 20개).') + '</div>' +
         '<div style="margin-top:6px"><button class="btn sm" data-cfgact="backup"' +
-        (core.canOperate() ? '' : ' disabled title="이 PC 에서만 됩니다"') + '>백업 폴더 열기</button></div>') +
-      panel('PLC 연결', '<span class="chip warn">바꾸면 다시 시작해야 반영</span>',
+        (core.canOperate() ? '' : ' disabled title="이 PC 에서만 됩니다"') + '>' + T('b.backupFolder') + '</button></div>') +
+      panel('PLC Connection', '<span class="chip warn">바꾸면 다시 시작해야 반영</span>',
         tbl(row('plc.simulate') + row('plc.host') + row('plc.port') + row('plc.unit_id') +
             row('plc.timeout_ms', 'ms') + row('plc.poll_ms', 'ms') + row('plc.heartbeat_ms', 'ms') +
-            '<tr><td class="l">장비 ID (D00019)</td><td class="mono" data-bind="idCell">—</td></tr>' +
-            '<tr><td class="l">원격 접속 조작 금지 (access.local_only)</td><td class="mono">' +
+            '<tr><td class="l">Device ID (D00019)</td><td class="mono" data-bind="idCell">—</td></tr>' +
+            '<tr><td class="l">Remote View Only (access.local_only)</td><td class="mono">' +
             ((c.access || {}).local_only === false ? 'false' : 'true') + ' <span class="dim">읽기 전용</span></td></tr>') +
         (plc.simulate ? '<div class="hint warn" style="margin-top:6px">시뮬레이터 모드 — 실장비로 바꾸면 저장 전에 한 번 더 확인합니다.</div>' : '')) +
-      panel('아날로그 · 환산', unconf.length ? '<span class="chip warn">미확정 ' + unconf.length + '</span>' : core.chip('모두 확정', 'ok'),
+      panel('Analog / Conversion', unconf.length ? '<span class="chip warn">' + T('s.unconfirmed') + ' ' + unconf.length + '</span>' : core.chip('All Confirmed', 'ok'),
         tbl(row('analog.raw_max') + row('analog.confirmed') +
             '<tr><td class="l sub" colspan="2">CVG</td></tr>' +
             row('pressure.cvg.mode') + row('pressure.cvg.volt_max', 'V') + row('pressure.cvg.torr_at_0v', 'Torr') +
             row('pressure.cvg.decades_per_volt') + row('pressure.cvg.torr_per_volt') + row('pressure.cvg.confirmed') +
-            '<tr><td class="l sub" colspan="2">커패시턴스 게이지 (CM)</td></tr>' +
+            '<tr><td class="l sub" colspan="2">Capacitance Gauge (CM)</td></tr>' +
             row('pressure.cm.installed') + row('pressure.cm.mode') + row('pressure.cm.volt_max', 'V') +
             row('pressure.cm.torr_at_0v', 'Torr') + row('pressure.cm.torr_per_volt') + row('pressure.cm.confirmed') +
-            (dev.has_rf ? '<tr><td class="l sub" colspan="2">RF · PCV</td></tr>' + row('rf.max_w', 'W') + row('rf.confirmed') +
+            (dev.has_rf ? '<tr><td class="l sub" colspan="2">RF / PCV</td></tr>' + row('rf.max_w', 'W') + row('rf.confirmed') +
               row('pcv.full_pct', '%') + row('pcv.confirmed') : '') +
             (dev.has_o3 ? '<tr><td class="l sub" colspan="2">O3</td></tr>' + row('o3.full') + row('o3.unit') + row('o3.confirmed') : '')) +
         (unconf.length ? '<div class="hint warn" style="margin-top:6px">환산 미확정: ' + core.esc(unconf.join(' · ')) + '</div>' : '')) +
-      panel('공정', '',
+      panel('Process', '',
         tbl(row('process.base_wait_timeout_s', 's') + row('process.base_stable_s', 's') +
             row('process.heater_ready.enabled') + row('process.heater_ready.band_c', '℃') +
             row('process.heater_ready.stable_s', 's') + (dev.has_o3 ? row('process.o3_off_delay_s', 's') : ''))) +
-      panel('로그', '',
-        tbl(row('log.keep_days', '일') + row('log.datalog_interval_s', 's') +
-            row('log.datalog_keep_days', '일') + row('log.trend_keep_days', '일')) +
+      panel('Log', '',
+        tbl(row('log.keep_days', 'd') + row('log.datalog_interval_s', 's') +
+            row('log.datalog_keep_days', 'd') + row('log.trend_keep_days', 'd')) +
         '<div class="hint" style="margin-top:6px">폴더: data/logs · data/alarms · data/datalog · data/trend · data/export</div>') +
-      panel('진단', '',
-        '<div class="kv"><span class="k">PLC 응답 시간</span><span class="v" data-bind="dgRtt">—</span></div>' +
-        '<div class="kv"><span class="k">PLC 최대 스캔 시간</span><span class="v" data-bind="dgScan">—</span></div>' +
-        '<div class="kv"><span class="k">PLC 하트비트</span><span class="v" data-bind="dgHb">—</span></div>' +
-        '<div class="kv"><span class="k">PC 하트비트 쓰기 간격 (최대)</span><span class="v" data-bind="dgHbGap">—</span></div>' +
-        '<div class="kv"><span class="k">이벤트 루프 지연 (최근 10분 최대)</span><span class="v" data-bind="dgLag">—</span></div>' +
+      panel('Diagnostics', '',
+        '<div class="kv"><span class="k">PLC RTT</span><span class="v" data-bind="dgRtt">—</span></div>' +
+        '<div class="kv"><span class="k">PLC Max Scan</span><span class="v" data-bind="dgScan">—</span></div>' +
+        '<div class="kv"><span class="k">PLC Heartbeat</span><span class="v" data-bind="dgHb">—</span></div>' +
+        '<div class="kv"><span class="k">PC Heartbeat Gap (max)</span><span class="v" data-bind="dgHbGap">—</span></div>' +
+        '<div class="kv"><span class="k">Event Loop Lag (10 min max)</span><span class="v" data-bind="dgLag">—</span></div>' +
         '<div class="hint">500 ms 를 넘으면 PC 하트비트가 늦습니다 — 로그에 그때 하던 일이 남습니다.</div>' +
-        '<div class="kv"><span class="k">웹 서버</span><span class="v">' +
+        '<div class="kv"><span class="k">Web Server</span><span class="v">' +
         core.esc((c.server || {}).host + ':' + (c.server || {}).port) + '</span></div>');
 
     var prmRows = Object.keys(F).filter(function (p) { return p.indexOf('params.') === 0; })
@@ -172,23 +172,24 @@
     }).join('');
 
     R.innerHTML =
-      panel('PLC 파라미터', '<span data-bind="prmChip"></span>',
+      panel('PLC Parameters', '<span data-bind="prmChip"></span>',
         tbl(prmRows) +
         '<div class="hint" style="margin-top:6px">저장하면 원시값으로 바꿔 PLC 에 다시 쓰고 되읽어 확인합니다. ' +
         '0 이면 PLC 가 해당 기능을 막거나 감시하지 않습니다.</div>' +
-        '<table class="tbl prmtbl" style="margin-top:8px"><thead><tr><th class="l">PRM · 주소</th><th>설정값</th><th>쓴 원시값</th>' +
-        '<th>되읽은 값</th><th>일치</th></tr></thead><tbody data-bind="prmBody">' +
+        '<table class="tbl prmtbl" style="margin-top:8px"><thead><tr><th class="l">PRM / Address</th><th>' + T('v.setpoint') + '</th><th>' + T('v.written') + '</th>' +
+        '<th>' + T('v.readback') + '</th><th>' + T('v.match') + '</th></tr></thead><tbody data-bind="prmBody">' +
         '<tr><td class="l dim" colspan="5">PLC 에 연결되면 표시합니다</td></tr></tbody></table>') +
       panel('MFC', '<span class="dim">개수는 장비 고정</span>',
-        '<table class="tbl form"><thead><tr><th class="l">번호</th><th>이름</th><th>가스</th><th>풀스케일 sccm</th><th>확정</th></tr></thead>' +
+        '<table class="tbl form"><thead><tr><th class="l">' + T('v.number') + '</th><th>' + T('v.name') + '</th><th>' + T('v.gas') +
+          '</th><th>' + T('v.fullScale') + ' sccm</th><th>' + T('v.confirmed') + '</th></tr></thead>' +
         '<tbody>' + mfcRows + '</tbody></table>') +
-      panel('히터', '',
-        '<table class="tbl form"><thead><tr><th class="l">채널</th><th>이름</th><th>사용</th><th>과온 한계 ℃</th>' +
-        '<th>기본 목표 ℃</th><th>국번</th></tr></thead><tbody>' + htRows + '</tbody></table>' +
+      panel('Heater', '',
+        '<table class="tbl form"><thead><tr><th class="l">' + T('v.channel') + '</th><th>' + T('v.name') + '</th><th>' + T('v.enabled') +
+        '</th><th>' + T('v.limit') + '</th><th>' + T('v.defaultSv') + '</th><th>' + T('v.station') + '</th></tr></thead><tbody>' + htRows + '</tbody></table>' +
         '<div class="hint" style="margin-top:6px">과온 한계가 비어 있으면 PLC 소프트 과온 감시가 꺼지므로 그 채널의 설정·전원 켜기를 PC 가 막습니다.</div>') +
       '<div class="cfgbar"><span data-bind="cfgCount"></span><span class="right">' +
-      '<button class="btn sm" data-cfgact="revert" data-bind="cfgRevert">되돌리기</button>' +
-      '<button class="btn sm primary" data-cfgact="review" data-bind="cfgReview">저장 검토</button></span></div>';
+      '<button class="btn sm" data-cfgact="revert" data-bind="cfgRevert">' + T('b.revert') + '</button>' +
+      '<button class="btn sm primary" data-cfgact="review" data-bind="cfgReview">' + T('b.review') + '</button></span></div>';
 
     paintAdmin();
     update(s.live || {});
@@ -203,7 +204,7 @@
     var sc = core.bind('dgScan');
     var stip = conn && t.scan_max_ms === 0 ? 'PLC 가 아직 쓰지 않음(D00080 = 0)' : '';
     if (sc && sc.title !== stip) sc.title = stip;
-    core.setText('dgHb', (t.plc || {}).stalled ? '멈춤' : !conn ? fmt.DASH : (t.plc.hb_ok ? '정상' : '멈춤'));
+    core.setText('dgHb', (t.plc || {}).stalled ? 'Stalled' : !conn ? fmt.DASH : (t.plc.hb_ok ? T('s.normal') : 'Stalled'));
     core.setText('dgHbGap', link && t.plc.hb_gap_max_ms != null
       ? t.plc.hb_gap_ms + ' ms (최대 ' + t.plc.hb_gap_max_ms + ' ms)' : fmt.DASH);
     var lg = t.loop || {};
@@ -215,7 +216,7 @@
       var p = t.plc || {};
       core.html(ic, p.config_error ? core.chip('주소 없음 — 연결 안 함', 'stop', p.config_error)
         : !conn ? fmt.DASH
-          : p.id_state === 'ok' ? core.chip(core.idText(p.device_id) + ' 일치', 'ok')
+          : p.id_state === 'ok' ? core.chip(core.idText(p.device_id) + ' ' + T('s.match'), 'ok')
             : p.id_state === 'unset' ? core.chip('0 — PLC 에 ID 가 아직 없음', 'warn', '동작은 막지 않습니다')
               : p.id_state === 'wrong' ? core.chip(core.idText(p.device_id) + ' 다른 장비', 'stop')
                 : p.id_state === 'missing' ? core.chip('0 — ID 필수라 막음', 'stop', '장비 ID 필수(plc.require_device_id) 가 켜져 있습니다')
@@ -235,7 +236,7 @@
           '<td class="mono">' + (r.readback == null ? fmt.DASH : core.esc(r.readback)) +
           '<div class="dim small">' + core.esc(ev) + (r.unit ? ' ' + core.esc(r.unit) : '') + '</div></td>' +
           // 멈춤 · 끊김이면 되읽기를 모른다 — 일치 칸도 '—'
-          '<td>' + (r.match == null ? fmt.DASH : core.chip(r.match ? '✓ 일치' : '✕ 불일치', r.match ? 'ok' : 'stop')) +
+          '<td>' + (r.match == null ? fmt.DASH : core.chip(r.match ? T('s.match') : '✕ ' + T('s.mismatch'), r.match ? 'ok' : 'stop')) +
           '</td></tr>';
       }).join(''));
     } else if (body && !conn) {
@@ -244,7 +245,7 @@
     var pc = core.bind('prmChip');
     if (pc) {
       var mm = (t.plc || {}).prm_mismatch || [];
-      core.html(pc, !conn ? '' : core.chip(mm.length ? '✕ 되읽기 불일치 ' + mm.length : '✓ 되읽기 일치',
+      core.html(pc, !conn ? '' : core.chip(mm.length ? '✕ Readback ' + T('s.mismatch') + ' ' + mm.length : 'Readback ' + T('s.match'),
                                            mm.length ? 'stop' : 'ok'));
     }
     paintAdmin();
@@ -266,7 +267,7 @@
     if (adm.unlocked && left <= 0) adm.unlocked = false;
     var u = core.bind('admUnlock');
     if (u) {
-      u.textContent = adm.has_pin ? '잠금 해제' : 'PIN 정하기';
+      u.textContent = adm.has_pin ? T('b.unlock') : T('b.setPin');
       u.hidden = adm.unlocked;
       u.disabled = !local;
     }
@@ -394,9 +395,10 @@
     }
     h += '<div class="cg-sec">바뀌는 항목 ' + (m.diff || []).length + '개' +
       (m.first_file ? ' — ' + core.esc(m.path_name) + ' 을(를) 새로 만듭니다' : '') + '</div>' +
-      '<table class="tbl"><thead><tr><th class="l">항목</th><th>이전</th><th>새 값</th><th>PRM 원시값</th></tr></thead><tbody>' +
+      '<table class="tbl"><thead><tr><th class="l">' + T('v.item') + '</th><th>' + T('v.before') + '</th><th>' + T('v.after') +
+      '</th><th>' + T('v.raw') + '</th></tr></thead><tbody>' +
       (m.diff || []).map(function (r) {
-        return '<tr><td class="l">' + core.esc(r.label) + (r.restart ? ' ' + core.chip('다시 시작', 'warn') : '') + '</td>' +
+        return '<tr><td class="l">' + core.esc(r.label) + (r.restart ? ' ' + core.chip('Restart', 'warn') : '') + '</td>' +
           '<td class="mono">' + show(r.old) + '</td><td class="mono"><b>' + show(r.new) + '</b></td>' +
           '<td class="mono dim">' + (r.raw_new != null ? core.esc(r.prm + ' ' + r.raw_old + ' → ' + r.raw_new) : '') + '</td></tr>';
       }).join('') + '</tbody></table>';
@@ -422,7 +424,7 @@
     var ok = core.bind('cgOk');
     if (ok) {
       ok.disabled = !m.ok || !!m.blocked || !(m.diff || []).length;
-      ok.textContent = m.sim_to_real ? '실장비로 전환하고 저장' : '저장';
+      ok.textContent = m.sim_to_real ? '실장비로 전환하고 저장' : T('b.save');
     }
     core.showModal('cfgModal', '[data-cg="cancel"]');
   });
@@ -432,7 +434,7 @@
     lastPreview = null;
   });
 
-  function show(v) { return v == null ? '<span class="dim">없음</span>' : core.esc(typeof v === 'object' ? JSON.stringify(v) : v); }
+  function show(v) { return v == null ? '<span class="dim">None</span>' : core.esc(typeof v === 'object' ? JSON.stringify(v) : v); }
 
   /* ---------- 빌더 ---------- */
   function panel(title, note, body) {
@@ -442,7 +444,7 @@
   }
 
   function srcChip(src) {
-    return src === 'file' ? core.chip('현장 설정', 'ok') : core.chip('예시 설정', 'warn');
+    return src === 'file' ? core.chip('Site Config', 'ok') : core.chip('Example Config', 'warn');
   }
 
   core.register('setup', { render: render, update: update });

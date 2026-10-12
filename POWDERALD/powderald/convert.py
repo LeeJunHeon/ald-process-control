@@ -206,19 +206,19 @@ class Converters:
         """아직 확정되지 않은 환산 목록. 화면이 "환산 미확정" 표시에 쓴다."""
         out = []
         if not self.analog_confirmed:
-            out.append("아날로그 원시값 최대")
+            out.append("Analog Raw Max")
         if not self.cvg.confirmed:
-            out.append("CVG 압력")
+            out.append("CVG Pressure")
         if self.cm.installed and not self.cm.confirmed:
-            out.append("커패시턴스 게이지")
+            out.append("CM")
         for no, s in sorted(self.mfc.items()):
             if not s.confirmed or s.full is None:
-                out.append(f"MFC{no} 풀스케일")
+                out.append(f"MFC{no} Full Scale")
         # 이 장비에 있는 것만 — 없는 장치의 '환산 미확정'은 운전자를 헷갈리게 한다.
         if DEV.HAS_RF and self.rf.full is not None and not self.rf.confirmed:
-            out.append("RF 전력")
+            out.append("RF Power")
         if DEV.HAS_PCV and not self.pcv.confirmed:
-            out.append("PCV 개도")
+            out.append("PCV Position")
         if DEV.HAS_O3 and self.o3.full is not None and not self.o3.confirmed:
-            out.append("O3 출력")
+            out.append("O3 Output")
         return out

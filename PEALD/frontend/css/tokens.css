@@ -1,14 +1,19 @@
 /* ============================================================
  * tokens.css — 색 · 간격 · 글꼴 변수 (light / dark 두 벌)
  *
- * ★ 색은 이 파일에만 둔다. style.css 와 JS 어디에도 hex 값을 쓰지 않는다.
+ * ★ 색은 이 파일에만 둔다. style.css 와 JS 어디에도 색 값을 쓰지 않는다.
  *   다크 테마는 "같은 변수 이름의 다른 값"일 뿐이라, 새 색을 쓰려면 반드시
  *   두 벌 모두에 정의해야 한다(한쪽만 넣으면 그 테마에서 색이 사라진다).
  *
- * ★ 장비 고유색(--accent)은 여기서 정하지 않는다. 각 프로그램의 장비 정의에서 와서
- *   JS 가 :root 에 넣는다. 설정 파일로는 바꿀 수 없다.
- *   고유색은 헤더 띠·장비 배지·선택된 탭 밑줄·확인 창에만 쓴다 —
- *   상태색(정상 초록·경고 주황·알람 빨강·꺼짐 회색)과 절대 겹치지 않게.
+ * ★ v0.5.0 색 규칙 — 색은 의미가 있을 때만 쓴다.
+ *   바탕 · 칸 · 글자 · 선은 회색 계열 무채색. 상태색은 넷만:
+ *     초록(--ok)  = 정상 · 열림 · 운전
+ *     노랑(--warn) = 경고 · 주의
+ *     빨강(--stop) = 알람 · 막힘 · 실패
+ *     파랑(--flow) = 배관도에서 가스가 흐르는 선(그 밖에는 쓰지 않는다)
+ *   장비 고유색(--accent — PEALD 보라 · Powder 청록)은 머리의 장비 이름 표시(.badge)에만 쓴다.
+ *   JS 가 장비 정의에서 받아 :root 에 넣는다. 설정 파일로는 바꿀 수 없다.
+ *   현재값은 기본 글자색(--pv = --ink), 설정값은 흐린 회색(--sv), 단위는 작게 흐린 회색.
  *
  * 글꼴은 오프라인 설치를 전제로 Windows 기본 탑재 글꼴만 쓴다.
  * 웹폰트(CDN)는 공장 PC에서 로드에 실패해 폴백 불일치로 화면이 깨진다.
@@ -16,143 +21,149 @@
 
 :root {
   /* ---- 글꼴 ---- */
-  --font-sans: 'Malgun Gothic', '맑은 고딕', 'Segoe UI', system-ui, sans-serif;
+  --font-sans: 'Segoe UI', 'Malgun Gothic', '맑은 고딕', system-ui, sans-serif;
   --font-mono: 'Consolas', 'D2Coding', 'Malgun Gothic', monospace;
 
   /* ---- 간격 · 반지름 (테마 공통) ---- */
   --sp-1: 4px;  --sp-2: 6px;  --sp-3: 8px;  --sp-4: 12px;
   --sp-5: 16px; --sp-6: 20px; --sp-7: 28px;
-  --r-1: 4px; --r-2: 6px; --r-3: 8px;
+  --r-1: 3px; --r-2: 4px; --r-3: 6px;
 
   /* ---- 글자 크기 ---- */
   --fs-xs: 10px; --fs-sm: 11px; --fs-md: 12px; --fs-lg: 13px;
   --fs-xl: 15px; --fs-2xl: 18px; --fs-3xl: 22px;
 
-  /* ---- 장비 고유색 기본값 (JS 가 덮어쓴다) ---- */
-  --accent: #6b7280;
+  /* ---- 장비 고유색 기본값 (JS 가 덮어쓴다 — 머리의 장비 이름 표시에만) ---- */
+  --accent: #6b6f76;
   --accent-ink: #ffffff;
 
-  /* ---- 라이트 테마 ---- */
-  --bg:        #eef1f5;
-  --bg-deep:   #dfe4ec;
+  /* ---- 라이트 테마 — 무채색 ---- */
+  --bg:        #eeeff1;
+  --bg-deep:   #e2e4e7;
   --panel:     #ffffff;
-  --panel-2:   #f6f8fb;
-  --panel-head:#f2f5f9;
-  --line:      #dde3ea;
-  --line-2:    #c6cfdb;
-  --ink:       #1e2733;
-  --ink-dim:   #56627a;
-  --ink-faint: #8792a5;
+  --panel-2:   #f6f7f8;
+  --panel-head:#f3f4f5;
+  --sel-bg:    #e7e9ec;     /* 고른 줄(목록) */
+  --line:      #e0e2e5;
+  --line-2:    #c9ccd1;
+  --ink:       #1f2226;
+  --ink-dim:   #555b63;
+  --ink-faint: #8a9098;
 
-  --primary:      #2a5bd0;
+  /* 채운 단추(Start 하나) · 체크 표시 — 무채색 진한 색 */
+  --primary:      #2f3338;
   --primary-ink:  #ffffff;
-  --primary-soft: #e8eefc;
+  --primary-soft: #e7e9ec;
 
-  /* 상태색 — 고유색과 겹치지 않는다 */
-  --ok:    #1a8a46;  --ok-bg:   #e6f4ea;  --ok-line:   #bcdfc7;
-  --warn:  #a8690a;  --warn-bg: #fdf3e0;  --warn-line: #eccf9a;
-  --stop:  #c5343a;  --stop-bg: #fceceb;  --stop-line: #eebcbc;
-  --info:  #2a5bd0;  --info-bg: #eaf0fd;  --info-line: #c2d3f4;
-  --off:   #8792a5;  --off-bg:  #eef1f5;  --off-line:  #d5dbe4;
-  --neutral-bg: #eef1f5; --neutral-line: #d5dbe4;
+  /* 상태색 — 넷만(--info 는 파랑이 아니라 무채색) */
+  --ok:    #1f8a4c;  --ok-bg:   #e8f4ec;  --ok-line:   #b8dcc5;
+  --warn:  #a87b00;  --warn-bg: #fbf5e1;  --warn-line: #e6d08a;
+  --stop:  #c4363c;  --stop-bg: #fbecec;  --stop-line: #ebbcbc;
+  --stop-ink: #ffffff;                       /* 빨간 띠 위 글자 */
+  --info:  #555b63;  --info-bg: #f3f4f5;  --info-line: #d7dadf;
+  --off:   #8a9098;  --off-bg:  #f3f4f5;  --off-line:  #d7dadf;
+  --neutral-bg: #f3f4f5; --neutral-line: #d7dadf;
 
-  --pv: #0d7a6a;   /* 측정값 */
-  --sv: #b5610c;   /* 설정값 */
+  --pv: #1f2226;   /* 현재값 = 기본 글자색 */
+  --sv: #8a9098;   /* 설정값 = 흐린 회색 */
 
   /* ---- 배관도 ---- */
-  --pipe:  #b9c3d1;   /* 대기 중인 배관 */
-  --flow:  #2a5bd0;   /* 흐르는 배관 */
-  --exh:   #8b95a5;   /* 배기 경로 */
-  --valve-open: #1a8a46;
-  --valve-closed: #9aa6b6;
-  --vessel: #f0d9b8;        /* 가열 용기(캐니스터·트랩) */
-  --vessel-line: #c9964a;
-  --vessel-cold: #eef1f5;
+  --pipe:  #b7bbc1;   /* 대기 중인 배관 */
+  --flow:  #2f6fd6;   /* 흐르는 배관 — 파랑은 여기에만 */
+  --exh:   #8d9299;   /* 배기 경로 */
+  --valve-open: #1f8a4c;
+  --valve-closed: #9aa0a8;
+  --vessel: #f6f7f8;        /* 용기(캐니스터 · 트랩) — 가열 여부와 상관없이 같은 회색 상자 */
+  --vessel-line: #9aa0a8;
+  --vessel-cold: #f6f7f8;
   --chamber-bg: #ffffff;
-  --chamber-line: #2a5bd0;
-  --stage: #c6cfdb;
+  --chamber-line: #6f757d;
+  --stage: #c9ccd1;
+  --hmi-hover: #1f2226;     /* 조작 가능한 요소 — 포인터를 올린 테두리 */
 
-  /* ---- 트렌드 시리즈 (순서 고정) ---- */
-  --series-1: #2a78d6;
-  --series-2: #eb6834;
-  --series-3: #1baf7a;
-  --series-4: #eda100;
-  --series-5: #e87ba4;
-  --series-6: #008300;
-  /* 7~12 — 히터 12 채널을 한 그래프에 그려도 색이 겹치지 않게 */
-  --series-7: #7b4fd6;
-  --series-8: #8a5a2b;
-  --series-9: #0097a7;
-  --series-10: #c2185b;
-  --series-11: #5c6b00;
-  --series-12: #4a5568;
-  --band-a: rgba(120,130,150,.07);
-  --band-b: rgba(120,130,150,.15);
-  --grid: #e6eaf0;
-  --axis: #99a4b5;
+  /* ---- 트렌드 시리즈 (순서 고정) — 상태색(초록 · 노랑 · 빨강 · 파랑)과 겹치지 않는 차분한 색 ---- */
+  --series-1: #4f6d8f;
+  --series-2: #a0603a;
+  --series-3: #7a5b8f;
+  --series-4: #5f8a87;
+  --series-5: #8f6d4f;
+  --series-6: #6c6f78;
+  --series-7: #9a6a82;
+  --series-8: #6f7a52;
+  --series-9: #5a5f8f;
+  --series-10: #8a5a5a;
+  --series-11: #4f7f8f;
+  --series-12: #9a8a6a;
+  --band-a: rgba(120,124,130,.07);
+  --band-b: rgba(120,124,130,.15);
+  --grid: #e8e9eb;
+  --axis: #9a9fa6;
 
-  --shadow: 0 1px 3px rgba(40, 52, 70, .10);
-  --shadow-lg: 0 8px 28px rgba(20, 28, 44, .22);
-  --overlay: rgba(22, 30, 44, .42);
+  --shadow: 0 1px 2px rgba(30, 32, 36, .08);
+  --shadow-lg: 0 8px 28px rgba(20, 22, 26, .22);
+  --overlay: rgba(20, 22, 26, .42);
 }
 
 /* ---- 다크 테마 — 같은 변수 이름, 다른 값 ---- */
 :root[data-theme="dark"] {
-  --bg:        #151a22;
-  --bg-deep:   #0f141b;
-  --panel:     #1b222c;
-  --panel-2:   #202834;
-  --panel-head:#232c38;
-  --line:      #2e3846;
-  --line-2:    #3c4757;
-  --ink:       #dfe5ee;
-  --ink-dim:   #9aa6b8;
-  --ink-faint: #6e7a8d;
+  --bg:        #17191c;
+  --bg-deep:   #111315;
+  --panel:     #1d2023;
+  --panel-2:   #23262a;
+  --panel-head:#25282c;
+  --sel-bg:    #2c3035;
+  --line:      #2f3337;
+  --line-2:    #3e4348;
+  --ink:       #e2e4e7;
+  --ink-dim:   #a3a8af;
+  --ink-faint: #737980;
 
-  --primary:      #3f7ae0;
-  --primary-ink:  #ffffff;
-  --primary-soft: #1e2b44;
+  --primary:      #d6d9dd;
+  --primary-ink:  #17191c;
+  --primary-soft: #2c3035;
 
-  --ok:    #35b86a;  --ok-bg:   #16301f;  --ok-line:   #285f3c;
-  --warn:  #d69a33;  --warn-bg: #33270f;  --warn-line: #6b5120;
-  --stop:  #e5646a;  --stop-bg: #361a1c;  --stop-line: #6e3034;
-  --info:  #5b92ec;  --info-bg: #17253c;  --info-line: #2c4266;
-  --off:   #6e7a8d;  --off-bg:  #222b36;  --off-line:  #333e4d;
-  --neutral-bg: #222b36; --neutral-line: #333e4d;
+  --ok:    #3dba70;  --ok-bg:   #17291e;  --ok-line:   #2a5a3b;
+  --warn:  #d8b040;  --warn-bg: #2e2812;  --warn-line: #6a5a22;
+  --stop:  #e5646a;  --stop-bg: #331a1c;  --stop-line: #6e3034;
+  --stop-ink: #ffffff;
+  --info:  #a3a8af;  --info-bg: #25282c;  --info-line: #3e4348;
+  --off:   #737980;  --off-bg:  #25282c;  --off-line:  #3a3e43;
+  --neutral-bg: #25282c; --neutral-line: #3a3e43;
 
-  --pv: #35c4ab;
-  --sv: #e0a054;
+  --pv: #e2e4e7;
+  --sv: #8a9098;
 
-  --pipe:  #414c5c;
-  --flow:  #4a86e8;
-  --exh:   #5c6878;
-  --valve-open: #35b86a;
-  --valve-closed: #5a6676;
-  --vessel: #4a3a22;
-  --vessel-line: #b4863f;
-  --vessel-cold: #222b36;
-  --chamber-bg: #1b222c;
-  --chamber-line: #4a86e8;
-  --stage: #46525f;
+  --pipe:  #464b51;
+  --flow:  #4f8ae8;
+  --exh:   #5f656c;
+  --valve-open: #3dba70;
+  --valve-closed: #646a71;
+  --vessel: #23262a;
+  --vessel-line: #646a71;
+  --vessel-cold: #23262a;
+  --chamber-bg: #1d2023;
+  --chamber-line: #8a9098;
+  --stage: #464b51;
+  --hmi-hover: #e2e4e7;
 
-  --series-1: #3987e5;
-  --series-2: #d95926;
-  --series-3: #199e70;
-  --series-4: #c98500;
-  --series-5: #d55181;
-  --series-6: #008300;
-  --series-7: #9b7bff;
-  --series-8: #c08a5a;
-  --series-9: #26c6da;
-  --series-10: #f06292;
-  --series-11: #a4b83a;
-  --series-12: #a0aec0;
-  --band-a: rgba(160,170,190,.06);
-  --band-b: rgba(160,170,190,.13);
-  --grid: #262f3c;
-  --axis: #5d6879;
+  --series-1: #7f9cc0;
+  --series-2: #c98a64;
+  --series-3: #a88cc0;
+  --series-4: #84b3ae;
+  --series-5: #b8977a;
+  --series-6: #9ca0a8;
+  --series-7: #c493ac;
+  --series-8: #a0a87c;
+  --series-9: #8a8fc0;
+  --series-10: #b88686;
+  --series-11: #7cadbd;
+  --series-12: #c4b494;
+  --band-a: rgba(160,164,170,.06);
+  --band-b: rgba(160,164,170,.13);
+  --grid: #26292d;
+  --axis: #646a71;
 
-  --shadow: 0 1px 3px rgba(0, 0, 0, .35);
+  --shadow: 0 1px 2px rgba(0, 0, 0, .35);
   --shadow-lg: 0 8px 28px rgba(0, 0, 0, .55);
-  --overlay: rgba(4, 8, 14, .60);
+  --overlay: rgba(4, 6, 8, .60);
 }

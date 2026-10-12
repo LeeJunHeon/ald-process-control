@@ -201,21 +201,23 @@ class DataLog:
         return [h for h in (self.state.cfg.get("heaters") or []) if h.get("enabled")]
 
     def _header(self):
-        cols = ["시각", "경과 s", "장비 상태", "시퀀서 상태", "블록", "스텝", "스텝 이름",
-                "사이클", "그룹 회차", "스텝 경과 ms", "CVG Torr"]
+        # ★ v0.5.0: 열 이름은 영문 용어(화면 · 트렌드 내보내기와 같게). 옛 파일의 한글 열 이름은 logview 가
+        #   읽을 때 이 이름으로 바꿔 읽는다(OLD_HEAD)
+        cols = ["Time", "Elapsed s", "State", "Sequencer", "Block", "Step", "Step Name",
+                "Cycle", "Group Pass", "Step Elapsed ms", "CVG Torr"]
         if self.state.conv and self.state.conv.cm.installed:
             cols.append("CM Torr")
         for m in self.state.cfg.get("mfc") or []:
-            cols += [f"MFC{m['no']} 현재 sccm", f"MFC{m['no']} 설정 sccm"]
+            cols += [f"MFC{m['no']} Actual sccm", f"MFC{m['no']} Setpoint sccm"]
         for h in self._heater_channels():
-            cols += [f"CH{h['ch']} {h['name']} 현재 ℃", f"CH{h['ch']} {h['name']} 설정 ℃"]
+            cols += [f"CH{h['ch']} {h['name']} Actual ℃", f"CH{h['ch']} {h['name']} Setpoint ℃"]
         if DEV.HAS_RF:
-            cols += ["RF 순방향 W", "RF 반사 W", "RF 설정 W"]
+            cols += ["RF Forward W", "RF Reflected W", "RF Setpoint W"]
         if DEV.HAS_PCV:
-            cols += ["PCV 개도 %", "PCV 목표 %"]
+            cols += ["PCV Position %", "PCV Target %"]
         if DEV.HAS_O3:
-            cols += ["O3 현재", "O3 설정"]
-        cols += ["열린 밸브", "밸브 워드", "보조 출력 워드", "알람0", "알람1"]
+            cols += ["O3 Actual", "O3 Setpoint"]
+        cols += ["Open Valves", "Valve Word", "Aux Word", "Alarm0", "Alarm1"]
         return cols
 
     def _row(self, now):
@@ -228,7 +230,7 @@ class DataLog:
             # ★ 하트비트 멈춤(STOP 등)이면 읽은 값이 굳은 옛 값이다 — 끊김과 같게 비운다
             n = len(self._header())
             row = [time.strftime("%Y-%m-%d %H:%M:%S"), f"{now - self.started:.1f}",
-                   "PLC 멈춤" if stalled else "PLC 끊김"]
+                   "PLC Stalled" if stalled else "PLC Lost"]
             return row + [""] * (n - len(row))
         live = st.live()
         s = link.status

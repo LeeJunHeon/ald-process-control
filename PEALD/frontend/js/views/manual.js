@@ -48,9 +48,9 @@
 
     var h = '<div class="mn-lock">' +
       '<span class="sw" data-bind="mnUnlock" data-mn="unlock" role="switch" tabindex="0"></span>' +
-      '<span>밸브 조작 잠금 해제<span class="hint"> 5분 뒤 · 공정이 시작되면 자동으로 잠깁니다</span></span>' +
+      '<span>Valve Unlock<span class="hint"> 5분 뒤 · 공정이 시작되면 자동으로 잠깁니다</span></span>' +
       '<span class="right mono" data-bind="mnLeft"></span></div>' +
-      '<div class="mn-sec">밸브</div><div class="mn-valves">';
+      '<div class="mn-sec">Valve</div><div class="mn-valves">';
     (str.valves || []).forEach(function (v) {
       if (rv.indexOf(v.tag) < 0) return;      // 자동 밸브는 수동으로 다루지 않는다
       h += '<div class="mn-v" role="button" tabindex="0" data-mnv="' + core.esc(v.tag) + '">' +
@@ -63,55 +63,55 @@
     h += '<div class="mn-sec">MFC</div><div class="mn-grid">';
     (str.mfc || []).forEach(function (m) {
       h += '<label>' + core.esc(m.no) + ' ' + core.esc(m.name) +
-        (m.full_scale_sccm == null ? ' <span class="unconf">풀스케일 미정</span>' : '') +
+        (m.full_scale_sccm == null ? ' <span class="unconf">Full Scale Unset</span>' : '') +
         '<span class="inrow"><input type="number" min="0" step="0.1" data-mnmfc="' + core.esc(m.no) + '"' +
         (m.full_scale_sccm == null ? ' disabled' : '') + '>' +
         '<span class="unit">sccm</span>' +
         '<span class="cur mono" data-mnmfccur="' + core.esc(m.no) + '">&mdash;</span></span></label>';
     });
-    h += '<button class="btn sm primary" data-mn="mfc">MFC 적용</button></div>';
+    h += '<button class="btn sm" data-mn="mfc">' + T('b.mfcApply') + '</button></div>';
 
-    h += '<div class="mn-sec">히터<span class="hint"> 설정 온도와 전원. 공정 중에는 바꿀 수 없습니다.</span></div>' +
+    h += '<div class="mn-sec">Heater<span class="hint"> 설정 온도와 전원. 공정 중에는 바꿀 수 없습니다.</span></div>' +
       '<div class="mn-grid">';
     (str.heaters || []).forEach(function (x) {
       if (!x.enabled) return;
       var ch = core.esc(x.ch);
       h += '<label>CH' + ch + ' ' + core.esc(x.name) +
-        (x.max_c == null ? ' <span class="unconf">한계 미정</span>' : '') +
+        (x.max_c == null ? ' <span class="unconf">' + T('s.limitUnset') + '</span>' : '') +
         '<span class="inrow"><input type="number" min="0" step="1" data-mnhsv="' + ch + '"' +
         (x.max_c == null ? ' disabled data-nolimit' : '') + '>' +
         '<span class="unit">℃</span>' +
         '<span class="sw sm" role="switch" tabindex="0" data-mnhpow="' + ch + '"></span>' +
         '<span class="cur mono" data-mnhcur="' + ch + '">&mdash;</span></span></label>';
     });
-    h += '<button class="btn sm primary" data-mn="heater">히터 적용</button></div>';
+    h += '<button class="btn sm" data-mn="heater">' + T('b.heaterApply') + '</button></div>';
 
     if (dev.has_pcv || dev.has_rf) {
-      h += '<div class="mn-sec">PCV · RF</div><div class="mn-grid">';
+      h += '<div class="mn-sec">PCV / RF</div><div class="mn-grid">';
       if (dev.has_pcv) {
-        h += '<label>PCV 목표<span class="inrow">' +
+        h += '<label>PCV Target<span class="inrow">' +
           '<input type="number" min="0" max="100" step="1" data-mnpcv>' +
           '<span class="unit">%</span>' +
-          '<button class="btn sm" data-mn="pcv">적용</button></span></label>';
+          '<button class="btn sm" data-mn="pcv">' + T('b.apply') + '</button></span></label>';
       }
       if (dev.has_rf) {
-        h += '<label>RF 시험 전력<span class="inrow">' +
+        h += '<label>RF Test Power<span class="inrow">' +
           '<input type="number" min="0" step="1" data-mnrf>' +
           '<span class="unit">W</span>' +
-          '<button class="btn sm" data-mn="rf_on">RF 켜기</button>' +
-          '<button class="btn sm" data-mn="rf_off">끄기</button></span></label>' +
+          '<button class="btn sm" data-mn="rf_on">' + T('b.rfOn') + '</button>' +
+          '<button class="btn sm" data-mn="rf_off">' + T('b.rfOff') + '</button></span></label>' +
           '<div class="hint">대기 중에만 됩니다. 전력이 0 이면 PLC 가 RF 요청을 지웁니다.</div>';
       }
       h += '</div>';
     }
 
     if (dev.has_o3) {
-      h += '<div class="mn-sec">O3 라인</div><div class="mn-grid">' +
-        '<label>O3 설정<span class="inrow"><input type="number" min="0" step="0.1" data-mno3>' +
-        '<button class="btn sm" data-mn="o3_set">적용</button></span></label>' +
-        '<label>라인<span class="inrow">' +
-        '<button class="btn sm" data-mn="o3_on">켜기 (바이패스 → IV-B → 발생기)</button>' +
-        '<button class="btn sm" data-mn="o3_off">끄기</button></span></label>' +
+      h += '<div class="mn-sec">O3 Line</div><div class="mn-grid">' +
+        '<label>O3 Setpoint<span class="inrow"><input type="number" min="0" step="0.1" data-mno3>' +
+        '<button class="btn sm" data-mn="o3_set">' + T('b.apply') + '</button></span></label>' +
+        '<label>Line<span class="inrow">' +
+        '<button class="btn sm" data-mn="o3_on">ON (Bypass → IV-B → Generator)</button>' +
+        '<button class="btn sm" data-mn="o3_off">OFF</button></span></label>' +
         '<div class="hint" data-bind="mnO3Note">끄기는 발생기를 먼저 끄고, 배관에 남은 O3 를 뺀 뒤 바이패스 라인을 닫습니다.</div>' +
         '</div>';
     }
@@ -142,8 +142,8 @@
     }
     var why = core.plcReason();
     core.setText('mnLeft', why ? why + ' — 수동 조작 잠김'
-      : mn.unlocked ? '잠금 해제 ' + (mn.unlock_left_s || 0) + ' s 남음'
-        : (run ? '공정 중 — 수동 조작 잠김' : '잠김'));
+      : mn.unlocked ? T('s.unlocked') + ' · ' + (mn.unlock_left_s || 0) + ' s'
+        : (run ? '공정 중 — 수동 조작 잠김' : T('s.locked')));
     // 숫자 칸도 잠근다(한계가 정해지지 않은 히터 칸은 늘 잠김)
     Array.prototype.forEach.call(d.querySelectorAll('#manualModal input'), function (e) {
       var off = !can || e.hasAttribute('data-nolimit');
@@ -163,24 +163,24 @@
       var st = d.querySelector('[data-mnvst="' + tag + '"]');
       if (st) {
         core.html(st, !conn ? fmt.DASH
-          : app ? core.chip('● 열림', 'ok')
-            : req ? core.chip('◐ 대기', 'warn', 'PLC 가 아직 허가하지 않았습니다')
-              : core.chip('○ 닫힘', 'off'));
+          : app ? core.chip('● ' + T('s.open'), 'ok')
+            : req ? core.chip('◐ ' + T('s.pending'), 'warn', 'PLC 가 아직 허가하지 않았습니다')
+              : core.chip('○ ' + T('s.closed'), 'off'));
       }
     });
 
     ((s.structure || {}).mfc || []).forEach(function (x) {
       var v = (t.mfc || [])[x.no - 1] || {};
       setText('[data-mnmfccur="' + x.no + '"]',
-        conn ? '현재 ' + fmt.flow(v.pv) + ' / 설정 ' + fmt.flow(v.sv) : fmt.DASH);
+        conn ? 'Actual ' + fmt.flow(v.pv) + ' / Setpoint ' + fmt.flow(v.sv) : fmt.DASH);
     });
     ((s.structure || {}).heaters || []).forEach(function (x) {
       if (!x.enabled) return;
       var v = (t.heaters || [])[x.ch - 1] || {};
       // 온도조절기 통신이 없는 채널은 PLC 과온 감시가 없다 — 켜기는 서버가 막고, 이유를 여기 보인다
       setText('[data-mnhcur="' + x.ch + '"]', !conn ? fmt.DASH : (v.comm_ok === false
-        ? '온도조절기 통신 없음 — 켤 수 없음(끄기는 됨) · 설정 ' + fmt.temp(v.sv)
-        : '현재 ' + fmt.temp(v.pv) + ' / 설정 ' + fmt.temp(v.sv)));
+        ? '온도조절기 통신 없음 — 켤 수 없음(끄기는 됨) · Setpoint ' + fmt.temp(v.sv)
+        : 'Actual ' + fmt.temp(v.pv) + ' / Setpoint ' + fmt.temp(v.sv)));
       var p = d.querySelector('[data-mnhpow="' + x.ch + '"]');
       var busy = heaterBusy[x.ch];
       if (busy && (!conn || v.power === busy.target || Date.now() > busy.until)) {
@@ -227,7 +227,7 @@
     if (v && !v.classList.contains('dis')) {
       var tag = v.dataset.mnv;
       var on = !v.classList.contains('on') && !v.classList.contains('req');
-      w.app.send('manual_valve', { tag: tag, on: on });
+      Ops.send(Ops.valve(tag, on));
       return;
     }
     var pw = ev.target.closest('[data-mnhpow]');
@@ -241,7 +241,7 @@
       var target = !cur.power;
       heaterBusy[ch] = { target: target, until: Date.now() + 4000 };
       pw.classList.add('busy');
-      w.app.send('manual_heater', { power: kv(ch, target) });
+      Ops.send(Ops.heaterPower(ch, target));
       return;
     }
     var b = ev.target.closest('#manualModal [data-mn]');
@@ -249,14 +249,12 @@
     act(b.dataset.mn);
   });
 
-  function kv(k, v) { var o = {}; o[k] = v; return o; }
-
   function act(what) {
     if (what === 'close') { core.hideModal('manualModal'); return; }
     if (what === 'unlock') {
       var sw = core.bind('mnUnlock');
       if (sw.classList.contains('dis')) return;
-      w.app.send('manual_unlock', { on: !sw.classList.contains('on') });
+      Ops.send(Ops.unlock(!sw.classList.contains('on')));
       return;
     }
     if (what === 'mfc') {
@@ -265,7 +263,7 @@
         if (e.value !== '' && !e.disabled) sc[e.dataset.mnmfc] = Number(e.value);
       });
       if (!Object.keys(sc).length) { core.toast('바꿀 MFC 값을 넣으세요', 'warn'); return; }
-      w.app.send('manual_mfc', { sccm: sc });
+      Ops.send(Ops.mfcMany(sc));
       return;
     }
     if (what === 'heater') {
@@ -277,13 +275,13 @@
       core.confirmAsk('히터 설정을 바꿀까요?',
         '설정 온도를 바꿉니다. 과온 한계를 넘는 값은 PLC 가 거절합니다.<br>' +
         '전원이 꺼져 있으면 온도가 오르지 않습니다.',
-        '적용', function () { w.app.send('manual_heater', { sv: sv }); });
+        T('b.apply'), function () { Ops.send(Ops.heaterSvMany(sv)); });
       return;
     }
     if (what === 'pcv') {
       var e1 = d.querySelector('[data-mnpcv]');
       if (!e1 || e1.value === '') { core.toast('PCV 목표를 넣으세요', 'warn'); return; }
-      w.app.send('manual_pcv', { pct: Number(e1.value) });
+      Ops.send(Ops.pcv(Number(e1.value)));
       return;
     }
     if (what === 'rf_on') {
@@ -294,24 +292,24 @@
       core.confirmAsk('RF 를 켤까요?',
         '<b>' + watt + ' W</b> 로 RF 를 켭니다. 시험 목적이며 대기 중에만 됩니다.<br>' +
         '압력·반사 전력 조건을 PLC 가 확인하고, 조건이 어긋나면 즉시 끕니다.',
-        'RF 켜기', function () { w.app.send('manual_rf', { on: true, watt: watt }); });
+        T('b.rfOn'), function () { Ops.send(Ops.rfOn(watt)); });
       return;
     }
-    if (what === 'rf_off') { w.app.send('manual_rf', { on: false }); return; }
+    if (what === 'rf_off') { Ops.send(Ops.rfOff()); return; }
     if (what === 'o3_set' || what === 'o3_on') {
       var e3 = d.querySelector('[data-mno3]');
       var val = e3 ? Number(e3.value) : 0;
       if (!val) { core.toast('O3 설정 값을 넣으세요', 'warn'); return; }
-      if (what === 'o3_set') { w.app.send('manual_o3', { action: 'set', value: val }); return; }
+      if (what === 'o3_set') { Ops.send(Ops.o3('set', val)); return; }
       core.confirmAsk('O3 라인을 켤까요?',
         '바이패스 펌프 → IV-B → 발생기 순서로 켭니다.<br>' +
         '실내 O3 감지·발생기 알람이 있으면 PLC 가 막습니다.',
-        'O3 켜기', function () { w.app.send('manual_o3', { action: 'on', value: val }); });
+        T('b.o3On'), function () { Ops.send(Ops.o3('on', val)); });
       return;
     }
     if (what === 'o3_off') {
       // 발생기를 먼저 끄고, 배관에 남은 O3 를 뺀 뒤 바이패스 라인을 닫는다 — 지연은 서버가 센다.
-      w.app.send('manual_o3', { action: 'off' });
+      Ops.send(Ops.o3('off'));
     }
   }
 

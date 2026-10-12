@@ -113,7 +113,7 @@ def test_heater_none_is_zero_raw():
 def test_converters_lists_unconfirmed(cfg):
     c = Converters(cfg)
     names = c.unconfirmed()
-    assert "CVG 압력" in names
+    assert "CVG Pressure" in names                     # v0.5.0 영문 용어
     assert any("MFC" in n for n in names)
 
 
@@ -121,9 +121,9 @@ def test_unconfirmed_lists_only_devices_present(cfg):
     """이 장비에 없는 장치(PCV·RF·O3)의 '환산 미확정'은 내지 않는다."""
     from powderald import device as DEV
     names = Converters(cfg).unconfirmed()
-    assert ("PCV 개도" in names) == (DEV.HAS_PCV and not (cfg.get("pcv") or {}).get("confirmed"))
+    assert ("PCV Position" in names) == (DEV.HAS_PCV and not (cfg.get("pcv") or {}).get("confirmed"))
     if not DEV.HAS_RF:
-        assert "RF 전력" not in names
+        assert "RF Power" not in names
     if not DEV.HAS_O3:
         assert "O3 출력" not in names
 

@@ -283,7 +283,8 @@ def test_chart_table_meta_same_as_full_read(kind):
             assert (c is None) == (d is None) and (c is None or all(_close(u, v) for u, v in zip(c, d)))
     for off in (0, 5, 200, len(rows) - 3, 10 ** 6):
         t = logview.table(name, off)
-        assert t["head"] == head and t["total"] == len(rows) and t["rows"] == rows[off:off + logview.PAGE]
+        # v0.5.0: 옛 한글 열 이름은 새 이름(영문)으로 읽어 돌려준다
+        assert t["head"] == logview.norm_head(head) and t["total"] == len(rows) and t["rows"] == rows[off:off + logview.PAGE]
     g = logview._guess_meta(path)
     assert g["rows"] == len(rows)
     if rows:
@@ -354,7 +355,7 @@ def test_stall_not_recorded_in_trend_and_datalog_row(cfg, monkeypatch):
         assert calls == {"buf": 0, "log": 0}, f"멈춤 동안 트렌드에 넣었다 {calls}"
         with open(state.datalog.path, encoding="utf-8-sig") as f:
             rows = list(csv.reader(f))[1:]
-        assert rows and all(r[2] == "PLC 멈춤" and all(c == "" for c in r[3:]) for r in rows), rows[:2]
+        assert rows and all(r[2] == "PLC Stalled" and all(c == "" for c in r[3:]) for r in rows), rows[:2]
         # 다시 하트비트가 돌면 트렌드에 들어간다
         state.link._plc_hb_at = time.monotonic()
         loops.sample_once()
@@ -563,7 +564,7 @@ async def test_b1_alarm_tab_unknown_when_plc_down(rig):
         assert c0.startswith("중대 "), c0                  # 처음 열 때 '—' 가 아니다
         rig.plc.stop()
         # v0.4.16: 요소가 아직 없으면 거짓(바로 TypeError 로 끝나지 않게)
-        await pg.wait_for_function("() => { const e = core.bind('alarmCount'); return !!e && e.textContent === '알 수 없음'; }",
+        await pg.wait_for_function("() => { const e = core.bind('alarmCount'); return !!e && e.textContent === 'Unknown'; }",
                                    timeout=15000)
         txt = await pg.evaluate("() => core.bind('alarmTbl').textContent")
         assert "알 수 없습니다" in txt and "없습니다" in txt and "현재 알람이 없습니다" not in txt

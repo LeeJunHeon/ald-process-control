@@ -198,7 +198,7 @@ async def test_start_refusal_3_splits_header_and_item(wired):
     r, _ = await lk.send_command(A.CMD_PROCESS_START)
     assert r == A.RESULT_RECIPE
     msg = await runner._recipe_refusal(t2)
-    assert "블록 · 그룹 · 스텝 항목" in msg and "레시피 표 검증 실패" in msg, msg
+    assert "블록 · 그룹 · 스텝 항목" in msg and "Recipe Table Check Failed" in msg, msg
 
 
 # ===================== 4 · 5. 풀스케일 없는 MFC · PRM 기본값 =====================
@@ -300,7 +300,7 @@ async def test_abort_after_safe_stop_keeps_safe_stop_reason(wired):
         await asyncio.sleep(0.3)
         await C.handle_command({"cmd": "process_abort"})     # 이미 안전 정지 — 거절
         seen, name = await _run_to_end()
-        assert state.runner.last_result.startswith("중단 (안전 정지 — ") and "비상정지" in \
+        assert state.runner.last_result.startswith("중단 (안전 정지 — ") and "EMO" in \
             state.runner.last_result, state.runner.last_result
         assert "마지막 위치 블록 1 · 스텝 " in seen[0], seen
         assert _meta_and_list(name) == (state.runner.last_result,) * 2
@@ -386,7 +386,7 @@ async def test_o3_recipe_needs_generator_on(wired):
     checks = {c["key"]: c for c in state.runner.start_checks()}
     assert not checks["o3_gen"]["ok"] and checks["o3_gen"]["action"] == "o3_on"
     ok, msg = await state.runner.start(_log, _notice)
-    assert not ok and "O3 발생기 켜짐" in msg, msg
+    assert not ok and "O3 Generator ON" in msg, msg
     # O3 설정이 모두 0 인 레시피는 그대로
     rec0 = o3_recipe("오존없음", 0)
     assert storage.save("오존없음", rec0)
@@ -576,7 +576,7 @@ async def test_editor_groups_in_browser(served):
             await page.fill("[data-rcg='from_block']", "1")
             await page.fill("[data-rcg='to_block']", "2")
             await page.fill("[data-rcg='repeat']", "3")
-            await _shows(page, "rcSum", "그룹 1 /")          # 서버 검증 왕복이 끝났다
+            await _shows(page, "rcSum", "Group 1 /")          # 서버 검증 왕복이 끝났다
             errs = await page.inner_text("[data-bind='rcCheck']")
             assert "범위를 벗어납니다" not in errs, errs
             await page.click("[data-rcbtn='save']")
@@ -588,7 +588,7 @@ async def test_editor_groups_in_browser(served):
             for _ in range(3):
                 await page.wait_for_timeout(1000)
                 await page.fill("[data-rcg='repeat']", "5")
-                await _shows(page, "rcSum", "그룹 1 /")
+                await _shows(page, "rcSum", "Group 1 /")
                 await page.click("[data-rcbtn='save']")
                 if await wait_until(lambda: (_saved_groups("화면그룹") or [{}])[0].get("repeat") == 5, 5):
                     break

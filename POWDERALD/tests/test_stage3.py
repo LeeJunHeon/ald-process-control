@@ -344,7 +344,7 @@ def test_trend_cleanup_and_export():
     raw = open(path, "rb").read()
     assert raw.startswith(b"\xef\xbb\xbf"), "UTF-8 BOM"
     rows = list(csv.reader(open(path, encoding="utf-8-sig")))
-    assert len(rows) == 21 and rows[0][0] == "시각"
+    assert len(rows) == 21 and rows[0][0] == "Time"            # v0.5.0 영문 열 이름
     tl.close()
     old = os.path.join(T.trend_dir(), "20000101.db")
     open(old, "w").close()
@@ -411,7 +411,7 @@ def test_datalog_chart_segments_and_table_paging():
     _make_log("20260101_100000_구간", _rows(30))
     ch = V.chart("20260101_100000_구간")
     labels = [c["label"] for c in ch["cols"]]
-    assert "CVG Torr" in labels and "MFC1 현재 sccm" in labels
+    assert "CVG Torr" in labels and "MFC1 Actual sccm" in labels   # v0.5.0: 옛 한글 열 이름도 새 이름으로 읽는다
     assert [s["step"] for s in ch["segments"]][:3] == ["1", "2", "1"]
     assert ch["segments"][0]["name"] == "전구체"
     tb = V.table("20260101_100000_구간", 20)

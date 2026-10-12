@@ -88,7 +88,7 @@ class ProcessRunner:
 
         conn = bool(link and link.connected)
         cfg_err = getattr(link, "config_error", "") if link else ""
-        out.append({"key": "plc", "label": "PLC 연결 · 하트비트", "ok": conn and link.plc_hb_ok,
+        out.append({"key": "plc", "label": "PLC Link · Heartbeat", "ok": conn and link.plc_hb_ok,
                     "detail": NO_ADDR_TEXT if cfg_err else
                     (link.addr_text if link else "") + ("" if conn else " — 연결 안 됨")})
         if not conn:
@@ -96,7 +96,7 @@ class ProcessRunner:
         # 장비 ID — 막혔으면(다른 장비·ID 없음) 연결 안 됨 때처럼 여기서 끝낸다
         from .plclink import id_text
         blocked = link.id_block_text() if hasattr(link, "id_block_text") else ""
-        out.append({"key": "device_id", "label": "장비 ID", "ok": not blocked,
+        out.append({"key": "device_id", "label": "Device ID", "ok": not blocked,
                     "detail": f"읽은 ID {id_text(getattr(link, 'device_id', None))} / "
                               f"이 장비 {id_text(DEV.DEVICE_ID)}" + (f" — {blocked}" if blocked else "")})
         if blocked:
@@ -104,18 +104,18 @@ class ProcessRunner:
 
         s = link.status
         code = s[A.D_STATE]
-        out.append({"key": "state", "label": "장비 상태", "ok": code not in RUNNING_STATES
+        out.append({"key": "state", "label": "Device State", "ok": code not in RUNNING_STATES
                     and code != A.STATE_SAFE_STOP,
                     "detail": A.STATE_NAMES.get(code, str(code))})
 
         crit = [a["name"] for a in st.alarms.list() if a["crit"]]
-        out.append({"key": "alarm", "label": "중대 알람 없음", "ok": not crit,
+        out.append({"key": "alarm", "label": "No Critical Alarm", "ok": not crit,
                     "detail": " · ".join(crit) if crit else "없음"})
 
         ilk = s[A.D_INTERLOCK]
-        out.append({"key": "pump", "label": "펌프", "ok": A.bit(ilk, A.ILK_PUMP),
+        out.append({"key": "pump", "label": "Pump", "ok": A.bit(ilk, A.ILK_PUMP),
                     "detail": "운전 중" if A.bit(ilk, A.ILK_PUMP) else "펌프 운전·알람을 확인하세요"})
-        out.append({"key": "valve_ok", "label": "공정 밸브 허가",
+        out.append({"key": "valve_ok", "label": "Valve Permit",
                     "ok": A.bit(ilk, A.ILK_VALVE_OK),
                     "detail": self._valve_ok_detail(s)})
 
@@ -123,13 +123,13 @@ class ProcessRunner:
         cur = conv.cvg.to_torr(s[A.D_CVG_RAW])
         target = (cfg.get("params") or {}).get("base_press_torr")
         # 화면은 cur · target 숫자로 게이지와 같은 규칙(fmt.torr)으로 다시 쓴다(detail 은 로그용)
-        out.append({"key": "base", "label": "베이스 압력", "ok": A.bit(ilk, A.ILK_VACUUM),
+        out.append({"key": "base", "label": "Base Pressure", "ok": A.bit(ilk, A.ILK_VACUUM),
                     "detail": f"현재 {_torr(cur)} / 목표 {_torr(target)} Torr",
                     "cur": cur, "target": target})
 
         if DEV.HAS_O3:
             ok = A.bit(ilk, A.ILK_O3_OK)
-            out.append({"key": "o3", "label": "O3 허가", "ok": ok,
+            out.append({"key": "o3", "label": "O3 Permit", "ok": ok,
                         "detail": "준비됨" if ok else "O3 라인을 먼저 켜세요",
                         "action": None if ok else "o3_on"})
             # ★ 래더의 공정 시작 조건은 O3 허가(바이패스 펌프·IV-B·5 s·알람 없음·O3 한계 > 0)만 보고
@@ -137,12 +137,12 @@ class ProcessRunner:
             #   레시피면 발생기 출력(보조 출력 b9)을 시작 조건에 넣는다.
             if _uses_o3(self.recipe):
                 gen = A.bit(s[A.D_AUX_OUT], A.AUX_O3_GEN)
-                out.append({"key": "o3_gen", "label": "O3 발생기 켜짐", "ok": gen,
+                out.append({"key": "o3_gen", "label": "O3 Generator ON", "ok": gen,
                             "detail": "켜짐" if gen else "레시피가 O3 를 씁니다 — [O3 라인 켜기]로 발생기를 켜세요",
                             "action": None if gen else "o3_on"})
 
         res = st.recipe_check or {}
-        out.append({"key": "recipe", "label": "레시피 검증",
+        out.append({"key": "recipe", "label": "Recipe Check",
                     "ok": bool(self.recipe) and not res.get("errors"),
                     "detail": (self.recipe_name or "레시피를 고르세요") +
                               (f" — 오류 {len(res.get('errors') or [])}건"
@@ -166,7 +166,7 @@ class ProcessRunner:
                     bad.append(f"CH{ch} {h['name']}")
                 elif now - since < need:
                     bad.append(f"CH{ch} {h['name']} 안정 {now - since:.0f}/{need:g} s")
-            out.append({"key": "heater", "label": f"히터 안정 (±{band:g} ℃ · {need:g} s)", "ok": not bad,
+            out.append({"key": "heater", "label": f"Heater Stable (±{band:g} ℃ · {need:g} s)", "ok": not bad,
                         "detail": " · ".join(bad) if bad else "모든 사용 채널이 설정 안"})
         if DEV.HAS_RF and _uses_rf(self.recipe):
             # ★ 래더의 공정 허가에는 RF 조건이 없다 — RF 가 안 나오면 RF 스텝이 RF 없이 끝까지 돈다.
@@ -180,7 +180,7 @@ class ProcessRunner:
                 miss.append("RF 알람 입력")
             if rf_max <= 0:
                 miss.append("PLC 의 RF 상한(PRM_RF_MAX) 0")
-            out.append({"key": "rf", "label": "RF 준비", "ok": not miss,
+            out.append({"key": "rf", "label": "RF Ready", "ok": not miss,
                         "detail": " · ".join(miss) if miss else "준비됨"})
         return out
 
@@ -504,7 +504,7 @@ class ProcessRunner:
                 a0 = (await link.client.read_holding(A.D_ALARM0, 1))[0]
         except Exception as e:  # noqa: BLE001
             return f"PLC 표 검사 불합격 (원인을 읽지 못했습니다: {logger.clean(e, 80)})"
-        alarm = " · 알람 '레시피 표 검증 실패'" if A.bit(a0, A.ALM0_RECIPE) else ""
+        alarm = " · 알람 'Recipe Table Check Failed'" if A.bit(a0, A.ALM0_RECIPE) else ""
         if head[1] != 1 or head[0] != (tbl["checksum"] & 0xFFFF):
             return (f"PLC 표 머리(개수 · 합계) 검사 불합격 — 합계 PLC {head[0]:#06x} / "
                     f"올린 것 {tbl['checksum']:#06x}, 통과 {head[1]}{alarm}")

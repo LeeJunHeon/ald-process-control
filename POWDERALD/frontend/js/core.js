@@ -168,7 +168,7 @@
     var dev = s.device || {};
     d.documentElement.setAttribute('data-theme', dev.theme === 'dark' ? 'dark' : 'light');
     d.documentElement.style.setProperty('--accent', dev.accent || '');
-    d.title = dev.title || '공정 제어';
+    d.title = dev.title || T('h.control');
     setText('devBadge', dev.name || fmt.DASH);
     setText('cfDev', dev.name || '');
     setText('amDev', dev.name || '');
@@ -180,13 +180,12 @@
     var acc = bind('access');
     if (acc) {
       var local = (s.access || {}).local;
-      acc.textContent = '조작 권한: ' + (local ? '이 PC' : '보기 전용');
+      acc.textContent = T('v.access') + ': ' + (local ? T('s.thisPc') : T('s.viewOnly'));
       acc.classList.toggle('remote', !local);
     }
   }
 
-  // 장비 상태(D00001) → 칩 색. 대기 회색 / 공정 초록 / 일시정지 주황 / 안전정지 빨강
-  var STATE_LEVEL = { 0: 'off', 1: 'off', 2: 'ok', 3: 'ok', 4: 'warn', 5: 'warn', 6: 'stop' };
+  // ★ v0.5.0(A6): 머리 상태 표시는 무채색 작은 표시 — 알람이 있을 때만 빨강(알람 표시)
 
   function applyHeader(s, t) {
     var band = bind('idBand');
@@ -200,26 +199,15 @@
         band.textContent = 'PLC 장비 ID 가 없습니다(0) — 이 장비 PLC 인지 확인할 수 없어 모든 조작을 막았습니다';
       }
     }
-    if (t.plc && t.plc.config_error) setText('plcAddr', 'PLC 주소 없음');
+    if (t.plc && t.plc.config_error) setText('plcAddr', T('s.noAddress'));
     var pill = bind('stateChip');
     if (pill) {
-      if (t.offline) {
-        pill.className = 'chip big stop';
-        pill.textContent = '서버 끊김';
-      } else if (t.plc && t.plc.stalled) {
-        pill.className = 'chip big stop';
-        pill.textContent = 'PLC 하트비트 멈춤';
-      } else if (!t.plc || !t.plc.connected) {
-        pill.className = 'chip big off';
-        pill.textContent = 'PLC 끊김';
-      } else if (!t.plc.hb_ok) {
-        pill.className = 'chip big warn';
-        pill.textContent = 'PLC 하트비트 멈춤';
-      } else {
-        var st = t.state || {};
-        pill.className = 'chip big ' + (STATE_LEVEL[st.code] || 'off');
-        pill.textContent = st.name || fmt.DASH;
-      }
+      pill.className = 'chip big';
+      if (t.offline) pill.textContent = T('s.serverLost');
+      else if (t.plc && t.plc.stalled) pill.textContent = T('s.plcStalled');
+      else if (!t.plc || !t.plc.connected) pill.textContent = T('s.plcLost');
+      else if (!t.plc.hb_ok) pill.textContent = T('s.plcStalled');
+      else pill.textContent = (t.state || {}).name || fmt.DASH;
     }
     var alarms = t.alarms || [];
     var ac = bind('alarmChip');
@@ -227,10 +215,10 @@
       var crit = alarms.some(function (a) { return a.crit; });
       // PLC 가 끊겼으면 알람을 모른다 — '알람 없음' 이 아니라 '—'
       var known = !t.offline && t.plc && t.plc.connected;
-      ac.className = 'chip ' + (!known ? 'off' : crit ? 'stop' : alarms.length ? 'warn' : '');
-      ac.textContent = !known ? '알람 ' + fmt.DASH : alarms.length
-        ? '⚠ ' + (crit ? '중대 ' : '경고 ') + alarms.length + '건'
-        : '알람 없음';
+      ac.className = 'chip' + (known && alarms.length ? ' alarm' : '');
+      ac.textContent = !known ? 'Alarm ' + fmt.DASH : alarms.length
+        ? '⚠ ' + (crit ? T('s.critical') : T('s.warning')) + ' ' + alarms.length
+        : T('s.noAlarm');
     }
     // 데이터 로그는 기록 중인 파일 이름까지 보여 준다 — 나중에 그 파일을 찾아야 한다.
     var rec = bind('sbRec');
@@ -239,7 +227,7 @@
       rec.hidden = !dl.active && !dl.error;
       rec.className = 'rec' + (dl.error ? ' err' : '');
       rec.textContent = dl.error ? '⚠ ' + dl.error
-        : '● 데이터 로그 기록 중 (' + (dl.file || '') + '.csv)';
+        : '● Data Log ' + T('s.recording') + ' (' + (dl.file || '') + '.csv)';
     }
     var plc = t.plc || {};
     var dot = bind('sbDot');
@@ -250,11 +238,11 @@
         '값은 표시하지 않고 명령을 보내지 않습니다');
       return;
     }
-    setText('sbText', plc.config_error ? 'PLC 주소 없음 — 연결하지 않았습니다' : [
-      'PLC ' + (plc.addr || fmt.DASH) + (plc.connected ? ' 연결됨' : ' 연결 안 됨'),
-      plc.connected ? (plc.hb_ok ? '하트비트 정상' : '하트비트 멈춤') : '',
-      plc.connected && plc.rtt_ms != null ? '응답 ' + plc.rtt_ms + ' ms' : '',
-      t.scan_max_ms != null ? '최대 스캔 ' + scanText(t.scan_max_ms) : ''
+    setText('sbText', plc.config_error ? T('s.noAddress') + ' — 연결하지 않았습니다' : [
+      'PLC ' + (plc.addr || fmt.DASH) + (plc.connected ? ' Connected' : ' Not Connected'),
+      plc.connected ? (plc.hb_ok ? 'Heartbeat OK' : 'Heartbeat Stalled') : '',
+      plc.connected && plc.rtt_ms != null ? 'RTT ' + plc.rtt_ms + ' ms' : '',
+      t.scan_max_ms != null ? 'Max Scan ' + scanText(t.scan_max_ms) : ''
     ].filter(Boolean).join(' · '));
     var sb = bind('sbText');
     var tip = t.scan_max_ms === 0 ? '최대 스캔: PLC 가 아직 쓰지 않음(D00080 = 0)' : '';
@@ -300,7 +288,7 @@
     var b = bind('cfBody');
     if (b) b.innerHTML = body;
     var ok = d.querySelector('[data-cf="ok"]');
-    if (ok) ok.textContent = okLabel || '실행';
+    if (ok) ok.textContent = okLabel || T('b.run');
     confirmCb = cb;
     confirmKey = key;
     // 위험한 동작의 확인 창 — 포커스는 '취소' 에(Enter 한 번으로 실행되지 않게).
@@ -458,7 +446,7 @@
     var tbl = bind('amTbl');
     if (!tbl) return;
     var rows = (t.alarms || []).map(function (a) {
-      return '<tr><td>' + chip(a.crit ? '중대' : '경고', a.crit ? 'stop' : 'warn') + '</td>' +
+      return '<tr><td>' + chip(a.crit ? T('s.critical') : T('s.warning'), a.crit ? 'stop' : 'warn') + '</td>' +
         '<td class="mono">' + esc(a.since) + '</td>' +
         '<td class="l">' + esc(a.name) + '</td></tr>';
     }).join('');
@@ -529,7 +517,7 @@
       'PC 가 꺼지면 PLC 가 <b>PC 통신 끊김</b> 알람을 내고 안전 정지합니다.<br>' +
       '장비를 계속 돌려 둘 계획이면 종료하지 마세요.' +
       (dirty ? '<br><br><b>레시피 편집기에 저장하지 않은 편집이 있습니다</b> — 종료하면 사라집니다.' : ''),
-      '종료', function () {
+      T('b.exit'), function () {
         if (!w.app.send('exit') && w.pywebview && w.pywebview.api) w.pywebview.api.force_close();
       });
   }
@@ -630,9 +618,9 @@
     scanText: scanText,
     /** 끊김을 말하는 글자 — 서버가 끊겼으면 '서버 끊김'(운전자가 PLC 를 보러 가지 않게) */
     downText: function () {
-      if (offline) return '서버 끊김';
+      if (offline) return T('s.serverLost');
       var p = ((lastState || {}).live || {}).plc || {};
-      return p.stalled ? 'PLC 하트비트 멈춤' : 'PLC 끊김';
+      return p.stalled ? T('s.plcStalled') : T('s.plcLost');
     },
     idText: idText,
     idBlocked: idBlocked,
@@ -642,5 +630,7 @@
     }
   };
 
+  // v0.5.0: 고정 라벨을 용어 사전에서(data-t)
+  if (w.T && w.T.apply) w.T.apply(d);
   fit();
 })(window, document);

@@ -146,7 +146,7 @@ def _head_and_last(path: str):
             buf = f.read(step) + buf
             cut = -1
         last = buf[cut + 1:]
-    head = next(csv.reader([first.decode("utf-8-sig", "replace")]), [])
+    head = norm_head(next(csv.reader([first.decode("utf-8-sig", "replace")]), []))
     tail = next(csv.reader([last.decode("utf-8-sig", "replace")]), []) if lines > 1 else []
     return head, max(0, lines - 1), tail
 
@@ -166,12 +166,12 @@ def _guess_meta(path: str) -> dict:
         return last[i] if i is not None and i < len(last) else ""
 
     try:
-        took = float(get("경과 s") or 0)
+        took = float(get("Elapsed s") or 0)
     except ValueError:
         took = 0
-    state = get("장비 상태")
-    guess = "정상 종료(추정)" if state in ("대기",) else f"알 수 없음(마지막 상태 {state or '—'})"
-    return {"rows": nrows, "took_s": took, "ended": get("시각"),
+    state = OLD_STATE.get(get("State"), get("State"))
+    guess = "정상 종료(추정)" if state in ("Idle",) else f"알 수 없음(마지막 상태 {state or '—'})"
+    return {"rows": nrows, "took_s": took, "ended": get("Time"),
             "result": guess, "guessed": True}
 
 
@@ -226,6 +226,30 @@ def list_logs() -> list:
     return [meta_of(n) for n in names()]
 
 
+# ===================== 옛 열 이름(한글) → 새 열 이름(영문, v0.5.0) =====================
+OLD_HEAD = {
+    "시각": "Time", "경과 s": "Elapsed s", "장비 상태": "State", "시퀀서 상태": "Sequencer",
+    "블록": "Block", "스텝": "Step", "스텝 이름": "Step Name", "사이클": "Cycle", "그룹 회차": "Group Pass",
+    "스텝 경과 ms": "Step Elapsed ms", "RF 순방향 W": "RF Forward W", "RF 반사 W": "RF Reflected W",
+    "RF 설정 W": "RF Setpoint W", "PCV 개도 %": "PCV Position %", "PCV 목표 %": "PCV Target %",
+    "O3 현재": "O3 Actual", "O3 설정": "O3 Setpoint", "열린 밸브": "Open Valves", "밸브 워드": "Valve Word",
+    "보조 출력 워드": "Aux Word", "알람0": "Alarm0", "알람1": "Alarm1",
+}
+OLD_STATE = {"대기": "Idle"}             # 옛 파일의 State 칸 값(끝 짐작에 쓰는 것)
+
+
+def norm_head(head) -> list:
+    """옛 데이터 로그(한글 열 이름)를 새 이름으로 — 'MFC1 현재 sccm' → 'MFC1 Actual sccm',
+    'CH1 이름 설정 ℃' → 'CH1 이름 Setpoint ℃'. 새 파일은 그대로."""
+    out = []
+    for h in head:
+        h = OLD_HEAD.get(h, h)
+        if (h.startswith("MFC") or h.startswith("CH")) and (" 현재 " in h or " 설정 " in h):
+            h = h.replace(" 현재 ", " Actual ").replace(" 설정 ", " Setpoint ")
+        out.append(h)
+    return out
+
+
 # ===================== 한 파일 =====================
 def _group_of(col: str):
     if col in ("CVG Torr", "CM Torr"):
@@ -245,11 +269,11 @@ def chart(name: str, max_points: int = MAX_POINTS):
     if path is None:
         return None
     rd = _reader(path)
-    head = next(rd, [])
+    head = norm_head(next(rd, []))
     idx = {h: i for i, h in enumerate(head)}
-    ti = idx.get("경과 s")
+    ti = idx.get("Elapsed s")
     cols = [(i, h, _group_of(h)) for i, h in enumerate(head) if _group_of(h)]
-    bi, si, ni = idx.get("블록"), idx.get("스텝"), idx.get("스텝 이름")
+    bi, si, ni = idx.get("Block"), idx.get("Step"), idx.get("Step Name")
     nan = math.nan
     ts = array("d")
     vals = [array("d") for _ in cols]           # 값 없음 = NaN (0 과 구분)
@@ -392,7 +416,7 @@ def table(name: str, offset: int = 0, limit: int = PAGE):
     offset = max(0, int(offset or 0))
     limit = max(1, min(PAGE, int(limit or PAGE)))
     rd = _reader(path)
-    head = next(rd, [])
+    head = norm_head(next(rd, []))
     page = []
     total = 0
     for r in rd:                                # offset 까지 건너뛰고 그 쪽 줄만 모은다 — 총 줄 수는 세기만

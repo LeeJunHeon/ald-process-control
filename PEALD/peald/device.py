@@ -14,7 +14,7 @@ device.py — PEALD 장비 정체성과 장비 구조 정의.
 # ===================== 장비 정체성 (고정) =====================
 KEY = "peald"
 NAME = "PEALD"                      # 헤더 배지 · 확인 창 제목
-TITLE = "PEALD 공정 제어"            # 창 제목
+TITLE = "PEALD Process Control"           # 창 제목
 THEME = "dark"                      # 라이트/다크 반전으로 두 장비를 구분한다
 ACCENT = "#8b5cf6"                  # 보라 — 헤더 띠·배지·탭 밑줄·확인 창에만 쓴다
 ICON = "peald.ico"
@@ -35,15 +35,15 @@ LOG_PREFIX = "PEALD"
 # bit: 비트 번호, tag: 배관도·로그에 쓰는 짧은 이름, name: 사람이 읽는 설명
 # pulse: 펄스 구동 밸브(최소 열림 시간 PRM_VLV_MIN_MS 적용 대상)
 VALVES = [
-    {"bit": 0, "tag": "PV-1",  "name": "캐니스터1 → 전구체 라인",     "pulse": True},
-    {"bit": 1, "tag": "PV-2",  "name": "캐니스터2 → 전구체 라인",     "pulse": True},
-    {"bit": 2, "tag": "PV-3",  "name": "캐니스터3 → 전구체 라인",     "pulse": True},
-    {"bit": 3, "tag": "PV-A1", "name": "어시스트 N2 → 캐니스터2 입구", "pulse": False},
-    {"bit": 4, "tag": "PV-A2", "name": "어시스트 N2 → 캐니스터3 입구", "pulse": False},
-    {"bit": 5, "tag": "PV-R",  "name": "반응물 매니폴드 → 챔버",      "pulse": False},
-    {"bit": 6, "tag": "PV-R1", "name": "퍼지 N2 → 매니폴드",          "pulse": False},
-    {"bit": 7, "tag": "PV-R2", "name": "H2O 캐니스터 → 매니폴드",     "pulse": False},
-    {"bit": 8, "tag": "PV-R3", "name": "O2 → 매니폴드",               "pulse": False},
+    {"bit": 0, "tag": "PV-1",  "name": "Canister 1 → Precursor Line",     "pulse": True},
+    {"bit": 1, "tag": "PV-2",  "name": "Canister 2 → Precursor Line",     "pulse": True},
+    {"bit": 2, "tag": "PV-3",  "name": "Canister 3 → Precursor Line",     "pulse": True},
+    {"bit": 3, "tag": "PV-A1", "name": "Assist N2 → Canister 2 Inlet", "pulse": False},
+    {"bit": 4, "tag": "PV-A2", "name": "Assist N2 → Canister 3 Inlet", "pulse": False},
+    {"bit": 5, "tag": "PV-R",  "name": "Reactant Manifold → Chamber",      "pulse": False},
+    {"bit": 6, "tag": "PV-R1", "name": "Purge N2 → Manifold",          "pulse": False},
+    {"bit": 7, "tag": "PV-R2", "name": "H2O Canister → Manifold",     "pulse": False},
+    {"bit": 8, "tag": "PV-R3", "name": "O2 → Manifold",               "pulse": False},
 ]
 MANUAL_VALVE_MASK = 0x01FF          # 수동 요청이 반영되는 비트 (b0~b8)
 
@@ -53,14 +53,14 @@ REACTANT_VALVE_BITS = (5,)
 
 # ===================== 보조 출력 (D00014 / D01008) =====================
 AUX = [
-    {"bit": 0,  "tag": "VV",     "name": "챔버 벤트 (N2)"},
-    {"bit": 1,  "tag": "IV-E",   "name": "배기 격리"},
-    {"bit": 2,  "tag": "PMP-N2", "name": "펌프 N2 퍼지"},
-    {"bit": 3,  "tag": "PMP",    "name": "드라이펌프 기동"},
-    {"bit": 4,  "tag": "LMP-R",  "name": "경광등 적"},
-    {"bit": 5,  "tag": "LMP-Y",  "name": "경광등 황"},
-    {"bit": 6,  "tag": "LMP-G",  "name": "경광등 녹"},
-    {"bit": 7,  "tag": "BUZ",    "name": "부저"},
+    {"bit": 0,  "tag": "VV",     "name": "Chamber Vent (N2)"},
+    {"bit": 1,  "tag": "IV-E",   "name": "Exhaust Isolation"},
+    {"bit": 2,  "tag": "PMP-N2", "name": "Pump N2 Purge"},
+    {"bit": 3,  "tag": "PMP",    "name": "Dry Pump Run"},
+    {"bit": 4,  "tag": "LMP-R",  "name": "Tower Lamp Red"},
+    {"bit": 5,  "tag": "LMP-Y",  "name": "Tower Lamp Yellow"},
+    {"bit": 6,  "tag": "LMP-G",  "name": "Tower Lamp Green"},
+    {"bit": 7,  "tag": "BUZ",    "name": "Buzzer"},
     {"bit": 8,  "tag": "RF",     "name": "RF ON"},
 ]
 # 명령 12(수동 적용)로 반영되는 보조 출력 비트.
@@ -70,66 +70,66 @@ AUX_CMD_MASK = 0x0F00
 # ===================== 입력 (D00008 / D00009) =====================
 # ok_when: 이 비트가 1이면 정상인가(True) / 1이면 이상인가(False)
 INPUTS0 = [
-    {"bit": 0,  "tag": "EMO",     "name": "비상정지 정상",   "ok_when": True},
-    {"bit": 1,  "tag": "RST-SW",  "name": "판넬 리셋 스위치", "ok_when": True, "momentary": True},
-    {"bit": 2,  "tag": "AIR",     "name": "공압 정상",       "ok_when": True},
-    {"bit": 3,  "tag": "N2",      "name": "N2 압력 정상",    "ok_when": True},
-    {"bit": 4,  "tag": "CW",      "name": "냉각수 정상",     "ok_when": True},
-    {"bit": 5,  "tag": "LID",     "name": "리드 닫힘",       "ok_when": True},
-    {"bit": 6,  "tag": "ATM",     "name": "챔버 대기압",     "ok_when": None},
-    {"bit": 7,  "tag": "PMP-RUN", "name": "펌프 운전",       "ok_when": None},
-    {"bit": 8,  "tag": "PMP-ALM", "name": "펌프 알람",       "ok_when": False},
-    {"bit": 9,  "tag": "IVE-O",   "name": "IV-E 열림 리미트", "ok_when": None},
-    {"bit": 10, "tag": "IVE-C",   "name": "IV-E 닫힘 리미트", "ok_when": None},
-    {"bit": 11, "tag": "LEAK",    "name": "가스 누출",       "ok_when": False},
-    {"bit": 12, "tag": "SCRUB",   "name": "배기·스크러버 정상", "ok_when": True, "unused": True},
-    {"bit": 13, "tag": "OT",      "name": "히터 과온 차단",   "ok_when": False},
+    {"bit": 0,  "tag": "EMO",     "name": "EMO OK",   "ok_when": True},
+    {"bit": 1,  "tag": "RST-SW",  "name": "Panel Reset SW", "ok_when": True, "momentary": True},
+    {"bit": 2,  "tag": "AIR",     "name": "Air OK",       "ok_when": True},
+    {"bit": 3,  "tag": "N2",      "name": "N2 Pressure OK",    "ok_when": True},
+    {"bit": 4,  "tag": "CW",      "name": "Cooling Water OK",     "ok_when": True},
+    {"bit": 5,  "tag": "LID",     "name": "Lid Closed",       "ok_when": True},
+    {"bit": 6,  "tag": "ATM",     "name": "Chamber ATM",     "ok_when": None},
+    {"bit": 7,  "tag": "PMP-RUN", "name": "Pump Running",       "ok_when": None},
+    {"bit": 8,  "tag": "PMP-ALM", "name": "Pump Alarm",       "ok_when": False},
+    {"bit": 9,  "tag": "IVE-O",   "name": "IV-E Open Limit", "ok_when": None},
+    {"bit": 10, "tag": "IVE-C",   "name": "IV-E Closed Limit", "ok_when": None},
+    {"bit": 11, "tag": "LEAK",    "name": "Gas Leak",       "ok_when": False},
+    {"bit": 12, "tag": "SCRUB",   "name": "Scrubber OK", "ok_when": True, "unused": True},
+    {"bit": 13, "tag": "OT",      "name": "Heater Overtemp Trip",   "ok_when": False},
 ]
 INPUTS1 = [
-    {"bit": 0, "tag": "RF-RDY", "name": "RF 준비", "ok_when": None},
-    {"bit": 1, "tag": "RF-ALM", "name": "RF 알람", "ok_when": False},
+    {"bit": 0, "tag": "RF-RDY", "name": "RF Ready", "ok_when": None},
+    {"bit": 1, "tag": "RF-ALM", "name": "RF Alarm", "ok_when": False},
 ]
 
 # ===================== 인터락 (D00004) =====================
 # why: 칩에 마우스를 올렸을 때 보여 줄 조건 설명
 INTERLOCKS = [
-    {"bit": 0, "tag": "기본",        "why": "비상정지·공압·N2·리드·냉각수 정상"},
-    {"bit": 1, "tag": "펌프",        "why": "펌프 운전 중이고 펌프 알람 없음"},
-    {"bit": 2, "tag": "진공",        "why": "베이스 압력 설정이 0보다 크고, 현재 압력이 그 이하"},
-    {"bit": 3, "tag": "공정 시작 허가", "why": "공정 밸브 허가 + 진공 + PC 링크 정상 + 레시피 표 통과"},
-    {"bit": 4, "tag": "공정 밸브 허가", "why": "기본 + 펌프 + IV-E 열림 + 안전 정지 요구 없음 + 대기압 아님"},
-    {"bit": 5, "tag": "벤트 허가",    "why": "시퀀서 동작 아님(공정 준비 포함) + IV-E 닫힘 입력 + IV-E 출력 꺼짐 + 비상정지 정상"},
-    {"bit": 6, "tag": "전구체·반응물 동시 요청", "why": "전구체 밸브와 반응물 밸브가 함께 요청됨 (이상)",
+    {"bit": 0, "tag": "Basic",        "why": "비상정지·공압·N2·리드·냉각수 정상"},
+    {"bit": 1, "tag": "Pump",        "why": "펌프 운전 중이고 펌프 알람 없음"},
+    {"bit": 2, "tag": "Vacuum OK",        "why": "베이스 압력 설정이 0보다 크고, 현재 압력이 그 이하"},
+    {"bit": 3, "tag": "Start Permit", "why": "공정 밸브 허가 + 진공 + PC 링크 정상 + 레시피 표 통과"},
+    {"bit": 4, "tag": "Valve Permit", "why": "기본 + 펌프 + IV-E 열림 + 안전 정지 요구 없음 + 대기압 아님"},
+    {"bit": 5, "tag": "Vent Permit",    "why": "시퀀서 동작 아님(공정 준비 포함) + IV-E 닫힘 입력 + IV-E 출력 꺼짐 + 비상정지 정상"},
+    {"bit": 6, "tag": "Precursor/Reactant Conflict", "why": "전구체 밸브와 반응물 밸브가 함께 요청됨 (이상)",
      "bad": True},
-    {"bit": 7, "tag": "안전 정지 요구", "why": "비상정지 또는 PC 끊김 또는 중대 알람", "bad": True},
-    {"bit": 8, "tag": "RF 허가",      "why": "공정 밸브 허가 + RF 준비 + RF·반사 알람 없음 + "
+    {"bit": 7, "tag": "Safe Stop Request", "why": "비상정지 또는 PC 끊김 또는 중대 알람", "bad": True},
+    {"bit": 8, "tag": "RF Permit",      "why": "공정 밸브 허가 + RF 준비 + RF·반사 알람 없음 + "
                                             "RF 상한 > 0 + 베이스 압력 < 현재 압력 ≤ RF 허가 최대 압력"},
 ]
 
 # ===================== 알람 =====================
 # crit: 중대(장비를 세우는 알람) / 아니면 경고(표시·기록만)
 ALARMS0 = [
-    {"bit": 0,  "name": "비상정지",                  "crit": True},
-    {"bit": 1,  "name": "공압 저하",                 "crit": True},
-    {"bit": 2,  "name": "N2 공급 저하",              "crit": True},
-    {"bit": 3,  "name": "냉각수 이상",               "crit": True},
-    {"bit": 4,  "name": "공정 중 리드 열림",          "crit": True},
-    {"bit": 5,  "name": "펌프 알람 / 정지",           "crit": True},
-    {"bit": 6,  "name": "PC 통신 끊김",              "crit": True},
-    {"bit": 7,  "name": "베이스 압력 도달 시간 초과",  "crit": False},
-    {"bit": 8,  "name": "대기압 도달 시간 초과",       "crit": False},
-    {"bit": 9,  "name": "히터 과온",                 "crit": True},
-    {"bit": 10, "name": "온도조절기 통신 끊김",        "crit": False},
-    {"bit": 11, "name": "온도조절기 자체 알람",        "crit": False},
-    {"bit": 12, "name": "MFC 이상",                  "crit": True},
-    {"bit": 13, "name": "레시피 표 검증 실패",        "crit": False},
-    {"bit": 14, "name": "가스 누출",                 "crit": True},
-    {"bit": 15, "name": "전구체·반응물 동시 개방 시도", "crit": True},
+    {"bit": 0,  "name": "EMO",                  "crit": True},
+    {"bit": 1,  "name": "Air Pressure Low",                 "crit": True},
+    {"bit": 2,  "name": "N2 Supply Low",              "crit": True},
+    {"bit": 3,  "name": "Cooling Water Fault",               "crit": True},
+    {"bit": 4,  "name": "Lid Open in Process",          "crit": True},
+    {"bit": 5,  "name": "Pump Alarm / Stop",           "crit": True},
+    {"bit": 6,  "name": "PC Link Lost",              "crit": True},
+    {"bit": 7,  "name": "Base Pressure Timeout",  "crit": False},
+    {"bit": 8,  "name": "ATM Timeout",       "crit": False},
+    {"bit": 9,  "name": "Heater Overtemp",                 "crit": True},
+    {"bit": 10, "name": "TC Comm Lost",        "crit": False},
+    {"bit": 11, "name": "TC Alarm",        "crit": False},
+    {"bit": 12, "name": "MFC Fault",                  "crit": True},
+    {"bit": 13, "name": "Recipe Table Check Failed",        "crit": False},
+    {"bit": 14, "name": "Gas Leak",                 "crit": True},
+    {"bit": 15, "name": "Precursor/Reactant Open Conflict", "crit": True},
 ]
 ALARMS1 = [
-    {"bit": 0, "name": "IV-E 동작 이상 (명령과 리미트 불일치)", "crit": True},
-    {"bit": 1, "name": "RF 파워·매칭박스 알람",                "crit": True},
-    {"bit": 2, "name": "RF 반사 전력 초과",                    "crit": True},
+    {"bit": 0, "name": "IV-E Feedback Fault", "crit": True},
+    {"bit": 1, "name": "RF Generator/Matcher Alarm",                "crit": True},
+    {"bit": 2, "name": "RF Reflected Power High",                    "crit": True},
 ]
 # 중대 알람 마스크 — PLC 가 안전 정지를 거는 기준(워드0). 워드1은 전부 중대.
 CRITICAL_MASK0 = 0xD27F
@@ -139,14 +139,14 @@ CRITICAL_MASK0 = 0xD27F
 # 기본 이름은 장비 구조라서 여기 둔다.
 HEATER_COUNT = 12
 HEATER_DEFAULT_NAMES = [
-    "Stage·챔버", "전구체 라인", "반응물 라인", "캐니스터2", "캐니스터3", "트랩",
-    "예비 7", "예비 8", "예비 9", "예비 10", "예비 11", "예비 12",
+    "Stage/Chamber", "Precursor Line", "Reactant Line", "Canister 2", "Canister 3", "Trap",
+    "Spare 7", "Spare 8", "Spare 9", "Spare 10", "Spare 11", "Spare 12",
 ]
 HEATER_POWER_MASK = 0x003F          # 명령 13 으로 전원을 다루는 채널 (CH1~6)
 
 # ===================== MFC =====================
 MFC_COUNT = 4                       # 이 장비에 장착된 MFC 개수 (주소 영역은 8개까지)
-MFC_DEFAULT_NAMES = ["전구체 캐리어", "어시스트", "반응물 퍼지", "O2"]
+MFC_DEFAULT_NAMES = ["Precursor Carrier", "Assist", "Reactant Purge", "O2"]
 
 # ===================== 장비 전용 아날로그 =====================
 HAS_RF = True
@@ -155,12 +155,12 @@ HAS_O3 = False
 
 # 표시용 내부 영역(D04120~)에서 이 장비가 쓰는 항목
 DISPLAY_SETPOINTS = [
-    {"offset": 0,  "key": "pcv",  "name": "PCV 목표"},
-    {"offset": 1,  "key": "mfc1", "name": "MFC1 설정"},
-    {"offset": 2,  "key": "mfc2", "name": "MFC2 설정"},
-    {"offset": 3,  "key": "mfc3", "name": "MFC3 설정"},
-    {"offset": 4,  "key": "mfc4", "name": "MFC4 설정"},
-    {"offset": 10, "key": "rf",   "name": "RF 전력"},
+    {"offset": 0,  "key": "pcv",  "name": "PCV Target"},
+    {"offset": 1,  "key": "mfc1", "name": "MFC1 Setpoint"},
+    {"offset": 2,  "key": "mfc2", "name": "MFC2 Setpoint"},
+    {"offset": 3,  "key": "mfc3", "name": "MFC3 Setpoint"},
+    {"offset": 4,  "key": "mfc4", "name": "MFC4 Setpoint"},
+    {"offset": 10, "key": "rf",   "name": "RF Power"},
 ]
 
 

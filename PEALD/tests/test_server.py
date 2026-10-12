@@ -104,7 +104,7 @@ def test_unconfirmed_conversions_are_reported():
     with client(app) as c:
         with c.websocket_connect(WS_URL) as ws:
             msg = ws.receive_json()
-            assert "CVG 압력" in msg["unconfirmed"]
+            assert "CVG Pressure" in msg["unconfirmed"]     # v0.5.0 영문 용어
 
 
 # ===================== 원격 = 보기 전용 =====================

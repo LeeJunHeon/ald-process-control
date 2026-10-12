@@ -183,12 +183,12 @@
       if (mh) {
         var h = heat[Number(mh[1])];
         if (!h || !h.enabled) return null;
-        return Object.assign({}, c, { label: 'CH' + h.ch + ' ' + h.name + (mh[2] === 'sv' ? ' 설정' : '') });
+        return Object.assign({}, c, { label: 'CH' + h.ch + ' ' + h.name + (mh[2] === 'sv' ? ' Setpoint' : '') });
       }
       if (mm) {
         var m = mfc[Number(mm[1])];
         if (!m) return null;
-        return Object.assign({}, c, { label: 'MFC' + m.no + ' ' + m.name + (mm[2] === 'sv' ? ' 설정' : '') });
+        return Object.assign({}, c, { label: 'MFC' + m.no + ' ' + m.name + (mm[2] === 'sv' ? ' Setpoint' : '') });
       }
       return c;
     }).filter(Boolean);
@@ -221,7 +221,7 @@
     var xp = core.bind('hXPanel');
     if (xp) xp.hidden = !hasX;
     var dev = (core.state || {}).device || {};
-    core.setText('hXHead', dev.has_o3 ? 'O3' : 'RF · PCV');
+    core.setText('hXHead', dev.has_o3 ? T('panel.o3') : T('panel.rfpcv'));
     locks();
     if (mode === 'hist') drawAll();
   }
@@ -241,7 +241,7 @@
   function buildSeriesPicker() {
     var box = core.bind('hSeries');
     if (!box) return;
-    var names = { p: '압력', m: 'MFC', t: '히터', x: '장비 전용' };
+    var names = { p: 'Pressure', m: 'MFC', t: 'Heater', x: 'Device' };
     var html = '';
     ['p', 'm', 't', 'x'].forEach(function (g) {
       var list = cols().filter(function (c) { return c.group === g; });
@@ -317,8 +317,8 @@
         }
         lastRes = js;
         var bs = js.bucket_s || 1;
-        core.setText('trendInfo', (js.rows || []).length + '묶음 · 묶음당 ' +
-          (bs >= 60 ? (bs / 60).toFixed(1) + ' 분' : bs.toFixed(1) + ' s'));
+        core.setText('trendInfo', (js.rows || []).length + ' bins · ' +
+          (bs >= 60 ? (bs / 60).toFixed(1) + ' min' : bs.toFixed(1) + ' s') + '/bin');
         drawAll();
       })
       .catch(function () { if (my === loadNo) core.setText('trendInfo', '이력을 읽지 못했습니다'); });

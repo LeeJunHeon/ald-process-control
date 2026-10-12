@@ -152,11 +152,12 @@ def _schem(body: str):
       global.document = { createElementNS: (ns, t) => El(t), getElementById: () => svg };
       global.core = { register() {}, bind() { return null; }, state: {}, bit() { return false; } };
       global.fmt = { DASH: '—', flow: String, temp: String, torr: String, pct: String, watt: String, num: String };
+      global.T = require(%s);                                  // v0.5.0: 용어 사전(terms.js)
       require(%s);
       viewSchematic.render({ live: {} });
       const all = []; (function walk(e) { all.push(e); e.kids.forEach(walk); })(svg);
       %s
-    ''' % (json.dumps(os.path.join(JS, "views", "schematic.js")), body))
+    ''' % (json.dumps(os.path.join(JS, "terms.js")), json.dumps(os.path.join(JS, "views", "schematic.js")), body))
 
 
 def test_a3_schematic_font_floor_and_full_names():
@@ -170,10 +171,10 @@ def test_a3_schematic_font_floor_and_full_names():
     assert out["vb"] == "0 0 600 507"
     assert out["min"] >= MIN_UNITS, out["min"]
     # 줄인 이름(상자 안 'MFC1')은 툴팁에 전체 이름
-    assert "MFC1 전구체 캐리어" in out["titles"] and "MFC2 어시스트" in out["titles"]
-    assert "MFC1" in out["shown"] and not any("캐리어" in s for s in out["shown"])
+    assert "MFC1 Precursor Carrier" in out["titles"] and "MFC2 Assist" in out["titles"]     # v0.5.0 영문 용어
+    assert "MFC1" in out["shown"] and not any("Carrier" in s for s in out["shown"])
     if DEV.HAS_RF:
-        assert "MFC3 반응물 퍼지" in out["titles"] and "H2O 캐니스터 R" in out["titles"]
+        assert "MFC3 Reactant Purge" in out["titles"] and "H2O Canister R" in out["titles"]
 
 
 async def _page(port, width, height):
