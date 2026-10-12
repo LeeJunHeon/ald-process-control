@@ -40,7 +40,8 @@
 
   var PAD_L = 52, PAD_R = 196, PAD_T = 10, PAD_B = 30;
   var ROW_H = 13, ROW_MIN = 12, LEAD_W = 14;     // 줄 간격은 12 px 아래로 줄이지 않는다(글자 10 px)
-  var BAND_MIN_MS = 1000;                          // 띠 글자만 다시 쓰는 것은 초당 1 번까지(v0.4.13)
+  var BAND_MIN_MS = 1000;
+  var OVER_W = 120;                                // 띠 넘침 안내 자리(띠 오른쪽 끝에서) — 플롯 오른쪽 여백(196) 안                          // 띠 글자만 다시 쓰는 것은 초당 1 번까지(v0.4.13)
   var PALETTE_N = 12;
 
   function cssVar(n) { return getComputedStyle(d.documentElement).getPropertyValue(n).trim(); }
@@ -183,12 +184,19 @@
     /** 오른쪽 끝 값이 tol 보다 오래됐나(띠 글자 흐림) — 커서를 올리지 않았을 때 */
     function staleOf(se, tol) {
       var end = lastIn(se);
-      return !st.dead && hoverX == null && !!end && end.x < st.x1 - tol;
+      return !st.dead && !hoverIn() && !!end && end.x < st.x1 - tol;
+    }
+
+    /** 커서가 플롯 안에 있나 — draw() 의 판정(G.x0 ≤ hoverX ≤ G.x1)과 같게. ★ v0.4.14: 포인터가 띠 · 축 위에
+     *  멈춰 있으면(hoverX 는 있지만 커서는 안 그림) 띠 글자 · 끊김 표시는 평소처럼 바뀌어야 한다 */
+    function hoverIn() {
+      var G = lastG || geom();
+      return hoverX != null && hoverX >= G.x0 && hoverX <= G.x1;
     }
 
     /** 띠에 보이는 글자(값 · 흐림 · 시각)의 요약 — 플롯은 그대로 두고 띠만 다시 쓸지 정한다(v0.4.13). */
     function bandText() {
-      if (hoverX != null) return '';
+      if (hoverIn()) return '';
       var tol = tolerance();
       return st.series.map(function (se) {
         if (se.hidden) return '';
@@ -211,6 +219,9 @@
     function redrawBand() {
       var G = lastG;
       g.clearRect(G.x1 + 1, G.y0 - 2, G.W - G.x1, G.y1 - G.y0 + 4);     // drawBand 의 잘라 그리기 영역
+      // ★ v0.4.14: 띠 넘침 안내('휠로 더 보기' — 띠 아래 오른쪽 끝)도 지운다. 겹쳐 진해지거나, 넘치지 않게 된 뒤
+      //   유령 글자로 남던 것. x 축 눈금 글자(플롯 오른쪽 끝 − 20 까지)는 건드리지 않는다
+      g.clearRect(G.W - OVER_W, G.y1 + 2, OVER_W, G.H - G.y1 - 2);
       drawBand(G, lastR, null);
       lastBandText = bandText();
       lastBandAt = clock();
@@ -398,7 +409,7 @@
         //   그 겹침(점 수 × 1.5 px × 열 배율 × 점 높이 ÷ 열 높이)만큼 진하게 — 한 열 폭으로 겹치지 않게 그린다
         if (!se.dashed) {
           g.fillStyle = se.color;
-          var colW = (G.x1 - G.x0) / cols, perUnit = (G.y1 - G.y0) / ((r.hi - r.lo) || 1);
+          var perUnit = (G.y1 - G.y0) / ((r.hi - r.lo) || 1);
           vw.band.forEach(function (bd) {
             var a = bd[1], b = bd[2];
             if (st.logY) {
@@ -415,7 +426,9 @@
             var rowsPx = bd.n + (st.logY ? 0 : (bd.hs || 0) * perUnit);   // 점마다 칸 높이(최소 1 px)의 합
             var stack = Math.max(1, rowsPx * 1.5 * k / h);
             g.globalAlpha = Math.min(0.9, 1 - Math.pow(0.85, stack));
-            g.fillRect(xPos(bd.xs, G), Math.min(ya, yb), Math.max(colW, 1 / k), h);   // 절대 시각 열(v0.4.13)
+            // 절대 시각 열(v0.4.13) · ★ v0.4.14: 기기 화소에 맞춘다(소수 위치면 창의 화소 아래 위치에 따라 진하기가
+            //   흔들리고 평균이 옅었다 — 125~150 % 배율)
+            g.fillRect(Math.round(xPos(bd.xs, G) * k) / k, Math.min(ya, yb), 1 / k, h);
           });
           g.globalAlpha = 1;
         }

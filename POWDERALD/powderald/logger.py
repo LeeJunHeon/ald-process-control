@@ -127,7 +127,8 @@ def alarm_event(kind: str, code: str, name: str, severity: str):
         os.makedirs(paths.ALARMS_DIR, exist_ok=True)
         ts = datetime.datetime.now()
         path = os.path.join(paths.ALARMS_DIR, f"alarms-{ts:%Y%m%d}.csv")
-        new = not os.path.exists(path)
+        # ★ v0.4.14: 크기 0 인 파일도 새 파일로 본다(BOM 만 쓰고 머리 줄이 없던 것)
+        new = not os.path.exists(path) or os.path.getsize(path) == 0
         if not new:
             # ★ v0.4.13: 줄 끝 없이 끊긴 줄(쓰다 전원이 끊김)이 있으면 줄바꿈부터 — 아니면 다음 줄이 그 줄에 붙어 사라진다
             with open(path, "rb+") as fb:

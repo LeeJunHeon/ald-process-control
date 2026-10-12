@@ -88,9 +88,11 @@ def selftest(config_path: str = "") -> int:
         th = threading.Thread(target=server.run, kwargs={"sockets": socks}, daemon=True)
         th.start()
         body = None
+        # ★ v0.4.14: 시스템 프록시를 타지 않는다(창과 같게 — HTTP_PROXY 가 죽은 프록시면 10 s 뒤 실패하던 것)
+        opener = urllib.request.build_opener(urllib.request.ProxyHandler({}))
         for _ in range(100):
             try:
-                with urllib.request.urlopen(f"http://{host}:{port}/health", timeout=1) as r:
+                with opener.open(f"http://{host}:{port}/health", timeout=1) as r:
                     body = json.loads(r.read().decode("utf-8"))
                 break
             except Exception:  # noqa: BLE001
@@ -137,10 +139,17 @@ def main():
             sys.exit(2)
         print(f"[info] {DEV.NAME} headless — http://{window.url_host(host)}:{port}")
         from peald.server import uvicorn_config
+        server = uvicorn.Server(uvicorn_config(app, host, port))
         try:
-            uvicorn.Server(uvicorn_config(app, host, port)).run(sockets=socks)
+            server.run(sockets=socks)
         finally:
             window.close_sockets(socks)
+        if not server.started:
+            # ★ v0.4.14: lifespan 시작 실패 — uvicorn 은 그냥 돌아온다. 종료 코드 1 로 알린다(원인은 로그)
+            text = "서버를 시작하지 못했습니다 — 원인은 프로그램 로그"
+            print(f"[error] {text}", flush=True)
+            logger.write("err", text)
+            sys.exit(1)
         return
     window.run(app, host, port, side)
 

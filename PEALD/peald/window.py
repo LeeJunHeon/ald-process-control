@@ -11,6 +11,7 @@ FastAPI 앱과 호스트/포트는 인자로 받는다.
 import os
 import sys
 import time
+import errno
 import socket
 import ctypes
 import threading
@@ -137,10 +138,20 @@ def port_probe(host: str, port: int) -> str:
         return f"{type(e).__name__}: {e}"
 
 
+BUSY_ERRNOS = {errno.EADDRINUSE, errno.EACCES, 10048, 10013}   # 사용 중(Windows WSAEADDRINUSE · WSAEACCES 포함)
+BUSY_MARK = "사용 중 — "
+
+
+def _busy(e: OSError) -> bool:
+    return getattr(e, "winerror", None) in BUSY_ERRNOS or e.errno in BUSY_ERRNOS
+
+
 def bind_port(host: str, port: int, total_s: float = None, step_s: float = 0.5):
     """설정 포트를 잠시(PORT_WAIT_S) 다시 시도하며 묶는다 — (소켓 목록, '') 또는 ([], 마지막 이유).
     ★ 다른 포트로 조용히 옮기지 않는다 — 열린 화면 · 원격 화면은 설정 포트를 계속 두드린다.
-    ★ 형식이 틀린 host · 풀 수 없는 이름은 기다려도 안 바뀐다 — 바로 돌려준다."""
+    ★ v0.4.14: 다시 시도는 '사용 중'(EADDRINUSE · EACCES · 10048 · 10013)일 때만이고 이유 앞에 BUSY_MARK 를 붙인다.
+      그 밖(형식이 틀린 host · 풀 수 없는 이름 · IPv6 없는 PC 의 ::1 — 97 · 10047 · 이 PC 에 없는 IP — 99 · 10049)은
+      기다려도 안 바뀐다 — 바로 실제 이유로 돌려준다."""
     total_s = PORT_WAIT_S if total_s is None else total_s
     end = time.monotonic() + total_s
     while True:
@@ -150,8 +161,10 @@ def bind_port(host: str, port: int, total_s: float = None, step_s: float = 0.5):
             return [], f"{type(e).__name__}: {e}"
         except OSError as e:
             why = f"{type(e).__name__}: {e}"
-            if not host_valid(host) or time.monotonic() >= end:
+            if not _busy(e):
                 return [], why
+            if time.monotonic() >= end:
+                return [], BUSY_MARK + why
         time.sleep(step_s)
 
 
@@ -177,6 +190,11 @@ def url_host(host: str) -> str:
 
 
 def port_busy_text(host: str, port: int, why: str) -> str:
+    """bind_port 의 이유 → 운전자 문구. '다른 프로그램이 쓰고 있습니다'는 사용 중일 때만(v0.4.14)."""
+    if host_valid(host) and "gaierror" not in why and not why.startswith(BUSY_MARK):
+        return (f"설정 주소 {host}:{port} 로 서버를 열 수 없습니다 — {why}. 이 PC 에 없는 주소이거나(IPv6 가 없는 PC 의 ::1 등) "
+                f"쓸 수 없는 주소입니다. 설정 server.host 를 고치세요.")
+    why = why[len(BUSY_MARK):] if why.startswith(BUSY_MARK) else why
     if not host_valid(host) or "gaierror" in why:
         return (f"설정 server.host {host!r} 로 서버를 열 수 없습니다 — 빈 값(= 127.0.0.1) · localhost · IP 주소만 "
                 f"씁니다(모든 주소는 0.0.0.0 또는 ::). 설정을 고치세요. ({why})")
@@ -394,7 +412,13 @@ def run(app, host: str, port: int, side: str = None):
             # log_config=None: uvicorn 자체 로깅 dictConfig 를 타지 않는다
             # (창 전용 exe 에서 sys.stdout.isatty() 로 죽는다).
             from .server import uvicorn_config
-            uvicorn.Server(uvicorn_config(app, host, port)).run(sockets=socks)
+            server = uvicorn.Server(uvicorn_config(app, host, port))
+            server.run(sockets=socks)
+            if not server.started:
+                # ★ v0.4.14: uvicorn 0.46 은 lifespan 시작이 실패하면 예외 없이 돌아온다 — started 로 안다(원인은
+                #   server.lifespan 이 로그에 썼다). 창은 20 s 를 기다리지 않고 바로 이유를 띄운다
+                _SERVER_ERROR = "내부 서버가 시작 중 실패했습니다(원인은 프로그램 로그)"
+                logger.write("err", _SERVER_ERROR)
         except BaseException as e:  # noqa: BLE001 — uvicorn 은 시작 실패를 SystemExit 로 낸다
             _SERVER_ERROR = f"{type(e).__name__}: {e}"
             print(f"[error] 내부 서버가 중단되었습니다: {traceback.format_exc()}")

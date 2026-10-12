@@ -63,7 +63,8 @@
       var lvl = it.level || (/정상/.test(res) ? 'ok' : (/중단|알 수 없음|기록 중단/.test(res) ? 'warn' : 'off'));
       return '<div class="dl-item' + (it.name === cur ? ' on' : '') + '" tabindex="0" data-dlname="' + core.esc(it.name) + '">' +
         '<div class="a"><span class="mono">' + core.esc((it.started || '').slice(0, 16)) + '</span>' +
-        core.chip(res || '진행 중?', lvl) + '</div>' +
+        // ★ v0.4.14: 긴 결과는 칩 안에서 말줄임 + title 에 전체 글(768 폭에서 칸을 넘어 시각을 세 줄로 밀던 것)
+        core.chip(res || '진행 중?', lvl, res || '진행 중?') + '</div>' +
         '<div class="b">' + core.esc(it.recipe || '') +
         (it.number != null ? ' <span class="dim">#' + core.esc(it.number) + '</span>' : '') +
         '<span class="dim right">' + (it.took_s != null ? fmt.hms(it.took_s) : fmt.DASH) +

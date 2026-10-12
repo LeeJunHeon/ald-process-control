@@ -48,8 +48,8 @@ def _alarm_rows(path: str, tail: int = ALARM_TAIL_BYTES):
     if start > 0:
         cut = raw.find(b"\n")
         raw = raw[cut + 1:] if cut >= 0 else b""        # 중간부터 읽었으면 첫 (잘린) 줄은 버린다
-    # \u2605 v0.4.13: NUL \uc740 \uac78\ub7ec \uc77d\uace0(\uc804\uc6d0\uc774 \ub04a\uae30\uba74 \ud30c\uc77c \ub05d\uc774 NUL \ub85c \ucc44\uc6cc\uc9c8 \uc218 \uc788\ub2e4 \u2014 128 kB \ub118\uac8c \uc774\uc5b4\uc9c0\uba74 csv \uce78 \ud06c\uae30
-    #   \uc624\ub958\ub85c \ud30c\uc77c \uc804\uccb4\ub97c \ubc84\ub838\ub2e4), \uc904\ub9c8\ub2e4 \ub530\ub85c \uc77d\ub294\ub2e4(\ud55c \uc904\uc758 \uc624\ub958\uac00 \ub2e4\ub978 \uc904\uc744 \ubc84\ub9ac\uc9c0 \uc54a\uac8c)
+    # ★ v0.4.13: NUL 은 걸러 읽고(전원이 끊기면 파일 끝이 NUL 로 채워질 수 있다 — 128 kB 넘게 이어지면 csv 칸 크기
+    #   오류로 파일 전체를 버렸다), 줄마다 따로 읽는다(한 줄의 오류가 다른 줄을 버리지 않게)
     text = raw.decode("utf-8", errors="replace").lstrip("\ufeff").replace("\x00", "")
     out = []
     for line in text.splitlines():

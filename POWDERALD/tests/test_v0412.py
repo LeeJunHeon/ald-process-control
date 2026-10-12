@@ -78,9 +78,9 @@ def _chart(body: str):
       global.fmt = { DASH: '—', torr: String, num: v => Number(v).toFixed(1) };
       let draws = 0;
       const ctx = new Proxy({}, { get(t, k) {
+        if (k in t) return t[k];                            // v0.4.14: 시험이 바꿔 끼운 것을 먼저
         if (k === 'measureText') return s => ({ width: String(s).length * 6 });
         if (k === 'clearRect') return () => { draws++; };
-        if (k in t) return t[k];
         return () => {};
       }, set(t, k, v) { t[k] = v; return true; } });
       const canvas = { clientWidth: 900, clientHeight: 220, width: 0, height: 0, getContext: () => ctx,

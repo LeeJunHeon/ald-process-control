@@ -31,7 +31,7 @@ def test_a1_tail_key_stable_when_window_slides_without_new_points():
     """새 점이 없는 계열(멈춤 · '—')의 마지막 열은 x0 가 화소의 일부만큼씩 움직여도 같다."""
     out = _dec(r'''
       const T = 1.7e12, span = 3600 * 1000, cols = 652;
-      const pts = []; for (let i = 0; i < 3600 * 5; i++) pts.push([T - span + i * 200, 0, 0, Math.sin(i * 1.7) * 5]);
+      const pts = []; for (let i = 0; i < 3600 * 5; i++) { const v = Math.sin(i * 1.7) * 5; pts.push([T - span + i * 200, v, v, v]); }   // v0.4.14: 띠가 생기게(최소 = 최대 = 값)
       const ypx = v => Math.round(v * 10);
       const keys = new Set(), last = new Set();
       for (let k = 0; k < 80; k++) {                      // 5 Hz 로 16 s — 창은 화소의 일부씩 움직인다
@@ -76,7 +76,7 @@ def test_a2_signature_includes_per_series_staleness():
     out = _chart(r'''
       const S = (pts) => [{ label: 'CH1', unit: '℃', color: '#888', pts }];
       const pts = []; for (let i = 0; i <= 3600; i++) pts.push([i * 1000, 25, 25, 25]);
-      const x1 = 3600 * 1000;
+      const x1 = 3600 * 1000 + 137;                        // v0.4.14: 열 경계(3,600,000 / 652 의 배수)에 걸리지 않게
       c.set({ series: S(pts), x0: x1 - 3600 * 1000, x1, gap: 5000, tol: 1000 });
       const n0 = draws;
       c.set({ series: S(pts), x0: x1 + 600 - 3600 * 1000, x1: x1 + 600, gap: 5000, tol: 1000 });
@@ -147,6 +147,12 @@ async def test_b1_adopt_wanted_rules(cfg):
         r._b13_wait = (0, None)
         assert not r.adopt_wanted()                         # 끝 처리 중
         r._b13_wait = None
+        r._abort_pending = True
+        assert not r.adopt_wanted()                         # v0.4.14(D1): 중단 결과를 기다리는 중
+        r._abort_pending = False
+        r._end_deferred = (None, 0, None)
+        assert not r.adopt_wanted()                         # v0.4.14(D1): 미뤄 둔 끝이 있다
+        r._end_deferred = None
         r.phase = "uploading"
         assert not r.adopt_wanted()                         # 시작 절차 중
         r.phase = process.IDLE
@@ -284,6 +290,18 @@ def test_b2_host_case_and_empty_text(cfg):
 
 
 @pytest.mark.skipif(os.name != "nt", reason="Windows 소켓 옵션")
+def test_b2_windows_socket_is_exclusive():
+    """v0.4.14(D2): 평소에는 127.0.0.1 로 묶은 소켓의 SO_EXCLUSIVEADDRUSE 값만 본다(방화벽 허용 창이 뜨지 않게)."""
+    assert window.EXCLUSIVE_BIND
+    socks = window.bind_sockets("127.0.0.1", free_port())
+    try:
+        assert all(s.getsockopt(socket.SOL_SOCKET, socket.SO_EXCLUSIVEADDRUSE) for s in socks)
+    finally:
+        window.close_sockets(socks)
+
+
+@pytest.mark.skipif(os.name != "nt" or os.environ.get("ALD_NET_TESTS") != "1",
+                    reason="Windows · ALD_NET_TESTS=1 일 때만(0.0.0.0 으로 들어 방화벽 허용 창이 뜰 수 있다)")
 def test_b2_windows_other_socket_cannot_steal_our_port():
     """Windows: 우리가 모든 주소(0.0.0.0:P)로 들을 때 다른 소켓이 127.0.0.1:P 를 묶지 못한다(SO_EXCLUSIVEADDRUSE).
     옵션 없이 열면 같은 사용자의 다른 프로그램이 127.0.0.1:P 를 묶어 그 접속을 가져갔다(v0.4.13 이 PC 확인)."""

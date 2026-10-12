@@ -55,6 +55,8 @@ class ProcessRunner:
         self._abort_pending = False     # 즉시 중단을 보내는 중(결과를 아직 모른다)
         self._end_deferred = None       # 그동안 본 종료 — 결과가 오면 기록한다
         self._stop_reserved = False     # 사이클 후 정지 예약(명령 4 처리됨)
+        self._stopping_seen = False     # 이번 공정 중 장비 상태 '사이클 후 정지 예약'(STATE_STOPPING)을 봤다(v0.4.14)
+        self._adopted = False           # 이번 공정은 이어받은 것(끝 줄의 걸린 시간 = 이어받은 뒤)
         self._last_pos = None           # 공정 중 마지막으로 본 (블록, 스텝, 사이클)
         self._cancel = False
         self._cancel_why = "운전자"
@@ -342,9 +344,22 @@ class ProcessRunner:
             from .commands import _cancel_o3_timer
             _cancel_o3_timer()
             await push_log("O3 바이패스 라인 닫기 예약을 취소했습니다 — 공정 시작 절차", "warn")
+        # ★ v0.4.14: 앞 공정이 아직 이 PC 의 공정 구간(active_run)인데 PLC 는 이미 공정 중이 아니면 — 중단 직후
+        #   (0~0.1 s) 새 시작 — 끝 판정(tick)을 먼저 한다. 아래에서 _abort_sent · _last_pos 를 지우면 앞 공정이
+        #   '중단 (PLC 중단)' · '(공정 중 위치를 보지 못함)' 으로 적혔다
+        pending_logs = []
+        ended_now = False
+        link = st.link
+        if (self.active_run and link and link.connected
+                and link.status[A.D_STATE] not in RUNNING_STATES):
+            self.tick(lambda lv, m: pending_logs.append((lv, m)))
+            ended_now = not self.active_run and self._b13_wait is None and self._end_deferred is None
         # ★ 미뤄 둔 앞 공정의 끝(b13 대기 · 중단 결과 대기)을 지금 본 값으로 먼저 적고 앞 데이터 로그를 닫는다 —
         #   아래에서 상태를 지우면 앞 끝이 사라지거나 틀리게 적힌다
-        self._flush_pending_end()
+        if not self._flush_pending_end(lambda lv, m: pending_logs.append((lv, m))) and ended_now:
+            self._close_datalog()
+        for lv, m in pending_logs:
+            await push_log(m, lv)
         self._gen += 1
         self._cancel_why = "운전자"
         self._cancel = False
@@ -352,6 +367,8 @@ class ProcessRunner:
         self._abort_pending = False
         self._end_deferred = None
         self._stop_reserved = False
+        self._stopping_seen = False
+        self._adopted = False
         self._last_pos = None
         self.last_result = ""
         self._b13_wait = None
@@ -437,6 +454,11 @@ class ProcessRunner:
             await push_log(f"공정 시작 — {snap['name']} (번호 {tbl['number']}, "
                            f"예상 {_hms(R.total_ms(st.cfg, rec))})", "ok")
             return True, "공정을 시작했습니다"
+        if result is None:
+            # ★ v0.4.14: 응답을 못 받았다 — 거절이 아니다. PLC 가 시작했으면 이어받기 루프가 몇 초 안에 이어 간다
+            why = f"시작 결과 모름 — PLC 상태로 확인합니다 ({text})"
+            await push_log(why, "warn")
+            return False, why
         detail = text
         if result == A.RESULT_INTERLOCK:
             miss = [c["label"] for c in self.start_checks() if not c["ok"]]
@@ -547,6 +569,8 @@ class ProcessRunner:
                 push_log_sync("warn", "중단 명령이 PLC 에 닿지 않았습니다 — 공정 계속")
             self._watch_rf(s, push_log_sync)
             self._was_running = True
+            if s[A.D_STATE] == A.STATE_STOPPING and (self.active_run or self._was_running):
+                self._stopping_seen = True
             if not self.started_at:
                 self.started_at = time.time()
             # ★ 마지막 위치는 공정 중에 본 값으로 — 끝난 뒤의 상태 영역은 래더에서 정상 완료면
@@ -590,8 +614,9 @@ class ProcessRunner:
         s0[A.D_ALARM0] |= s[A.D_ALARM0] & (1 << A.ALM0_RECIPE)
         return s0
 
-    def _flush_pending_end(self):
-        """시작 흐름 첫머리 — 미뤄 둔 앞 공정의 끝을 지금 본 값으로 적고 앞 데이터 로그를 닫는다."""
+    def _flush_pending_end(self, log_sync=None) -> bool:
+        """시작 흐름 첫머리 — 미뤄 둔 앞 공정의 끝을 지금 본 값으로 적고 앞 데이터 로그를 닫는다. 적었으면 True.
+        log_sync 를 주면 끝 줄을 그것으로 남긴다(시작 흐름이 모아서 화면에 보낸다)."""
         link = self.state.link
         cur = link.status if (link and link.connected) else None
         if self._b13_wait is not None:
@@ -603,22 +628,29 @@ class ProcessRunner:
             self._abort_pending = False
             self._abort_unknown = True              # 중단 결과를 못 받은 채 다음 시작
         else:
-            return
+            return False
         if cur is not None and self._b13_rose(cur):
             s0 = self._with_b13(s0, cur)
-        self._finish(s0, at, pl)
+        self._finish(s0, at, log_sync or pl)
+        self._close_datalog()
+        return True
+
+    def _close_datalog(self):
+        """앞 공정의 데이터 로그를 끝 결과와 함께 닫는다 — 새 공정이 시작 가장자리로 새 파일을 연다."""
         dl = self.state.datalog
         if dl is not None and dl.fp:
             dl.note_end(self.last_result)
             dl.close()
-            dl._was_running = False                 # 새 공정이 시작 가장자리로 새 파일을 연다
+            dl._was_running = False
 
     def _finish(self, s, ended_at, push_log_sync):
         took = ended_at - (self.started_at or ended_at)
         self.last_result = self.end_result(s)
+        # ★ v0.4.14: 이어받은 공정은 시작 시각을 모른다 — 걸린 시간은 이어받은 뒤부터라고 적는다
+        took_txt = ("이어받은 뒤 " if self._adopted else "걸린 시간 ") + _hms(int(took * 1000))
         push_log_sync("ok" if result_level(self.last_result) == "ok" else "warn",
                       f"공정 {self.last_result} — {self.active_name or ''} · "
-                      f"걸린 시간 {_hms(int(took * 1000))} · 마지막 위치 {self.where_text()}")
+                      f"{took_txt} · 마지막 위치 {self.where_text()}")
         self.started_at = 0.0
         self._abort_sent = False
         self._stop_reserved = False
@@ -667,12 +699,29 @@ class ProcessRunner:
         b, st, c = self._last_pos
         return f"블록 {b} · 스텝 {st} · 사이클 {c}"
 
-    def _block_count(self) -> int:
+    def _plan(self) -> dict:
+        """끝 판정이 쓰는 블록 수 · 블록 반복 · 그룹 — {"nb", "repeats": [블록별 반복], "groups": [(시작, 끝, 반복)]}.
+        ★ v0.4.14: 되읽은 표(words)가 있으면 그 표에서(R.from_plc_words) — '(PLC 번호 N)' 으로 이어받아 로컬
+          레시피가 없어도 사이클 후 정지를 가른다. 표가 없으면 레시피, 둘 다 없으면 nb = 0."""
         tbl = self.active_table or {}
-        if tbl.get("block_count"):
-            return int(tbl["block_count"])
+        if tbl.get("words"):
+            info = R.from_plc_words(tbl["words"])
+            return {"nb": int(info["block_count"]),
+                    "repeats": [int(b["repeat"] or 0) for b in info["blocks"]],
+                    "groups": [(g["from_block"], g["to_block"], g["repeat"] or 1) for g in info["groups"]]}
         rec = self.active_recipe or {}
-        return len(rec.get("blocks") or [])
+        blocks = rec.get("blocks") or []
+        groups = []
+        for g in rec.get("groups") or []:
+            try:
+                groups.append((int(g.get("from_block")), int(g.get("to_block")), int(g.get("repeat") or 1)))
+            except (TypeError, ValueError, AttributeError):
+                continue
+        nb = int(tbl["block_count"]) if tbl.get("block_count") else len(blocks)
+        return {"nb": nb, "repeats": [int(b.get("repeat") or 1) for b in blocks], "groups": groups}
+
+    def _block_count(self) -> int:
+        return self._plan()["nb"]
 
     def end_result(self, s) -> str:
         """끝났을 때의 결과(이벤트 로그·데이터 로그 메타·목록이 이 값을 쓴다). 래더 동작 기준, 앞이 우선:
@@ -689,8 +738,14 @@ class ProcessRunner:
            (공정 중 하트비트 멈춤은 보조 근거 — 그것만으로는 재시작이라 하지 않는다)
         7. 시퀀서 8 — PLC 중단 / 그 밖 — 끝 확인 안 됨"""
         seq, st = s[A.D_SEQ_STATE], s[A.D_STATE]
-        nb = self._block_count()
+        plan = self._plan()
+        nb = plan["nb"]
         blk = s[A.D_SEQ_BLOCK]
+        if seq == 6 and not nb and (self._stop_reserved or self._stopping_seen) and st != A.STATE_SAFE_STOP:
+            # ★ v0.4.14: 표 없이 이어받은 공정 — 블록 수를 모른다. 공정 중 '사이클 후 정지 예약'을 봤으면 사이클 후
+            #   정지(마지막 사이클과 겹쳤는지는 알 수 없다). 예전에는 '정상 종료'로 적혔다
+            cyc = A.dword(s[A.D_SEQ_BLOCK_PASS], s[A.D_SEQ_BLOCK_PASS + 1])
+            return f"사이클 후 정지 (블록 {blk} · 사이클 {cyc} · 표 모름)"
         if seq == 6 and (not nb or blk > nb):
             if st == A.STATE_SAFE_STOP:
                 return f"정상 종료 (끝난 뒤 안전 정지: {self._crit_text(s)})"
@@ -703,8 +758,8 @@ class ProcessRunner:
         if seq == 6:
             # ★ 끝 스냅샷의 D00024 — 래더는 끝에서 사이클을 올리지 않는다(P40 행 55~56 · 66)
             cyc = A.dword(s[A.D_SEQ_BLOCK_PASS], s[A.D_SEQ_BLOCK_PASS + 1])
-            blocks = (self.active_recipe or {}).get("blocks") or []
-            reps = int(blocks[blk - 1].get("repeat") or 1) if 1 <= blk <= len(blocks) else 0
+            repeats = plan["repeats"]
+            reps = int(repeats[blk - 1] or 0) if 1 <= blk <= len(repeats) else 0
             if self._last_cycle_of_all(blk, cyc, reps, s):
                 return "정상 종료 (사이클 후 정지와 겹침)"
             rep = f"/{reps}" if reps else ""
@@ -743,14 +798,11 @@ class ProcessRunner:
 
     def _last_cycle_of_all(self, blk, cyc, reps, s) -> bool:
         """사이클 후 정지가 마지막 블록의 마지막 사이클(그 블록이 그룹 안이면 마지막 그룹 회차)에 겹쳤나."""
-        nb = self._block_count()
+        plan = self._plan()
+        nb = plan["nb"]
         if not (nb and blk == nb and reps and cyc >= reps):
             return False
-        for g in (self.active_recipe or {}).get("groups") or []:
-            try:
-                a, z, r = int(g.get("from_block")), int(g.get("to_block")), int(g.get("repeat") or 1)
-            except (TypeError, ValueError, AttributeError):
-                continue
+        for a, z, r in plan["groups"]:
             if a <= blk <= z and s[A.D_SEQ_GROUP_PASS] < r:
                 return False
         return True
@@ -841,13 +893,17 @@ class ProcessRunner:
         running = code in RUNNING_STATES
         cycle = A.dword(s[A.D_SEQ_BLOCK_PASS], s[A.D_SEQ_BLOCK_PASS + 1])
         step_ms = A.dword(s[A.D_SEQ_STEP_MS], s[A.D_SEQ_STEP_MS + 1])
+        # ★ v0.4.14: PLC 가 공정 중인데 이 PC 가 맡은 공정이 없다(이어받기 전) — 골라 둔 레시피를 실행 중 레시피로
+        #   보이지 않는다. 이름은 '(이어받는 중)', 남은 시간은 내지 않는다
+        adopting = running and not self.active_run and not self.busy
         out = {
             "running": running,
             "phase": self.phase,
             "message": self.message,
             # 공정 중이면 시작 때 스냅샷, 아니면 지금 고른 레시피
-            "recipe": self.active_name if running else self.recipe_name,
-            "number": ((self.active_table if running else self.table) or {}).get("number"),
+            "recipe": ADOPTING_NAME if adopting else (self.active_name if running else self.recipe_name),
+            "number": None if adopting else ((self.active_table if running else self.table) or {}).get("number"),
+            "adopting": adopting,
             "block": s[A.D_SEQ_BLOCK],
             "step": s[A.D_SEQ_STEP],
             "cycle": cycle,
@@ -867,7 +923,7 @@ class ProcessRunner:
             out["blocking"] = [c["label"] for c in blocking]
             if self.recipe:
                 out["estimate"] = self.estimate()
-        rec = self.active_recipe
+        rec = None if adopting else self.active_recipe
         if rec and running:
             pos = {"block": s[A.D_SEQ_BLOCK], "step": s[A.D_SEQ_STEP], "cycle": cycle,
                    "group_pass": s[A.D_SEQ_GROUP_PASS], "step_elapsed_ms": step_ms,
@@ -901,6 +957,10 @@ class ProcessRunner:
         link = self.state.link
         if not (link and link.connected) or link.status[A.D_STATE] not in RUNNING_STATES:
             return False
+        # ★ v0.4.14: 장비 ID 가 맞지 않아 막힌 연결이면 이어받지 않는다(다른 장비 공정의 데이터 로그 · 끝 판정이
+        #   이 장비 폴더에 생겼다)
+        if hasattr(link, "id_block_text") and link.id_block_text():
+            return False
         return not (self.active_run or self.busy or self._abort_pending
                     or self._b13_wait is not None or self._end_deferred is not None)
 
@@ -931,6 +991,7 @@ class ProcessRunner:
         # ★ 되읽는 동안 공정이 끝났거나 이 PC 가 공정을 맡았으면 이어받지 않는다
         if not self.adopt_wanted():
             return False
+        # ★ v0.4.14: 상태를 먼저 다 정하고 로그는 뒤에 — push_log 가 양보하면 그 사이 운전자 중단을 잃을 수 있다
         if words:
             info = R.from_plc_words(words)
             name = storage.find_by_number(info["number"])
@@ -938,34 +999,42 @@ class ProcessRunner:
             if name and self.select(name)[0]:
                 self.run = {"name": name, "recipe": self.recipe,
                             "table": dict(self.table or {}, words=list(words))}
-                await push_log(f"PLC 가 이미 공정 중입니다 — 레시피 [{name}] "
-                               f"(번호 {info['number']})로 이어 갑니다", "warn")
+                msg = f"PLC 가 이미 공정 중입니다 — 레시피 [{name}] (번호 {info['number']})로 이어 갑니다"
             else:
                 self.recipe = None
                 self.recipe_name = f"(PLC 번호 {info['number']})"
                 self.table = {"number": info["number"], "checksum": info["checksum"]}
                 self.state.recipe_check = {}
                 self.run = {"name": self.recipe_name, "recipe": None, "table": dict(self.table, words=list(words))}
-                await push_log(f"PLC 가 이미 공정 중입니다 — 번호 {info['number']} 에 맞는 "
-                               f"로컬 레시피가 없어 이름 없이 표시합니다", "warn")
+                msg = (f"PLC 가 이미 공정 중입니다 — 번호 {info['number']} 에 맞는 로컬 레시피가 없어 "
+                       f"이름 없이 표시합니다")
         else:
             self.recipe = None
             self.recipe_name = ADOPT_NO_TABLE_NAME
             self.table = None
             self.state.recipe_check = {}
             self.run = {"name": self.recipe_name, "recipe": None, "table": None}
-            await push_log(f"PLC 가 이미 공정 중인데 레시피 표를 {ADOPT_READ_TRIES}번 읽지 못했습니다 — 표 없이 "
-                           "이어 갑니다(데이터 로그 · 끝 판정은 하고, 표가 필요한 이유는 '표 모름')", "warn")
+            msg = (f"PLC 가 이미 공정 중인데 레시피 표를 {ADOPT_READ_TRIES}번 읽지 못했습니다 — 표 없이 "
+                   "이어 갑니다(데이터 로그 · 끝 판정은 하고, 표가 필요한 이유는 '표 모름')")
         self._was_running = True
         self.started_at = time.time()
         self.active_run = True                  # 이어받은 공정도 데이터 로그 구간
         self._run_started_mono = time.monotonic()
+        self._adopted = True
         # ★ b13 은 리셋 전까지 남는다 — 이어받는 순간 이미 서 있었으면 '이번 공정 중 선 것'이 아니다
         self._gen += 1
         self._b13_pre = b13_pre
         self._b13_cleared = False
         self._abort_sent = self._abort_pending = self._abort_unknown = False
         self._end_deferred = self._b13_wait = None
+        # 시작 흐름과 같게 지운다
+        self._stop_reserved = False
+        self._stopping_seen = link.status[A.D_STATE] == A.STATE_STOPPING
+        self._last_pos = None
+        self.last_result = ""
+        self._rf_watch = None
+        self._rf_warned = set()
+        await push_log(msg, "warn")
         return True
 
 
@@ -973,6 +1042,7 @@ ADOPT_READ_TRIES = 3     # 이어받을 때 PLC 레시피 표 되읽기 시도 �
 ADOPT_READ_GAP_S = 0.5   # 그 사이 간격
 ADOPT_RETRY_S = 3.0      # PLC 가 공정 중인데 맡은 공정이 없으면 이만큼마다 이어받기를 다시 시도(server)
 ADOPT_NO_TABLE_NAME = "(PLC 레시피 — 표 모름)"
+ADOPTING_NAME = "(이어받는 중)"
 B13_WAIT_S = 1.0        # 시퀀서 8 로 끝났을 때 레시피 표 오류(b13)가 공개되기를 기다리는 시간
 ABORT_GRACE_S = 1.0     # 결과를 못 받은 즉시 중단 뒤 이만큼 지나도 공정 중이면 중단이 닿지 않은 것
 

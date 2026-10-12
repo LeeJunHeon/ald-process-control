@@ -109,7 +109,7 @@ def create_app(config_path: str = "", single_instance: bool = True,
     datalog_cleanup((cfg.get("log") or {}).get("datalog_keep_days", 180))
 
     @contextlib.asynccontextmanager
-    async def lifespan(_app: FastAPI):
+    async def _lifespan_body(_app: FastAPI):
         logger.write("info", f"{version.APP_NAME} v{version.APP_VERSION} "
                              f"({version.BUILD_DATE}) 기동")
         # 이중 실행 방지는 창 경로뿐 아니라 서버 기동 공통 경로에도 둔다.
@@ -165,6 +165,20 @@ def create_app(config_path: str = "", single_instance: bool = True,
             if sim_server:
                 with contextlib.suppress(Exception):
                     await sim_server.stop()
+
+    @contextlib.asynccontextmanager
+    async def lifespan(_app: FastAPI):
+        """★ v0.4.14: 시작(yield 앞)에서 난 예외는 다시 던지기 전에 로그에 쓴다 — uvicorn 은 그것을 조용히 삼키고
+        Server.run() 이 그냥 돌아와 원인이 어디에도 남지 않았다."""
+        started = False
+        try:
+            async with _lifespan_body(_app):
+                started = True
+                yield
+        except Exception as e:  # noqa: BLE001
+            if not started:
+                logger.write("err", f"서버 시작 실패 — {type(e).__name__}: {logger.clean(e, 300)}")
+            raise
 
     app = FastAPI(lifespan=lifespan)
     _routes(app)

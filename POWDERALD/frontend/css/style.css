@@ -603,3 +603,8 @@ header {
 /* 운전 탭 MFC 표 — 384 px 패널(index.html)에서 768 폭 여유가 0(1 px 넘침)이었다. 패널을 넓히면 아래 줄 히터 표가
    좁아져 줄 높이 · 배관도 크기가 바뀔 수 있어, 칸 좌우 여백만 줄인다(열 5 개 × 좌우) */
 .tbl[data-bind="mfcTbl"] th, .tbl[data-bind="mfcTbl"] td { padding-left: var(--sp-2); padding-right: var(--sp-2); }
+
+/* ===================== v0.4.14 ===================== */
+/* 데이터 로그 목록 — 시각은 줄을 바꾸지 않고, 결과 칩은 남은 폭 안에서 말줄임(전체 글은 title) */
+.dl-item .a .mono { flex: 0 0 auto; white-space: nowrap; }
+.dl-item .a .chip { display: block; flex: 0 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
