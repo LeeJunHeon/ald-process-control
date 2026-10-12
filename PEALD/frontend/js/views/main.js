@@ -185,8 +185,8 @@
     if (!conn) p = {};
 
     if (run && p.total_ms) {
-      // v0.4.15: 이어받은 공정은 시작 시각을 모른다 — 경과는 '이어받은 뒤 …'
-      core.setText('sqTime', (p.adopted ? '이어받은 뒤 ' : '') + fmt.hms(p.elapsed_s) + ' / ' + fmt.hms((p.remaining_ms || 0) / 1000) +
+      // v0.4.15: 이어받은 공정은 시작 시각을 모른다 — 경과는 이어받은 뒤부터(v0.4.16 앞말을 짧게 — 1280 폭에서 두 줄로 넘었다)
+      core.setText('sqTime', (p.adopted ? '이어받음 +' : '') + fmt.hms(p.elapsed_s) + ' / ' + fmt.hms((p.remaining_ms || 0) / 1000) +
         ' / ' + (p.eta || fmt.DASH));
     } else if (p.estimate && p.estimate.total_ms) {
       core.setText('sqTime', '예상 ' + fmt.hms(p.estimate.total_ms / 1000));

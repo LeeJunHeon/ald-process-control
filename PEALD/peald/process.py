@@ -462,7 +462,7 @@ class ProcessRunner:
                 await push_log(why, "warn")
             else:
                 # ★ v0.4.15: 보내지도 못했다(막힌 이유 · 코드 쓰기 전 오류) — '결과 모름' 이 아니다
-                why = f"공정 시작 명령을 보내지 못했습니다 — {text}"
+                why = f"{START_NOT_SENT} — {text}"
                 await push_log(why, "err")
             return False, why
         detail = text
@@ -907,7 +907,9 @@ class ProcessRunner:
         # ★ v0.4.14: PLC 가 공정 중인데 이 PC 가 맡은 공정이 없다(이어받기 전) — 골라 둔 레시피를 실행 중 레시피로
         #   보이지 않는다. 이름은 '(이어받는 중)', 남은 시간은 내지 않는다
         foreign = running and not self.active_run and self._id_blocked()   # v0.4.15: 다른 장비 공정
-        adopting = running and not self.active_run and not self.busy and not foreign
+        # ★ v0.4.16: busy(시작 태스크가 아직 안 끝남) 대신 phase — 명령 1 응답을 못 받은 직후 약 0.2 s 동안 앞 공정
+        #   이름이 보이던 것
+        adopting = running and not self.active_run and self.phase == IDLE and not foreign
         out = {
             "running": running,
             "phase": self.phase,
@@ -1064,7 +1066,8 @@ ADOPT_READ_GAP_S = 0.5   # 그 사이 간격
 ADOPT_RETRY_S = 3.0      # PLC 가 공정 중인데 맡은 공정이 없으면 이만큼마다 이어받기를 다시 시도(server)
 ADOPT_NO_TABLE_NAME = "(PLC 레시피 — 표 모름)"
 ADOPTING_NAME = "(이어받는 중)"
-FOREIGN_NAME = "(다른 장비 공정 — 이어받지 않음)"
+FOREIGN_NAME = "(다른 장비 공정)"     # v0.4.16 줄임 — 빨간 띠가 이미 조작을 막았다고 말한다
+START_NOT_SENT = "공정 시작 명령을 보내지 못했습니다"
 B13_WAIT_S = 1.0        # 시퀀서 8 로 끝났을 때 레시피 표 오류(b13)가 공개되기를 기다리는 시간
 ABORT_GRACE_S = 1.0     # 결과를 못 받은 즉시 중단 뒤 이만큼 지나도 공정 중이면 중단이 닿지 않은 것
 

@@ -200,15 +200,16 @@ def url_host(host: str) -> str:
 
 
 def port_busy_text(host: str, port: int, why: str) -> str:
-    """bind_port 의 이유 → 운전자 문구. '다른 프로그램이 쓰고 있습니다'는 사용 중일 때만(v0.4.14)."""
-    if host_valid(host) and "gaierror" not in why and not why.startswith(BUSY_MARK):
-        return (f"설정 주소 {host}:{port} 로 서버를 열 수 없습니다 — {why}. 이 PC 에 없는 주소이거나(IPv6 가 없는 PC 의 ::1 등) "
-                f"쓸 수 없는 주소입니다. 설정 server.host 를 고치세요.")
+    """bind_port 의 이유 → 운전자 문구. '다른 프로그램이 쓰고 있습니다'는 사용 중일 때만(v0.4.14).
+    ★ v0.4.16: 권한 · 예약 포트(13 · 10013)를 먼저 본다 — POSIX 의 13 은 '사용 중'이 아니라 '이 PC 에 없는 주소'로 나왔다."""
     if host_valid(host) and "gaierror" not in why and _denied(why):
         why = why[len(BUSY_MARK):] if why.startswith(BUSY_MARK) else why
         return (f"설정 포트 {host}:{port} 를 열 수 없습니다 — 다른 프로그램이 쓰고 있거나, 또는 쓸 권한이 없거나 예약된 "
                 f"포트입니다(Windows: netsh int ipv4 show excludedportrange protocol=tcp). 쓰는 프로그램을 끄거나 "
                 f"설정 server.port 를 바꾸세요. ({why})")
+    if host_valid(host) and "gaierror" not in why and not why.startswith(BUSY_MARK):
+        return (f"설정 주소 {host}:{port} 로 서버를 열 수 없습니다 — {why}. 이 PC 에 없는 주소이거나(IPv6 가 없는 PC 의 ::1 등) "
+                f"쓸 수 없는 주소입니다. 설정 server.host 를 고치세요.")
     why = why[len(BUSY_MARK):] if why.startswith(BUSY_MARK) else why
     if not host_valid(host) or "gaierror" in why:
         return (f"설정 server.host {host!r} 로 서버를 열 수 없습니다 — 빈 값(= 127.0.0.1) · localhost · IP 주소만 "

@@ -512,7 +512,10 @@ async def _cmd_process_start(d, ws):
             return
 
     async def notify(msg, ok):
-        await push_notice(msg, "ok" if ok else "warn", ws)
+        # v0.4.16: 시작 명령을 보내지 못했으면 로그와 같게 err
+        from .process import START_NOT_SENT
+        lv = "ok" if ok else ("err" if str(msg).startswith(START_NOT_SENT) else "warn")
+        await push_notice(msg, lv, ws)
         await push_state()
 
     ok, msg = state.runner.begin(push_log, push_notice, notify)

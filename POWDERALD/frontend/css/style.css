@@ -608,3 +608,7 @@ header {
 /* 데이터 로그 목록 — 시각은 줄을 바꾸지 않고, 결과 칩은 남은 폭 안에서 말줄임(전체 글은 title) */
 .dl-item .a .mono { flex: 0 0 auto; white-space: nowrap; }
 .dl-item .a .chip { display: block; flex: 0 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+/* ===================== v0.4.16 ===================== */
+/* 공정 진행 칸 값 — 낱말 중간에서 끊지 않는다('(다른 장비 공정)' 이 끊겨 칩을 다음 줄로 밀던 것) */
+.kv .v { word-break: keep-all; }

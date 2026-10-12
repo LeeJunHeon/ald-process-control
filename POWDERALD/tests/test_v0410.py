@@ -562,7 +562,9 @@ async def test_b1_alarm_tab_unknown_when_plc_down(rig):
         c0 = await pg.evaluate("() => core.bind('alarmCount').textContent")
         assert c0.startswith("중대 "), c0                  # 처음 열 때 '—' 가 아니다
         rig.plc.stop()
-        await pg.wait_for_function("() => core.bind('alarmCount').textContent === '알 수 없음'", timeout=15000)
+        # v0.4.16: 요소가 아직 없으면 거짓(바로 TypeError 로 끝나지 않게)
+        await pg.wait_for_function("() => { const e = core.bind('alarmCount'); return !!e && e.textContent === '알 수 없음'; }",
+                                   timeout=15000)
         txt = await pg.evaluate("() => core.bind('alarmTbl').textContent")
         assert "알 수 없습니다" in txt and "없습니다" in txt and "현재 알람이 없습니다" not in txt
     finally:
@@ -578,8 +580,9 @@ async def test_b2_rename_without_reply_unlocks_after_5s(rig, monkeypatch):
     pw, b, pg = await _page(rig.port)
     try:
         await pg.evaluate("() => { core.setTab('recipe'); app.send('recipe_load', {name: '답없음'}); }")
-        await pg.wait_for_function("() => document.querySelector('[data-rcf=\"name\"]').value === '답없음'",
-                                   timeout=5000)
+        # v0.4.16: 편집기가 그려지기 전이면 요소가 없다 — 거짓을 돌려 기다린다(예전: null.value 로 TypeError, 가끔 2.7 s 만에 실패)
+        await pg.wait_for_function("() => { const e = document.querySelector('[data-rcf=\"name\"]'); "
+                                   "return !!e && e.value === '답없음'; }", timeout=5000)
         await pg.click("[data-rcbtn='rename']")
         await pg.wait_for_function("() => !!document.getElementById('rcAskName')", timeout=3000)
         await pg.fill("#rcAskName", "새이름")
@@ -588,7 +591,8 @@ async def test_b2_rename_without_reply_unlocks_after_5s(rig, monkeypatch):
         await asyncio.sleep(0.5)
         locked = await pg.evaluate("() => ['rcSave', 'rcRename', 'rcDelete'].map(k => core.bind(k).disabled)")
         assert locked == [True, True, True], locked
-        await pg.wait_for_function("() => core.bind('rcSaveMsg').textContent.startsWith('답 없음')", timeout=7000)
+        await pg.wait_for_function("() => { const e = core.bind('rcSaveMsg'); "
+                                   "return !!e && e.textContent.startsWith('답 없음'); }", timeout=7000)
         free = await pg.evaluate("() => ['rcSave', 'rcRename', 'rcDelete'].map(k => core.bind(k).disabled)")
         name = await pg.evaluate("() => document.querySelector('[data-rcf=\"name\"]').value")
         assert free == [False, False, False] and name == "답없음", (free, name)

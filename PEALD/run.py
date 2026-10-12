@@ -81,9 +81,10 @@ def selftest(config_path: str = "") -> int:
         import uvicorn
         app = create_app(config_path, single_instance=False, start_io=False)
         host = "127.0.0.1"
-        port = window.find_free_port(host, DEV.DEFAULT_PORT + 50) or (DEV.DEFAULT_PORT + 50)
         from peald.server import uvicorn_config
-        socks = window.bind_sockets(host, port)            # 창 · headless 와 같게 먼저 묶어 넘긴다
+        # ★ v0.4.16: 운영체제가 고른 빈 포트(0)를 바로 묶는다 — 기본 포트 + 50 이 쓰이고 있으면 실패할 수 있었다
+        socks = window.bind_sockets(host, 0)               # 창 · headless 와 같게 먼저 묶어 넘긴다
+        port = socks[0].getsockname()[1]
         server = uvicorn.Server(uvicorn_config(app, host, port))
         th = threading.Thread(target=server.run, kwargs={"sockets": socks}, daemon=True)
         th.start()
