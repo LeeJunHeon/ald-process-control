@@ -40,8 +40,8 @@
 
   var PAD_L = 52, PAD_R = 196, PAD_T = 10, PAD_B = 30;
   var ROW_H = 13, ROW_MIN = 12, LEAD_W = 14;     // 줄 간격은 12 px 아래로 줄이지 않는다(글자 10 px)
-  var BAND_MIN_MS = 1000;
-  var OVER_W = 120;                                // 띠 넘침 안내 자리(띠 오른쪽 끝에서) — 플롯 오른쪽 여백(196) 안                          // 띠 글자만 다시 쓰는 것은 초당 1 번까지(v0.4.13)
+  var BAND_MIN_MS = 1000;                          // 띠 글자만 다시 쓰는 것은 초당 1 번까지(v0.4.13)
+  var OVER_W = 120;                                // 띠 넘침 안내 자리(띠 오른쪽 끝에서) — 플롯 오른쪽 여백(196) 안
   var PALETTE_N = 12;
 
   function cssVar(n) { return getComputedStyle(d.documentElement).getPropertyValue(n).trim(); }

@@ -78,8 +78,10 @@ def test_b3_band_rects_snap_to_device_pixels():
       global.devicePixelRatio = 1.25;
       const xs = [];
       ctx.fillRect = (x, y, w, h) => { if (ctx.globalAlpha < 1 && ctx.globalAlpha > 0.15) xs.push([x, w]); };
-      const pts = []; for (let i = 0; i < 3600 * 5; i++) { const v = i / 1800 + (i % 7) * 0.03; pts.push([i * 200 + 37, v, v, v]); }
-      c.set({ series: [{ label: 'x', unit: '', color: '#888', pts }], x0: 0, x1: 3600 * 1000, gap: 5000 });
+      // v0.4.15: x0 = 0 이면 절대 열이 플롯 원점과 맞아 반올림하지 않은 사각형도 기기 화소에 놓였다 — 원점을 옮긴다
+      const X0 = 1234;
+      const pts = []; for (let i = 0; i < 3600 * 5; i++) { const v = i / 1800 + (i % 7) * 0.03; pts.push([X0 + i * 200 + 37, v, v, v]); }
+      c.set({ series: [{ label: 'x', unit: '', color: '#888', pts }], x0: X0, x1: X0 + 3600 * 1000, gap: 5000 });
       console.log(JSON.stringify({ n: xs.length, bad: xs.filter(([x, w]) => Math.abs(x * 1.25 - Math.round(x * 1.25)) > 1e-6
                                                              || Math.abs(w - 0.8) > 1e-9).length }));
     ''')

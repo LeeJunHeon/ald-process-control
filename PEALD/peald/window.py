@@ -138,12 +138,22 @@ def port_probe(host: str, port: int) -> str:
         return f"{type(e).__name__}: {e}"
 
 
-BUSY_ERRNOS = {errno.EADDRINUSE, errno.EACCES, 10048, 10013}   # 사용 중(Windows WSAEADDRINUSE · WSAEACCES 포함)
+# ★ v0.4.15: '사용 중'으로 보고 다시 시도하는 것 — POSIX 는 EADDRINUSE 만(EACCES 는 권한 없는 포트 — 80 등 — 라
+#   기다려도 안 바뀐다), Windows 는 10048(WSAEADDRINUSE) · 10013(WSAEACCES — 다른 프로그램의 독점 묶기 · 예약된 포트)
 BUSY_MARK = "사용 중 — "
+WIN_BUSY = {10048, 10013}
 
 
 def _busy(e: OSError) -> bool:
-    return getattr(e, "winerror", None) in BUSY_ERRNOS or e.errno in BUSY_ERRNOS
+    win = getattr(e, "winerror", None)
+    if win is not None:
+        return win in WIN_BUSY
+    return e.errno == errno.EADDRINUSE
+
+
+def _denied(why: str) -> bool:
+    """권한 · 예약 포트일 수 있는 오류(13 · 10013)인가 — 문구에 덧붙인다."""
+    return "WinError 10013" in why or "Errno 13]" in why
 
 
 def bind_port(host: str, port: int, total_s: float = None, step_s: float = 0.5):
@@ -194,6 +204,11 @@ def port_busy_text(host: str, port: int, why: str) -> str:
     if host_valid(host) and "gaierror" not in why and not why.startswith(BUSY_MARK):
         return (f"설정 주소 {host}:{port} 로 서버를 열 수 없습니다 — {why}. 이 PC 에 없는 주소이거나(IPv6 가 없는 PC 의 ::1 등) "
                 f"쓸 수 없는 주소입니다. 설정 server.host 를 고치세요.")
+    if host_valid(host) and "gaierror" not in why and _denied(why):
+        why = why[len(BUSY_MARK):] if why.startswith(BUSY_MARK) else why
+        return (f"설정 포트 {host}:{port} 를 열 수 없습니다 — 다른 프로그램이 쓰고 있거나, 또는 쓸 권한이 없거나 예약된 "
+                f"포트입니다(Windows: netsh int ipv4 show excludedportrange protocol=tcp). 쓰는 프로그램을 끄거나 "
+                f"설정 server.port 를 바꾸세요. ({why})")
     why = why[len(BUSY_MARK):] if why.startswith(BUSY_MARK) else why
     if not host_valid(host) or "gaierror" in why:
         return (f"설정 server.host {host!r} 로 서버를 열 수 없습니다 — 빈 값(= 127.0.0.1) · localhost · IP 주소만 "
@@ -417,7 +432,9 @@ def run(app, host: str, port: int, side: str = None):
             if not server.started:
                 # ★ v0.4.14: uvicorn 0.46 은 lifespan 시작이 실패하면 예외 없이 돌아온다 — started 로 안다(원인은
                 #   server.lifespan 이 로그에 썼다). 창은 20 s 를 기다리지 않고 바로 이유를 띄운다
-                _SERVER_ERROR = "내부 서버가 시작 중 실패했습니다(원인은 프로그램 로그)"
+                from . import server as server_mod
+                _SERVER_ERROR = ("내부 서버가 시작 중 실패했습니다 — "
+                                 + (server_mod.START_ERROR or "원인은 프로그램 로그"))
                 logger.write("err", _SERVER_ERROR)
         except BaseException as e:  # noqa: BLE001 — uvicorn 은 시작 실패를 SystemExit 로 낸다
             _SERVER_ERROR = f"{type(e).__name__}: {e}"

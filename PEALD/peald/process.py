@@ -455,9 +455,15 @@ class ProcessRunner:
                            f"예상 {_hms(R.total_ms(st.cfg, rec))})", "ok")
             return True, "공정을 시작했습니다"
         if result is None:
-            # ★ v0.4.14: 응답을 못 받았다 — 거절이 아니다. PLC 가 시작했으면 이어받기 루프가 몇 초 안에 이어 간다
-            why = f"시작 결과 모름 — PLC 상태로 확인합니다 ({text})"
-            await push_log(why, "warn")
+            if "응답 없음" in text or "받았을 수" in text:
+                # ★ v0.4.14: 보냈지만 응답을 못 받았다 — 거절이 아니다. PLC 가 시작했으면 이어받기 루프가 몇 초 안에
+                #   이어 간다(즉시 중단 명령과 같은 판단 — commands.py)
+                why = f"시작 결과 모름 — PLC 상태로 확인합니다 ({text})"
+                await push_log(why, "warn")
+            else:
+                # ★ v0.4.15: 보내지도 못했다(막힌 이유 · 코드 쓰기 전 오류) — '결과 모름' 이 아니다
+                why = f"공정 시작 명령을 보내지 못했습니다 — {text}"
+                await push_log(why, "err")
             return False, why
         detail = text
         if result == A.RESULT_INTERLOCK:
@@ -550,6 +556,11 @@ class ProcessRunner:
         s = link.status
         self._track_heaters(s)
         running = s[A.D_STATE] in RUNNING_STATES
+        if not self.active_run and self._b13_wait is None and self._id_blocked():
+            # ★ v0.4.15: 장비 ID 가 막힌 연결(다른 장비의 PLC)이고 이 PC 가 맡은 공정이 없다 — 그 공정의 끝을 이 장비
+            #   이벤트 로그에 적거나(골라 둔 레시피 이름으로) RF 감시를 하지 않는다. '공정 중을 봤다'도 세우지 않는다
+            self._was_running = False
+            return
         if (self._was_running or self.active_run) and not A.bit(s[A.D_ALARM0], A.ALM0_RECIPE):
             self._b13_cleared = True
         if self._b13_wait is not None:
@@ -895,15 +906,20 @@ class ProcessRunner:
         step_ms = A.dword(s[A.D_SEQ_STEP_MS], s[A.D_SEQ_STEP_MS + 1])
         # ★ v0.4.14: PLC 가 공정 중인데 이 PC 가 맡은 공정이 없다(이어받기 전) — 골라 둔 레시피를 실행 중 레시피로
         #   보이지 않는다. 이름은 '(이어받는 중)', 남은 시간은 내지 않는다
-        adopting = running and not self.active_run and not self.busy
+        foreign = running and not self.active_run and self._id_blocked()   # v0.4.15: 다른 장비 공정
+        adopting = running and not self.active_run and not self.busy and not foreign
         out = {
             "running": running,
             "phase": self.phase,
             "message": self.message,
             # 공정 중이면 시작 때 스냅샷, 아니면 지금 고른 레시피
-            "recipe": ADOPTING_NAME if adopting else (self.active_name if running else self.recipe_name),
-            "number": None if adopting else ((self.active_table if running else self.table) or {}).get("number"),
+            "recipe": (FOREIGN_NAME if foreign else ADOPTING_NAME if adopting
+                       else (self.active_name if running else self.recipe_name)),
+            "number": None if (adopting or foreign) else ((self.active_table if running else self.table) or {}).get("number"),
             "adopting": adopting,
+            "foreign": foreign,
+            # v0.4.15: 이어받은 공정 — 경과는 이어받은 뒤부터(화면은 '이어받은 뒤 …')
+            "adopted": bool(running and self.active_run and self._adopted),
             "block": s[A.D_SEQ_BLOCK],
             "step": s[A.D_SEQ_STEP],
             "cycle": cycle,
@@ -923,7 +939,7 @@ class ProcessRunner:
             out["blocking"] = [c["label"] for c in blocking]
             if self.recipe:
                 out["estimate"] = self.estimate()
-        rec = None if adopting else self.active_recipe
+        rec = None if (adopting or foreign) else self.active_recipe
         if rec and running:
             pos = {"block": s[A.D_SEQ_BLOCK], "step": s[A.D_SEQ_STEP], "cycle": cycle,
                    "group_pass": s[A.D_SEQ_GROUP_PASS], "step_elapsed_ms": step_ms,
@@ -950,6 +966,11 @@ class ProcessRunner:
         return out
 
     # ===================== PLC 가 이미 돌고 있을 때 =====================
+    def _id_blocked(self) -> bool:
+        """장비 ID 가 맞지 않아 막힌 연결(다른 장비의 PLC)인가."""
+        link = self.state.link
+        return bool(link and hasattr(link, "id_block_text") and link.id_block_text())
+
     def adopt_wanted(self) -> bool:
         """이어받기를 시도할 때인가 — PLC 가 공정 중인데 이 PC 가 맡은 공정이 없고(active_run 거짓),
         이 PC 의 시작 절차 · 끝 처리(중단 결과 · b13 대기 · 미뤄 둔 끝) 중이 아니다.
@@ -959,7 +980,7 @@ class ProcessRunner:
             return False
         # ★ v0.4.14: 장비 ID 가 맞지 않아 막힌 연결이면 이어받지 않는다(다른 장비 공정의 데이터 로그 · 끝 판정이
         #   이 장비 폴더에 생겼다)
-        if hasattr(link, "id_block_text") and link.id_block_text():
+        if self._id_blocked():
             return False
         return not (self.active_run or self.busy or self._abort_pending
                     or self._b13_wait is not None or self._end_deferred is not None)
@@ -1043,6 +1064,7 @@ ADOPT_READ_GAP_S = 0.5   # 그 사이 간격
 ADOPT_RETRY_S = 3.0      # PLC 가 공정 중인데 맡은 공정이 없으면 이만큼마다 이어받기를 다시 시도(server)
 ADOPT_NO_TABLE_NAME = "(PLC 레시피 — 표 모름)"
 ADOPTING_NAME = "(이어받는 중)"
+FOREIGN_NAME = "(다른 장비 공정 — 이어받지 않음)"
 B13_WAIT_S = 1.0        # 시퀀서 8 로 끝났을 때 레시피 표 오류(b13)가 공개되기를 기다리는 시간
 ABORT_GRACE_S = 1.0     # 결과를 못 받은 즉시 중단 뒤 이만큼 지나도 공정 중이면 중단이 닿지 않은 것
 

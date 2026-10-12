@@ -51,6 +51,9 @@ log = logging.getLogger(__name__)
 WS_MAX_SIZE = 64 * 1024
 
 
+START_ERROR = ""           # lifespan 시작에서 난 예외(줄인 글) — 창의 '서버 시작 실패' 이유(v0.4.15)
+
+
 def uvicorn_config(app, host: str, port: int):
     """창·headless·자체 점검이 같은 서버 설정을 쓴다.
     log_config=None: uvicorn 자체 로깅 dictConfig 를 타지 않는다(창 전용 exe 에서 죽는다)."""
@@ -177,7 +180,9 @@ def create_app(config_path: str = "", single_instance: bool = True,
                 yield
         except Exception as e:  # noqa: BLE001
             if not started:
-                logger.write("err", f"서버 시작 실패 — {type(e).__name__}: {logger.clean(e, 300)}")
+                global START_ERROR
+                START_ERROR = f"{type(e).__name__}: {logger.clean(e, 300)}"     # v0.4.15: 창에도 보인다
+                logger.write("err", f"서버 시작 실패 — {START_ERROR}")
             raise
 
     app = FastAPI(lifespan=lifespan)

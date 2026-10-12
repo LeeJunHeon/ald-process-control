@@ -99,17 +99,19 @@ def test_a3_band_text_redrawn_at_most_once_per_second():
       const x1 = 3600 * 1000, x0 = 0;
       c2.set({ series: S(), x0, x1, gap: 5000, tol: 1e9 });
       const a = draws, t0 = c2.debug().rows[0].text;
+      // v0.4.15: 띠만 다시 쓸 때는 clearRect 가 두 번(띠 · 넘침 안내 자리) — 전체 지우기와 띠 지우기를 따로 센다
+      const G = c2.debug().geom, full = [], band = [];
+      ctx.clearRect = (x, y, w, h) => { if (x === 0 && y === 0) full.push(T); else if (x === G.x1 + 1) band.push(T); };
       pts[pts.length - 1] = [x1, 50.08, 50.08, 50.08];   // 화소는 그대로(0.08 / 100 × 180 px) · 글자는 50.1
       T = 500; c2.set({ series: S(), x0, x1, gap: 5000, tol: 1e9 });
-      const b = draws, t1 = c2.debug().rows[0].text;      // 1 s 안 — 아직
+      const t1 = c2.debug().rows[0].text;                 // 1 s 안 — 아직
       T = 1200; c2.set({ series: S(), x0, x1, gap: 5000, tol: 1e9 });
-      const cc = draws, t2 = c2.debug().rows[0].text;     // 띠만 다시
-      T = 2500; c2.set({ series: S(), x0, x1, gap: 5000, tol: 1e9 });
-      const d = draws;                                      // 같은 글자 — 그대로
-      console.log(JSON.stringify({ a, b, cc, d, t0, t1, t2 }));
+      const t2 = c2.debug().rows[0].text;                 // 띠만 다시
+      T = 2500; c2.set({ series: S(), x0, x1, gap: 5000, tol: 1e9 });   // 같은 글자 — 그대로
+      console.log(JSON.stringify({ a, full, band, t0, t1, t2 }));
     ''')
-    assert out["a"] == 1 and out["b"] == 1, out
-    assert out["cc"] == 2 and out["d"] == 2, out
+    assert out["a"] == 1, out
+    assert out["band"] == [1200] and out["full"] == [], out
     assert out["t0"].startswith("50.0") and out["t1"].startswith("50.0") and out["t2"].startswith("50.1"), out
 
 
@@ -128,7 +130,9 @@ def test_a3_band_only_redraw_keeps_the_plot():
       T = 1500; c2.set({ series: S(), x0: 0, x1: 3600 * 1000, gap: 5000, tol: 1e9 });
       console.log(JSON.stringify({ rects, x1: G.x1 }));
     ''')
-    assert len(out["rects"]) == 1 and out["rects"][0][0] > out["x1"], out
+    # v0.4.15: 띠 · 넘침 안내 자리 두 번 지울 수 있다 — 첫 번째는 띠(x1 + 1), 어느 것도 플롯(x ≤ x1)은 건드리지 않는다
+    assert out["rects"] and out["rects"][0][0] == out["x1"] + 1, out
+    assert all(r[0] > out["x1"] for r in out["rects"]), out
 
 
 # ===================== B1 이어받기 다시 시도 =====================
