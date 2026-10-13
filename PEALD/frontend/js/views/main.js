@@ -94,9 +94,9 @@
     });
     core.html(tbl, html + '</tbody>');
     var miss = heaters.filter(function (h) { return h.enabled && h.max_c == null; });
-    core.setText('tcNote', miss.length
-      ? '⚠ ' + T('s.limitUnset') + ' ' + miss.length + ' ch — PLC 한계에 0 을 써서 막습니다'
-      : '');
+    core.setText('tcNote', miss.length ? '⚠ ' + T('s.limitUnset') + ' ' + miss.length + ' ch' : '');
+    var tn = core.bind('tcNote');            // v0.5.3: 설명 문장은 툴팁(한글)
+    if (tn) tn.title = miss.length ? 'PLC 한계에 0 을 써서 막습니다' : '';
   }
 
   /* ---------- MFC 표 ---------- */
@@ -307,7 +307,7 @@
       // bad:true 인 비트는 '켜져 있으면 이상'이다(동시 요청·안전 정지 요구).
       var lvl = k.bad ? (on ? 'stop' : '') : (on ? 'ok' : 'warn');
       if (k.bad && !on) return;      // 이상이 없으면 굳이 보여 주지 않는다
-      out.push(sti(k.tag, lvl, k.why));
+      out.push({ name: k.tag, lvl: lvl, why: k.why });
     });
     // 위 kv 줄에서 이미 보여 준 입력은 칩으로 또 내지 않는다(패널이 넘친다).
     var SHOWN = { 'IVE-O': 1, 'IVE-C': 1, 'PMP-RUN': 1, 'ATM': 1 };
@@ -317,8 +317,9 @@
     });
     // 입력 워드1(RF·O3 관련)은 아래 장비 전용 패널에서 이미 보여 준다 —
     // 같은 칩을 두 번 그리면 인터락 패널이 넘친다.
-    core.html(box, out.join(''));
+    core.html(box, stiList(out));
     snapIlks(box);
+    keepProblems(box);
   }
 
   /** 인터락 목록 칸 높이를 줄 높이의 배수로 — 낮은 화면(1280×900 등)에서 마지막 줄이 반만 보이지 않게
@@ -327,7 +328,7 @@
     var chip = box.querySelector('.sti');
     if (!chip) return;
     box.style.maxHeight = '';
-    var gap = 3, rowH = chip.offsetHeight + gap, h = box.clientHeight;
+    var gap = 0, rowH = chip.offsetHeight + gap, h = box.clientHeight;     // v0.5.3: 줄 사이 0 · 줄 높이 18
     if (!rowH || !h || box.scrollHeight <= h + 1) return;
     box.style.maxHeight = Math.max(rowH - gap, Math.floor((h + gap) / rowH) * rowH - gap) + 'px';
   }
@@ -343,7 +344,32 @@
     if (k.ok_when === false) lvl = on ? 'stop' : '';
     else if (k.ok_when === true) lvl = on ? 'ok' : 'stop';
     else lvl = on ? 'ok' : '';
-    return sti(k.name, lvl, why);
+    return { name: k.name, lvl: lvl, why: why };
+  }
+
+  /** ★ v0.5.3: 상태 목록은 알람(빨강) → 경고(노랑) → 그 밖 순(T.stiOrder) — 문제 항목이 위로 */
+  function stiList(items) {
+    return T.stiOrder(items).map(function (i) { return sti(i.name, i.lvl, i.why); }).join('');
+  }
+
+  /** ★ v0.5.3: 알람 · 경고 항목은 줄 수 제한(max-height)과 상관없이 늘 보이게 — 맨 위에 모여 있으니
+   *  그 줄 수만큼은 상자 높이를 늘린다(그 밖 항목은 스크롤) */
+  var STI_ROW = 18;
+  function keepProblems(box) {
+    if (!box || !w.getComputedStyle) return;
+    var probs = box.querySelectorAll('.sti.stop, .sti.warn');
+    if (!probs.length) return;
+    var cs = w.getComputedStyle(box);
+    var cols = String(cs.gridTemplateColumns || '').split(' ').filter(Boolean).length || 1;
+    var n = 0, wide = false;
+    Array.prototype.forEach.call(probs, function (p) {
+      var sp = p.classList.contains('w2') ? Math.min(2, cols) : 1;
+      n += sp;
+      if (sp > 1) wide = true;
+    });
+    var need = (Math.ceil(n / cols) + (wide && cols > 2 ? 1 : 0)) * STI_ROW;
+    var cur = parseFloat(box.style.maxHeight) || parseFloat(cs.maxHeight);
+    if (isFinite(cur) && need > cur) box.style.maxHeight = need + 'px';
   }
 
   /** 상태 점 목록 한 줄 — 이름 + 점. lvl: ok(초록 점) · warn · stop(점과 글자) · ''(회색 점) */
@@ -402,17 +428,19 @@
     if (!chips) return;
     if (!conn) { core.html(chips, ''); return; }
     var str = s.structure || {};
-    var out = [sti('RF ' + (e.rf_on ? T('s.on') : T('s.off')), e.rf_on ? 'ok' : '')];
+    var out = [{ name: 'RF ' + (e.rf_on ? T('s.on') : T('s.off')), lvl: e.rf_on ? 'ok' : '' }];
     (str.interlocks || []).forEach(function (k) {
       if (k.tag !== 'RF Permit') return;
       var ok = core.bit(t.interlock, k.bit);
-      out.push(sti(k.tag, ok ? 'ok' : 'warn', k.why));
+      out.push({ name: k.tag, lvl: ok ? 'ok' : 'warn', why: k.why });
     });
     // 알람 성격 입력은 정상 회색·알람 빨강 (Powder O3 알람 칩과 같은 규칙)
     (str.inputs1 || []).forEach(function (k) {
       out.push(inputChip(t.inputs1, k, 'Input1 b' + k.bit));
     });
-    core.html(chips, out.join(''));
+    chips.style.maxHeight = '';
+    core.html(chips, stiList(out));
+    keepProblems(chips);
   }
 
   /* ---------- 잠금 ---------- */

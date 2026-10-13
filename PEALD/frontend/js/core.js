@@ -77,6 +77,7 @@
       v.classList.toggle('on', v.id === 'view-' + name);
     });
     // 탭을 처음 열 때는 DOM 크기가 0이라 캔버스 계산이 틀어진다 → 전환 직후 한 번 더 그린다.
+    if (name === 'main') fit();          // v0.5.3: 숨어 있을 때 못 잰 배관도 줄 높이를 다시 맞춘다
     var v = VIEWS[name];
     if (v && lastState) { try { v.render(lastState); } catch (e) { console.error(e); } }
   }
@@ -536,11 +537,31 @@
     var hh = Math.max(CANVAS_H, Math.min(h0 / s, CANVAS_H * 1.6));
     app.style.height = hh + 'px';
     app.style.zoom = s;
+    fitMainRows(app, hh);
     if (Math.abs(s - lastScale) > 0.001) {
       lastScale = s;
       if (lastState && VIEWS.trend) {
         try { VIEWS.trend.render(lastState); } catch (e) { /* 탭 미표시 */ }
       }
+    }
+  }
+
+  /** ★ v0.5.3: 창이 폭에 비해 길어(768 폭 등) 캔버스가 기본 높이(CANVAS_H)보다 길면, 늘어난 높이는 배관도 줄이
+   *  아니라 아래 줄(히터 · MFC 표)이 받는다 — 배관도 칸 아래가 비지 않게. 배관도 줄은 기본 높이일 때의 높이로 둔다.
+   *  기본 높이(1280×900 등)에서는 아무것도 바꾸지 않는다. */
+  function fitMainRows(app, hh) {
+    var main = d.querySelector('#view-main > .row.grow');
+    var bottom = d.querySelector('#view-main > .row:not(.grow)');
+    if (!main || !bottom) return;
+    main.style.maxHeight = '';
+    bottom.style.flexGrow = '';
+    if (hh <= CANVAS_H + 1) return;
+    app.style.height = CANVAS_H + 'px';          // 기본 높이일 때의 배관도 줄 높이를 잰다
+    var h0 = main.offsetHeight;
+    app.style.height = hh + 'px';
+    if (h0 > 0) {
+      main.style.maxHeight = h0 + 'px';
+      bottom.style.flexGrow = '1';
     }
   }
 

@@ -759,10 +759,10 @@ header .chip.alarm { border-color: var(--stop-line); color: var(--stop); }
 /* A1: 인터락 목록 — 줄 높이를 글자에 맞춰 고정(눌려 겹치지 않게), 넘치면 상자 안 스크롤. 열은 3 열을 되찾는다.
    최소 4 줄은 보이게 — 장비 전용 칸(RF · O3)의 점 목록은 두 줄까지(넘치면 스크롤) */
 #view-main .ilks.stl { grid-template-columns: repeat(auto-fill, minmax(96px, 1fr)); grid-auto-rows: 18px;
-  min-height: 75px; overflow-y: auto; align-content: start; }
+  min-height: 72px; overflow-y: auto; align-content: start; row-gap: 0; }
 #view-main .ilks.stl .sti, #view-main [data-bind="devPanelBody"] .stl .sti { line-height: 18px; }
 #view-main [data-bind="devPanelBody"] .stl { grid-template-columns: repeat(auto-fill, minmax(96px, 1fr));
-  grid-auto-rows: 18px; max-height: 37px; overflow-y: auto; }
+  grid-auto-rows: 18px; max-height: 36px; overflow-y: auto; row-gap: 0; }
 /* A3: 그래프 범례는 두 줄까지(넘치면 '+N') */
 .chartpanel .panel-head { height: auto; min-height: 30px; padding-top: 2px; padding-bottom: 2px; }
 .legend-inline { max-height: 30px; line-height: 15px; align-content: center; }

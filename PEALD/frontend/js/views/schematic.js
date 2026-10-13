@@ -158,8 +158,9 @@
 
   /** 나비 밸브. 열림은 초록 채움, 닫힘은 회색 외곽선, 모름은 점선(CSS #schemSvg.unknown).
    *  side 'a' = 가로 배관(이름은 위) · 'r' = 세로 배관(이름은 오른쪽, 아이콘도 세로로).
-   *  fp 를 주면 조작 가능한 요소로(기본 'valve', 벤트는 'vent', 조작 없는 밸브는 null). */
-  function valve(tag, cx, cy, side, fp) {
+   *  fp 를 주면 조작 가능한 요소로(기본 'valve', 벤트는 'vent', 조작 없는 밸브는 null).
+   *  ★ v0.5.3: note 를 주면 이름 바로 뒤 같은 줄에 흐린 글자로(예: 'PV-B (PLC Auto)') — 어느 밸브 것인지 분명하게 */
+  function valve(tag, cx, cy, side, fp, note) {
     var g = add(el('g', {}));
     var dd = side === 'r'
       ? 'M' + (cx - VH) + ',' + (cy - VW) + ' L' + cx + ',' + cy + ' L' + (cx + VH) + ',' + (cy - VW) + ' Z ' +
@@ -175,10 +176,19 @@
     });
     t.textContent = tag;
     g.appendChild(t);
+    var nw = 0;
+    if (note && side === 'r') {
+      var nx = a.x + Math.ceil(textW(tag)) + 4;
+      var nt = el('text', { x: nx, y: a.y, 'font-size': FS, 'text-anchor': 'start', 'font-weight': 400,
+                            fill: 'var(--ink-faint)', 'font-family': 'var(--font-sans)', 'data-vnote': tag });
+      nt.textContent = '(' + note + ')';
+      g.appendChild(nt);
+      nw = 4 + Math.ceil(textW(nt.textContent));
+    }
     // ★ v0.5.2(B6): 누르기 영역은 아이콘 + 이름 글자까지
     if (fp !== null) {
       var tw = Math.ceil(textW(tag));
-      if (side === 'r') hmi(fp || 'valve', tag, cx - 9, cy - 9, 9 + VH + 5 + tw + 3, 18, tag);
+      if (side === 'r') hmi(fp || 'valve', tag, cx - 9, cy - 9, 9 + VH + 5 + tw + nw + 3, 18, tag);
       else {
         var hw = Math.max(9, Math.ceil(tw / 2) + 2);
         hmi(fp || 'valve', tag, cx - hw, cy - VH - 5 - 15, 2 * hw, 15 + 5 + VH + 9, tag);
@@ -360,8 +370,9 @@
     grp = 1;
     title(G, 288, T('eq.reactant'));
     mfcBox(R_Y1 - MFC_H / 2, 3, 'Reactant Purge');
-    // ★ v0.5.2(B9): H2O 캐니스터는 다른 캐니스터와 같은 80×56
-    vessel(MFC_X, 368, CAN_W, CAN_H, ['H2O', 'Canister R'], 0, T('eq.h2o'));
+    // ★ v0.5.2(B9): H2O 캐니스터는 다른 캐니스터와 같은 80×56. v0.5.3: 상자 안은 'H2O' 한 줄(가열 채널이 없어 온도 없음) —
+    //   전체 이름('H2O Canister R')은 툴팁
+    vessel(MFC_X, 368, CAN_W, CAN_H, 'H2O', 0, T('eq.h2o'));
     mfcBox(R_Y3 - MFC_H / 2, 4, 'O2');
 
     [[R_Y1, 'PV-R1', MFC_X + MFC_W], [R_Y2, 'PV-R2', MFC_X + CAN_W], [R_Y3, 'PV-R3', MFC_X + MFC_W]].forEach(function (r) {

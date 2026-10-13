@@ -129,7 +129,7 @@ def test_b2_b3_o3_generator_dot_and_o2_supply():
         box: box && [+box.a.x, +box.a.y, +box.a.width, +box.a.height] }));
     ''')
     if not DEV.HAS_O3:
-        assert not out["has"] and out["o2"] is None
+        assert not out["has"] and out.get("o2") is None          # v0.5.3: 없는 키는 JSON 에 안 실린다(KeyError 고침)
         return
     # 점은 제목 줄이 아니라 값 줄 — 값 바로 왼쪽
     assert abs(out["dot"][1] - (out["val"][1] - 4)) <= 1 and out["dot"][1] > out["name"][1] + 10, out
@@ -206,4 +206,4 @@ def test_b4_b5_b8_b9_b11_details():
 
 def test_version_052():
     from peald import version
-    assert version.APP_VERSION == "0.5.2"
+    assert tuple(int(x) for x in version.APP_VERSION.split(".")) >= (0, 5, 2)   # v0.5.3: 버전이 오를 때 깨지지 않게

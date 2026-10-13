@@ -121,6 +121,13 @@
     });
     return w * (px || 12) * 1.05;
   };
+  /** ★ v0.5.3: 상태 목록 순서 — 알람(stop) → 경고(warn) → 그 밖, 같은 수준 안에서는 원래 순서 */
+  T.stiRank = function (lvl) { return lvl === 'stop' ? 0 : lvl === 'warn' ? 1 : 2; };
+  T.stiOrder = function (items) {
+    return (items || []).map(function (it, i) { return [it, i]; })
+      .sort(function (a, b) { return (T.stiRank(a[0].lvl) - T.stiRank(b[0].lvl)) || (a[1] - b[1]); })
+      .map(function (x) { return x[0]; });
+  };
   T.STI_COL = 96;          // 상태 점 목록 한 열의 최소 폭(px) — style.css 의 minmax(96px, 1fr) 와 같게
   T.stiSpan = function (name) {           // 점(7) + 사이(5) + 이름이 한 열을 넘으면 두 열
     return T.textPx(name, 12) + 12 > T.STI_COL ? 2 : 1;
