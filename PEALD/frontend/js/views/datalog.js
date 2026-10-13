@@ -179,7 +179,7 @@
         t.innerHTML = '<thead><tr>' + (js.head || []).map(function (h) {
           return '<th>' + core.esc(h) + '</th>';
         }).join('') + '</tr></thead><tbody>' + (js.rows || []).map(function (r) {
-          return '<tr>' + r.map(function (c) { return '<td>' + core.esc(c) + '</td>'; }).join('') + '</tr>';
+          return '<tr>' + r.map(function (c) { return '<td>' + core.esc(T.oldValue(c)) + '</td>'; }).join('') + '</tr>';   // v0.5.1(D6)
         }).join('') + '</tbody>';
         core.setText('dlPage', (js.total ? (js.offset + 1) + '~' + Math.min(js.total, js.offset + 200) : 0) +
           ' / ' + (js.total || 0) + ' rows');

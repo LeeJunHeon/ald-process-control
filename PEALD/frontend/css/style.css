@@ -68,7 +68,7 @@ header {
 .tab {
   padding: 0 16px; border: none; border-bottom: 3px solid transparent;
   background: transparent; color: var(--ink-dim);
-  font-size: var(--fs-lg); font-weight: 600; cursor: pointer;
+  font-size: var(--fs-lg); font-weight: 700; cursor: pointer;
 }
 .tab:hover { color: var(--ink); }
 .tab.on { color: var(--ink); border-bottom-color: var(--accent); }
@@ -76,7 +76,7 @@ header {
   margin-left: auto; align-self: center;
   font-size: var(--fs-md); color: var(--ink-dim);
 }
-.access.remote { color: var(--warn); font-weight: 600; }
+.access.remote { color: var(--warn); font-weight: 700; }
 
 /* ===================== 본문 · 뷰 ===================== */
 .views { flex: 1; min-height: 0; position: relative; }
@@ -128,7 +128,7 @@ header {
 .btn {
   padding: 6px 13px; border: 1px solid var(--line-2); border-radius: var(--r-2);
   background: var(--panel); color: var(--ink);
-  font-size: var(--fs-lg); font-weight: 600; cursor: pointer; white-space: nowrap;
+  font-size: var(--fs-lg); font-weight: 700; cursor: pointer; white-space: nowrap;
 }
 .btn:hover:not(:disabled) { background: var(--panel-2); border-color: var(--ink-dim); }
 .btn:disabled { opacity: .40; cursor: not-allowed; }
@@ -152,7 +152,7 @@ header {
   display: inline-flex; align-items: center; gap: 5px;
   padding: 3px 9px; border-radius: 999px;
   border: 1px solid var(--neutral-line); background: var(--neutral-bg);
-  color: var(--ink-dim); font-size: var(--fs-md); font-weight: 600; white-space: nowrap;
+  color: var(--ink-dim); font-size: var(--fs-md); font-weight: 700; white-space: nowrap;
 }
 .chip .dot { width: 7px; height: 7px; border-radius: 50%; background: currentColor; }
 .chip.ok   { color: var(--ok);   background: var(--ok-bg);   border-color: var(--ok-line); }
@@ -168,7 +168,7 @@ header {
 .tbl { width: 100%; border-collapse: collapse; font-size: var(--fs-md); }
 .tbl th {
   padding: 3px var(--sp-3); text-align: right;
-  color: var(--ink-faint); font-size: var(--fs-sm); font-weight: 600;
+  color: var(--ink-faint); font-size: var(--fs-sm); font-weight: 700;
   border-bottom: 1px solid var(--line-2); white-space: nowrap;
 }
 .tbl th:first-child, .tbl td:first-child { text-align: left; }
@@ -206,7 +206,7 @@ header {
   display: inline-block; margin-left: 5px; padding: 0 5px;
   border: 1px solid var(--warn-line); border-radius: var(--r-1);
   background: var(--warn-bg); color: var(--warn);
-  font-size: var(--fs-xs); font-weight: 600; vertical-align: 1px;
+  font-size: var(--fs-xs); font-weight: 700; vertical-align: 1px;
 }
 
 /* ===================== 운전 탭 ===================== */
@@ -220,7 +220,7 @@ header {
 .legend i { display: inline-block; width: 14px; height: 7px; margin-right: 4px; vertical-align: -1px; }
 
 .kv { display: flex; justify-content: space-between; align-items: baseline; margin-bottom: 1px; }
-.kv .k { font-size: var(--fs-md); font-weight: 600; }
+.kv .k { font-size: var(--fs-md); font-weight: 700; }
 .kv .v { font-size: var(--fs-md); font-weight: 700; font-family: var(--font-mono); }
 .gauges { display: flex; gap: var(--sp-2); margin-bottom: 2px; }
 .gauge {
@@ -268,7 +268,7 @@ header {
 .logbox .ln .ts { color: var(--ink-faint); flex: 0 0 auto; }
 .logbox .ln.warn { color: var(--warn); }
 .logbox .ln.err { color: var(--stop); }
-.logbox .ln.ok { color: var(--ok); }
+.logbox .ln.ok { color: var(--ink); }
 .empty { padding: var(--sp-5); text-align: center; color: var(--ink-faint); font-size: var(--fs-md); }
 
 /* PC 자체 알림(PLC 알람이 아님)은 구분해서 보여 준다 */
@@ -291,7 +291,7 @@ header {
   padding: 8px 16px; border-radius: var(--r-2);
   border: 1px solid var(--line-2); background: var(--panel);
   box-shadow: var(--shadow-lg);
-  font-size: var(--fs-lg); font-weight: 600; color: var(--ink); max-width: 620px;
+  font-size: var(--fs-lg); font-weight: 700; color: var(--ink); max-width: 620px;
 }
 .toast.ok   { border-color: var(--ok-line);   background: var(--ok-bg);   color: var(--ok); }
 .toast.warn { border-color: var(--warn-line); background: var(--warn-bg); color: var(--warn); }
@@ -359,7 +359,7 @@ header {
 .steplist .st i { font-style: normal; margin-left: 4px; opacity: .7; }
 .ck-list { display: flex; flex-wrap: wrap; gap: var(--sp-1); }
 .ck-list .chip { padding: 1px 6px; font-size: var(--fs-xs); }
-.procmsg { font-size: var(--fs-sm); color: var(--warn); min-height: 14px; }
+.procmsg { font-size: var(--fs-sm); color: var(--ink-dim); min-height: 14px; }
 .procbar { display: flex; flex-wrap: wrap; gap: var(--sp-1); margin-top: var(--sp-1); }
 .procbar .btn { padding: 2px 8px; }
 
@@ -370,7 +370,7 @@ header {
 }
 .rcbar .sep { width: 1px; height: 18px; background: var(--line-2); margin: 0 var(--sp-2); }
 .rcbar .right { margin-left: auto; display: flex; align-items: center; gap: var(--sp-2); font-size: var(--fs-md); }
-.warn-txt { color: var(--warn); font-size: var(--fs-md); font-weight: 600; }
+.warn-txt { color: var(--warn); font-size: var(--fs-md); font-weight: 700; }
 .plcrow {
   flex: 0 0 auto; display: flex; align-items: center; gap: var(--sp-2);
   padding: var(--sp-1) var(--sp-3); margin-bottom: var(--sp-2);
@@ -494,7 +494,7 @@ header {
 .sw.busy { opacity: .5; cursor: wait; }
 
 /* ===================== 상태바 데이터 로그 ===================== */
-.statusbar .rec { color: var(--ok); font-weight: 600; }
+.statusbar .rec { color: var(--ok); font-weight: 700; }
 .statusbar .rec.err { color: var(--stop); }
 
 /* ★ 인터락 칩 무리만 스크롤시킨다 — 압력·펌프·IV-E 줄은 언제나 보여야 한다.
@@ -649,13 +649,13 @@ body { font-variant-numeric: tabular-nums; }
 header .chip, header .chip.big { padding: 2px 9px; font-size: var(--fs-md); border-color: var(--line); color: var(--ink-dim); }
 header .chip.ok::before { display: none; }
 header .chip.alarm { border-color: var(--stop-line); color: var(--stop); }
-.clock .t { font-size: var(--fs-xl); font-weight: 600; }
+.clock .t { font-size: var(--fs-xl); font-weight: 700; }
 
 /* ---- 숫자(A2): 현재값 = 기본 글자색, 설정값 = 흐린 회색, 단위는 작게 흐린 회색. 같은 종류는 같은 크기 · 굵기 ---- */
-.tbl td.pv { color: var(--pv); font-weight: 600; font-family: var(--font-mono); }
-.tbl td.sv { color: var(--sv); font-weight: 600; font-family: var(--font-mono); }
-.gauge .v { color: var(--pv); font-weight: 600; }
-.kv .v { color: var(--pv); font-weight: 600; }
+.tbl td.pv { color: var(--pv); font-weight: 700; font-family: var(--font-mono); }
+.tbl td.sv { color: var(--sv); font-weight: 700; font-family: var(--font-mono); }
+.gauge .v { color: var(--pv); font-weight: 700; }
+.kv .v { color: var(--pv); font-weight: 700; }
 .kv .v .sv, .num-sv { color: var(--sv); }
 .u, .unit { color: var(--ink-faint); font-size: var(--fs-sm); font-weight: 400; }
 
@@ -667,9 +667,9 @@ header .chip.alarm { border-color: var(--stop-line); color: var(--stop); }
   white-space: nowrap; overflow: hidden; text-overflow: ellipsis; line-height: 1.5; }
 .sti > i { flex: 0 0 auto; width: 7px; height: 7px; border-radius: 50%; background: var(--off); }
 .sti.ok > i { background: var(--ok); }
-.sti.warn { color: var(--warn); font-weight: 600; }
+.sti.warn { color: var(--warn); font-weight: 700; }
 .sti.warn > i { background: var(--warn); }
-.sti.stop { color: var(--stop); font-weight: 600; }
+.sti.stop { color: var(--stop); font-weight: 700; }
 .sti.stop > i { background: var(--stop); }
 .sti.more { color: var(--ink-faint); }
 #view-main .ilks.stl { display: grid; }
@@ -718,7 +718,7 @@ header .chip.alarm { border-color: var(--stop-line); color: var(--stop); }
 .fp-body { padding: var(--sp-2) var(--sp-3); display: flex; flex-direction: column; gap: var(--sp-1); }
 .fp-row { display: flex; align-items: center; gap: var(--sp-2); }
 .fp-row .k { color: var(--ink-faint); font-size: var(--fs-sm); flex: 0 0 78px; }
-.fp-row .v { font-family: var(--font-mono); font-weight: 600; }
+.fp-row .v { font-family: var(--font-mono); font-weight: 700; }
 .fp-row input { width: 80px; padding: 2px 6px; border: 1px solid var(--line-2); border-radius: var(--r-1);
   background: var(--panel-2); color: var(--ink); font-family: var(--font-mono); text-align: right; }
 .fp-btns { display: flex; flex-wrap: wrap; gap: var(--sp-1); margin-top: var(--sp-1); }
@@ -728,3 +728,29 @@ header .chip.alarm { border-color: var(--stop-line); color: var(--stop); }
 .fp-res.ok { color: var(--ok); }
 .fp-res.err { color: var(--stop); }
 .schem-wrap { position: relative; }
+
+/* ===================== v0.5.1 — 밝은 기본 테마 · 글자 셋 · 칸 넘침 ===================== */
+/* A3: 공정 결과 · 진행 문구 — 정상 = 회색, 중단 등 = 노랑, 실패 = 빨강(T.resultLevel) */
+.procmsg.warn { color: var(--warn); }
+.procmsg.stop { color: var(--stop); }
+.procmsg .chip { padding: 0 6px; font-size: var(--fs-small); margin-right: 2px; }
+
+/* A1: 칸은 1 px 옅은 회색 테두리로 나눈다(그림자에 기대지 않는다) */
+.panel { border: 1px solid var(--line); box-shadow: none; }
+
+/* C1: 상태 점 목록은 폭에 맞춰 2~3 열 */
+.stl, .stl.c2 { grid-template-columns: repeat(auto-fill, minmax(118px, 1fr)); }
+
+/* C2 · C3: 넓은 표는 칸 안에서 가로 스크롤 — 끝 칸(국번 · Pause OK)이 잘리지 않게 */
+.tblx { max-width: 100%; overflow-x: auto; }
+.tblx .tbl.form .inp { max-width: 128px; }
+.tblx .tbl.form .inp.num { max-width: 72px; }
+.rc-steps th.vh { padding: 2px 1px; white-space: normal; min-width: 22px; }
+.rc-steps td { padding: 2px 1px; }
+.rc-steps input.ms { width: 62px; }
+.rc-steps td.l { min-width: 72px; }
+
+/* B5: 조작 가능한 요소는 포인터를 올릴 때만 강조(키보드는 focus-visible) */
+#schemSvg [data-fp]:focus .fp-hit { stroke: transparent; }
+#schemSvg [data-fp]:hover .fp-hit, #schemSvg [data-fp]:focus-visible .fp-hit, #schemSvg [data-fp].fp-on .fp-hit {
+  stroke: var(--hmi-hover); }

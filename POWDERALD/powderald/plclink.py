@@ -841,18 +841,18 @@ def param_words(cfg: dict, conv) -> dict:
     n = _num
     D = A.PRM_DEFAULTS          # ★ PLC P00 기본값과 같은 표 한 곳(레시피 시간 계산·검증도 이것)
     out = {
-        A.D_PRM_PC_WDT_MS: ("PC 하트비트 판정", n(p, "pc_wdt_ms", D["pc_wdt_ms"])),
-        A.D_PRM_PUMP_TIMEOUT: ("베이스 도달 제한", n(p, "pump_timeout_s", D["pump_timeout_s"])),
-        A.D_PRM_VENT_TIMEOUT: ("대기압 도달 제한", n(p, "vent_timeout_s", D["vent_timeout_s"])),
-        A.D_PRM_MFC_STABLE: ("MFC 안정 판정", n(p, "mfc_stable_s", D["mfc_stable_s"])),
-        A.D_PRM_MFC_TIMEOUT: ("MFC 안정 제한", n(p, "mfc_timeout_s", D["mfc_timeout_s"])),
-        A.D_PRM_VALVE_MIN_MS: ("밸브 최소 열림", n(p, "valve_min_ms", D["valve_min_ms"])),
+        A.D_PRM_PC_WDT_MS: ("PC Heartbeat Timeout", n(p, "pc_wdt_ms", D["pc_wdt_ms"])),
+        A.D_PRM_PUMP_TIMEOUT: ("Pump-down Timeout", n(p, "pump_timeout_s", D["pump_timeout_s"])),
+        A.D_PRM_VENT_TIMEOUT: ("Vent Timeout", n(p, "vent_timeout_s", D["vent_timeout_s"])),
+        A.D_PRM_MFC_STABLE: ("MFC Stable Time", n(p, "mfc_stable_s", D["mfc_stable_s"])),
+        A.D_PRM_MFC_TIMEOUT: ("MFC Stable Timeout", n(p, "mfc_timeout_s", D["mfc_timeout_s"])),
+        A.D_PRM_VALVE_MIN_MS: ("Pulse Valve Min Open", n(p, "valve_min_ms", D["valve_min_ms"])),
         # ★ 베이스 압력은 역함수로 원시값을 만든다(환산이 단조 증가여야 하는 이유).
-        A.D_PRM_BASE_PRESS: ("베이스 압력", conv.cvg.to_raw(p.get("base_press_torr"))),
+        A.D_PRM_BASE_PRESS: ("Base Pressure", conv.cvg.to_raw(p.get("base_press_torr"))),
     }
     tol = p.get("mfc_tol_sccm")
     m1 = conv.mfc.get(1)
-    out[A.D_PRM_MFC_TOL] = ("MFC1 허용 편차",
+    out[A.D_PRM_MFC_TOL] = ("MFC1 Tolerance",
                             m1.to_raw(tol) if (m1 and m1.full and tol is not None) else 0)
     # 히터 과온 한계 — max_c 가 null 인 채널은 0 을 쓴다.
     # ★ PLC 는 한계 0 인 채널의 '소프트 과온 감시'만 안 할 뿐 전원을 막지 않는다.
@@ -861,20 +861,20 @@ def param_words(cfg: dict, conv) -> dict:
         if i >= 12:
             break
         mx = h.get("max_c")
-        out[A.D_PRM_HEATER_MAX + i] = (f"CH{i + 1} 과온 한계",
+        out[A.D_PRM_HEATER_MAX + i] = (f"CH{i + 1} Overtemp Limit",
                                        heater_raw(mx) if mx is not None else 0)
     if DEV.HAS_RF:
         rf = cfg.get("rf") or {}
-        out[A.D_PRM_RF_MAX] = ("RF 상한", conv.rf.to_raw(p.get("rf_max_w"))
+        out[A.D_PRM_RF_MAX] = ("RF Setpoint Max", conv.rf.to_raw(p.get("rf_max_w"))
                                if rf.get("max_w") else 0)
-        out[A.D_PRM_RF_REF_MAX] = ("반사 전력 한계", conv.rf.to_raw(p.get("rf_ref_max_w"))
+        out[A.D_PRM_RF_REF_MAX] = ("RF Reflected Limit", conv.rf.to_raw(p.get("rf_ref_max_w"))
                                    if rf.get("max_w") else 0)
-        out[A.D_PRM_RF_REF_MS] = ("반사 초과 허용", n(p, "rf_ref_ms", 0))
-        out[A.D_PRM_RF_MAX_PRESS] = ("RF 허가 최대 압력",
+        out[A.D_PRM_RF_REF_MS] = ("RF Reflected Over", n(p, "rf_ref_ms", 0))
+        out[A.D_PRM_RF_MAX_PRESS] = ("RF Permit Max Pressure",
                                      conv.cvg.to_raw(p.get("rf_p_max_torr")))
     if DEV.HAS_O3:
         o3 = cfg.get("o3") or {}
-        out[A.D_PRM_O3_MAX] = ("O3 상한", conv.o3.to_raw(p.get("o3_max"))
+        out[A.D_PRM_O3_MAX] = ("O3 Setpoint Max", conv.o3.to_raw(p.get("o3_max"))
                                if o3.get("full") else 0)
     return out
 

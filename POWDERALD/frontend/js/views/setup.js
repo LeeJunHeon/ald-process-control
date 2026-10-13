@@ -79,9 +79,12 @@
         return '<input type="checkbox" data-cfg="' + path + '"' + (v ? ' checked' : '') +
           ' class="' + chg + '">';
       }
-      if (path.slice(-5) === '.mode') {
+      if (path.slice(-5) === '.mode' || path === 'window.theme') {
+        // v0.5.1(A1): 테마는 light(기본) · dark 중 고른다
+        var opts = path === 'window.theme' ? ['light', 'dark'] : ['loglinear', 'linear', 'table'];
+        if (path === 'window.theme' && !v) v = 'light';
         return '<select class="inp' + chg + '" data-cfg="' + path + '">' +
-          ['loglinear', 'linear', 'table'].map(function (o) {
+          opts.map(function (o) {
             return '<option' + (v === o ? ' selected' : '') + '>' + o + '</option>';
           }).join('') + '</select>';
       }
@@ -92,7 +95,7 @@
     function row(path, unit) {
       var f = F[path];
       if (!f) return '';
-      return '<tr><td class="l">' + core.esc(f.label) + (f.restart ? ' <span class="chip warn">Restart</span>' : '') +
+      return '<tr><td class="l">' + core.esc(f.label) + (f.restart ? ' <span class="chip" title="바꾸면 프로그램을 다시 시작해야 반영됩니다">Restart</span>' : '') +
         '</td><td>' + inp(path) + (unit ? '<span class="unit">' + unit + '</span>' : '') + '</td></tr>';
     }
 
@@ -118,7 +121,7 @@
           : '저장할 때마다 이전 파일을 data/config_backup 에 백업합니다(최근 20개).') + '</div>' +
         '<div style="margin-top:6px"><button class="btn sm" data-cfgact="backup"' +
         (core.canOperate() ? '' : ' disabled title="이 PC 에서만 됩니다"') + '>' + T('b.backupFolder') + '</button></div>') +
-      panel('PLC Connection', '<span class="chip warn">바꾸면 다시 시작해야 반영</span>',
+      panel('PLC Connection', '<span class="chip" title="바꾸면 프로그램을 다시 시작해야 반영됩니다">Restart Required</span>',
         tbl(row('plc.simulate') + row('plc.host') + row('plc.port') + row('plc.unit_id') +
             row('plc.timeout_ms', 'ms') + row('plc.poll_ms', 'ms') + row('plc.heartbeat_ms', 'ms') +
             '<tr><td class="l">Device ID (D00019)</td><td class="mono" data-bind="idCell">—</td></tr>' +
@@ -141,6 +144,7 @@
         tbl(row('process.base_wait_timeout_s', 's') + row('process.base_stable_s', 's') +
             row('process.heater_ready.enabled') + row('process.heater_ready.band_c', '℃') +
             row('process.heater_ready.stable_s', 's') + (dev.has_o3 ? row('process.o3_off_delay_s', 's') : ''))) +
+      panel('Display', '', tbl(row('window.theme'))) +
       panel('Log', '',
         tbl(row('log.keep_days', 'd') + row('log.datalog_interval_s', 's') +
             row('log.datalog_keep_days', 'd') + row('log.trend_keep_days', 'd')) +
@@ -180,12 +184,12 @@
         '<th>' + T('v.readback') + '</th><th>' + T('v.match') + '</th></tr></thead><tbody data-bind="prmBody">' +
         '<tr><td class="l dim" colspan="5">PLC 에 연결되면 표시합니다</td></tr></tbody></table>') +
       panel('MFC', '<span class="dim">개수는 장비 고정</span>',
-        '<table class="tbl form"><thead><tr><th class="l">' + T('v.number') + '</th><th>' + T('v.name') + '</th><th>' + T('v.gas') +
+        '<div class="tblx"><table class="tbl form"><thead><tr><th class="l">' + T('v.number') + '</th><th>' + T('v.name') + '</th><th>' + T('v.gas') +
           '</th><th>' + T('v.fullScale') + ' sccm</th><th>' + T('v.confirmed') + '</th></tr></thead>' +
-        '<tbody>' + mfcRows + '</tbody></table>') +
+        '<tbody>' + mfcRows + '</tbody></table></div>') +
       panel('Heater', '',
-        '<table class="tbl form"><thead><tr><th class="l">' + T('v.channel') + '</th><th>' + T('v.name') + '</th><th>' + T('v.enabled') +
-        '</th><th>' + T('v.limit') + '</th><th>' + T('v.defaultSv') + '</th><th>' + T('v.station') + '</th></tr></thead><tbody>' + htRows + '</tbody></table>' +
+        '<div class="tblx"><table class="tbl form"><thead><tr><th class="l">' + T('v.channel') + '</th><th>' + T('v.name') + '</th><th>' + T('v.enabled') +
+        '</th><th>' + T('v.limit') + '</th><th>' + T('v.defaultSv') + '</th><th>' + T('v.station') + '</th></tr></thead><tbody>' + htRows + '</tbody></table></div>' +
         '<div class="hint" style="margin-top:6px">과온 한계가 비어 있으면 PLC 소프트 과온 감시가 꺼지므로 그 채널의 설정·전원 켜기를 PC 가 막습니다.</div>') +
       '<div class="cfgbar"><span data-bind="cfgCount"></span><span class="right">' +
       '<button class="btn sm" data-cfgact="revert" data-bind="cfgRevert">' + T('b.revert') + '</button>' +
@@ -214,12 +218,12 @@
     var ic = core.bind('idCell');
     if (ic) {
       var p = t.plc || {};
-      core.html(ic, p.config_error ? core.chip('주소 없음 — 연결 안 함', 'stop', p.config_error)
+      core.html(ic, p.config_error ? core.chip('No Address', 'stop', '주소 없음 — 연결 안 함 · ' + p.config_error)
         : !conn ? fmt.DASH
           : p.id_state === 'ok' ? core.chip(core.idText(p.device_id) + ' ' + T('s.match'), 'ok')
-            : p.id_state === 'unset' ? core.chip('0 — PLC 에 ID 가 아직 없음', 'warn', '동작은 막지 않습니다')
-              : p.id_state === 'wrong' ? core.chip(core.idText(p.device_id) + ' 다른 장비', 'stop')
-                : p.id_state === 'missing' ? core.chip('0 — ID 필수라 막음', 'stop', '장비 ID 필수(plc.require_device_id) 가 켜져 있습니다')
+            : p.id_state === 'unset' ? core.chip('0 — ID Unset', 'warn', 'PLC 에 ID 가 아직 없음 — 동작은 막지 않습니다')
+              : p.id_state === 'wrong' ? core.chip(core.idText(p.device_id) + ' Wrong Device', 'stop', '다른 장비의 PLC')
+                : p.id_state === 'missing' ? core.chip('0 — ID Required', 'stop', '장비 ID 필수(plc.require_device_id) 가 켜져 있습니다')
                 : fmt.DASH);
     }
     var body = core.bind('prmBody');
@@ -231,7 +235,7 @@
             : (Number.isInteger(r.eng) ? String(r.eng) : fmt.num(r.eng, 1));
         return '<tr' + (r.match === false ? ' class="hl"' : '') + '><td class="l">' + core.esc(r.name) +
           '<div class="mono dim small">' + core.esc(r.addr) + '</div></td>' +
-          '<td class="mono">' + (r.setting == null ? '<span class="unconf">없음</span>' : core.esc(r.setting)) + '</td>' +
+          '<td class="mono">' + (r.setting == null ? '<span class="unconf">None</span>' : core.esc(r.setting)) + '</td>' +
           '<td class="mono">' + core.esc(r.written) + '</td>' +
           '<td class="mono">' + (r.readback == null ? fmt.DASH : core.esc(r.readback)) +
           '<div class="dim small">' + core.esc(ev) + (r.unit ? ' ' + core.esc(r.unit) : '') + '</div></td>' +
@@ -240,7 +244,7 @@
           '</td></tr>';
       }).join(''));
     } else if (body && !conn) {
-      core.html(body, '<tr><td class="l dim" colspan="5">' + core.downText() + ' — 값 없음</td></tr>');
+      core.html(body, '<tr><td class="l dim" colspan="5">' + core.downText() + ' — No Data</td></tr>');
     }
     var pc = core.bind('prmChip');
     if (pc) {
@@ -257,10 +261,10 @@
     var chip = core.bind('admChip');
     var local = core.canOperate();
     if (chip) {
-      core.html(chip, !local ? core.chip(core.lockReason() + ' — 편집 안 됨', 'off')
-        : blocked ? core.chip('입력 막힘 ' + blocked + ' s', 'stop')
-          : adm.unlocked && left > 0 ? core.chip('잠금 해제 · ' + Math.ceil(left / 60) + '분 남음', 'ok')
-            : core.chip(adm.has_pin ? '잠김' : 'PIN 없음 — 처음 편집할 때 정합니다', 'warn'));
+      core.html(chip, !local ? core.chip('Read Only', 'off', core.lockReason() + ' — 편집 안 됨')
+        : blocked ? core.chip('Input Blocked ' + blocked + ' s', 'stop')
+          : adm.unlocked && left > 0 ? core.chip(T('s.unlocked') + ' · ' + Math.ceil(left / 60) + ' min', 'ok')
+            : (adm.has_pin ? core.chip(T('s.locked'), 'warn') : core.chip('No PIN', 'warn', 'PIN 없음 — 처음 편집할 때 정합니다')));
     }
     var bk = d.querySelector('[data-cfgact="backup"]');
     if (bk) bk.disabled = !local;
@@ -279,7 +283,7 @@
     Array.prototype.forEach.call(d.querySelectorAll('[data-cfg]'), function (e) { e.disabled = lock; });
     var n = Object.keys(edits).length;
     core.setText('cfgCount', lock ? '🔒 잠겨 있어 편집할 수 없습니다'
-      : (n ? '바꾼 항목 ' + n + '개 — 저장 검토를 누르세요' : '바꾼 항목 없음'));
+      : (n ? '바꾼 항목 ' + n + '개 — 저장 검토를 누르세요' : 'No Changes'));
     var rv = core.bind('cfgReview'); if (rv) rv.disabled = lock || !n;
     var rb = core.bind('cfgRevert'); if (rb) rb.disabled = !n;
   }
@@ -398,7 +402,7 @@
       '<table class="tbl"><thead><tr><th class="l">' + T('v.item') + '</th><th>' + T('v.before') + '</th><th>' + T('v.after') +
       '</th><th>' + T('v.raw') + '</th></tr></thead><tbody>' +
       (m.diff || []).map(function (r) {
-        return '<tr><td class="l">' + core.esc(r.label) + (r.restart ? ' ' + core.chip('Restart', 'warn') : '') + '</td>' +
+        return '<tr><td class="l">' + core.esc(r.label) + (r.restart ? ' ' + core.chip('Restart', '', '바꾸면 프로그램을 다시 시작해야 반영됩니다') : '') + '</td>' +
           '<td class="mono">' + show(r.old) + '</td><td class="mono"><b>' + show(r.new) + '</b></td>' +
           '<td class="mono dim">' + (r.raw_new != null ? core.esc(r.prm + ' ' + r.raw_old + ' → ' + r.raw_new) : '') + '</td></tr>';
       }).join('') + '</tbody></table>';

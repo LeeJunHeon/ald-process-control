@@ -15,7 +15,7 @@ device.py — PEALD 장비 정체성과 장비 구조 정의.
 KEY = "peald"
 NAME = "PEALD"                      # 헤더 배지 · 확인 창 제목
 TITLE = "PEALD Process Control"           # 창 제목
-THEME = "dark"                      # 라이트/다크 반전으로 두 장비를 구분한다
+THEME = "light"                     # v0.5.1: 두 장비 모두 밝은 테마가 기본(설정 window.theme 으로 dark)
 ACCENT = "#8b5cf6"                  # 보라 — 헤더 띠·배지·탭 밑줄·확인 창에만 쓴다
 ICON = "peald.ico"
 

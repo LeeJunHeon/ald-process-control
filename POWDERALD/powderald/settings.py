@@ -105,6 +105,7 @@ if DEV.HAS_O3:
     _add("process.o3_off_delay_s", "num", "O3 Off Bypass Delay s")
 
 # --- 로그 ---
+_add("window.theme", "str", "Theme (light / dark)")
 _add("log.keep_days", "int", "Program Log Keep days")
 _add("log.datalog_interval_s", "num", "Data Log Interval s")
 _add("log.datalog_keep_days", "int", "Data Log Keep days")

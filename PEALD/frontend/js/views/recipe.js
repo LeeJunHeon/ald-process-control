@@ -223,7 +223,7 @@
 
   function drawEmpty() {
     drawn = false;
-    core.setText('rcName', '열린 레시피 없음');
+    core.setText('rcName', 'No Recipe Open');
     var dt0 = core.bind('rcDirty');
     if (dt0) dt0.hidden = true;
     var box = core.bind('rcEdit');
@@ -296,7 +296,7 @@
 
     // 스텝 표
     var valves = lim.recipe_valves || [];
-    h += '<table class="tbl rc-steps"><thead><tr><th>#</th><th class="l">' + T('v.stepName') + '</th><th>' + T('v.ms') + '</th>' +
+    h += '<div class="tblx"><table class="tbl rc-steps"><thead><tr><th>#</th><th class="l">' + T('v.stepName') + '</th><th>' + T('v.ms') + '</th>' +
       valves.map(function (v) { return '<th class="vh">' + core.esc(v) + '</th>'; }).join('') +
       ((core.state.device || {}).has_rf ? '<th class="vh">RF</th>' : '') +
       '<th class="vh" title="이 스텝에서 일시정지를 받아도 안전한가">Pause<br>OK</th>' +
@@ -318,7 +318,7 @@
         '<td><span class="cb' + (st.pause_ok ? ' on' : '') + '" tabindex="0" role="checkbox" data-rcflag="pause_ok"></span></td>' +
         '<td><button class="xbtn" data-rcdel="step" title="이 스텝 삭제">✕</button></td></tr>';
     });
-    h += '</tbody></table>' +
+    h += '</tbody></table></div>' +
       '<div class="rc-brow"><button class="btn sm" data-rcadd="step">' + T('b.addStep') + '</button>' +
       '<span class="dim mono" data-bind="rcBlkSum"></span></div>' +
       '</div>';
@@ -381,7 +381,7 @@
         ' · ' + T('v.block') + ' ' + (summary.block_count || 0) + ' / ' + (lim.block_max || 10) +
         ' · ' + T('v.group') + ' ' + (summary.group_count || 0) + ' / ' + (lim.group_max || 5) +
         ' · ' + T('v.estimate') + ' <b>' + fmt.hms((summary.total_ms || 0) / 1000) + '</b>' +
-        (summary.prep_ms ? ' <span class="dim">(블록 준비 ' + fmt.ms(summary.prep_ms, 0) + ' s 포함)</span>' : '');
+        (summary.prep_ms ? ' <span class="dim">(incl. Block Prep ' + fmt.ms(summary.prep_ms, 0) + ' s)</span>' : '');
     }
     var bs = core.bind('rcBlkSum');
     if (bs) {
@@ -389,7 +389,7 @@
       bs.textContent = b ? ('1 cycle ' + fmt.ms(b.cycle_ms) + ' s × ' + b.repeat +
         ' = ' + fmt.hms(b.total_ms / 1000)) : '';
     }
-    core.setText('rcName', !cur ? '열린 레시피 없음' : (curName || '(저장 안 함)'));
+    core.setText('rcName', !cur ? 'No Recipe Open' : (curName || '(저장 안 함)'));
     var dt = core.bind('rcDirty');
     if (dt) dt.hidden = !dirty;
   }

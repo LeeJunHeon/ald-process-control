@@ -415,8 +415,10 @@
       return;
     }
     // 키보드로 누를 수 있는 칸(밸브 칸 · 스위치 · 체크 칸 · 목록 항목) — Enter / Space
+    // ★ v0.5.1(D1): 배관도 요소([data-fp] — SVG g 라 click() 이 없다)는 조작 창(faceplate.js)이 Enter/Space 를 받는다
     if ((ev.key === 'Enter' || ev.key === ' ') && ev.target.matches &&
-        ev.target.matches('[tabindex="0"]:not(input):not(button):not(select)')) {
+        ev.target.matches('[tabindex="0"]:not(input):not(button):not(select):not([data-fp])') &&
+        typeof ev.target.click === 'function') {
       ev.preventDefault();
       ev.target.click();
     }

@@ -1,7 +1,7 @@
 /* ============================================================
  * views/schematic.js — Powder ALD 배관도 (인라인 SVG).
  *
- * 왼쪽 공급 → 가운데 분말 반응기 → 오른쪽·아래 배기 순서로 읽히게 그린다.
+ * 왼쪽 공급 → 가운데 배관 · 밸브 → 오른쪽 분말 반응기 → 아래 배기 순서로 읽히게 그린다.
  *
  *   [전구체]  MFC1 ─ 전구체 라인(CH2) ─ 챔버
  *             라인 아래에 캐니스터 3개
@@ -15,29 +15,30 @@
  *   [챔버]    분말 반응기(CH1), CVG(+CM), VV(N2 벤트)
  *   [배기]    챔버 ─ IV-E ─ 포집 트랩(CH6) ─ 전용 펌프 → 배기
  *
- * ★ 밸브 열림/닫힘은 D00010(실제 출력)을, VV·IV-E·펌프·IV-B·바이패스 펌프·O3 발생기는
- *   D00014 를 본다. '요청'이 아니라 '실제 출력'을 그려야 화면과 장비가 어긋나지 않는다.
+ * ★ 밸브 열림/닫힘은 D00010(실제 출력)을, VV·IV-E·펌프·RF 는 D00014 를 본다.
+ *   '요청'이 아니라 '실제 출력'을 그려야 화면과 장비가 어긋나지 않는다.
  * ★ 색은 CSS 변수만 쓴다. 이 파일에 hex 를 쓰지 않는다.
- * ★ v0.4.12 다시 배치: 글자는 13 단위 이상(좁은 창 768 에서 9 px 이상), 줄 간격은 글꼴 줄 높이가 닿지 않게,
- *   밸브 이름은 밸브 옆(배관 위에 겹치지 않게), MFC 상자 안은 'MFC1' 처럼 줄인 이름 — 전체 이름은 툴팁.
- * ★ v0.5.0: 이름은 영문 용어(terms.js) · 상자는 같은 회색(가열 여부로 칠하지 않는다 — 온도 글자만) ·
- *   밸브 열림 = 초록 채움 · 닫힘 = 회색 외곽선 · 모름 = 점선 · 흐름 선만 파랑. 조작 가능한 요소(data-fp)를
- *   누르면 그 옆에 조작 창(faceplate.js)이 뜬다 — 배관도가 HMI 다.
+ * ★ v0.5.0: 이름은 영문 용어(terms.js) · 상자는 같은 회색 · 밸브 열림 = 초록 채움 · 닫힘 = 회색 외곽선 ·
+ *   모름 = 점선 · 흐름 선만 파랑. 조작 가능한 요소(data-fp)를 누르면 그 옆에 조작 창(faceplate.js)이 뜬다.
+ * ★ v0.5.1 다시 그림: 상자 · 밸브 · 배관 좌표는 모두 8 격자. 배관은 가로 · 세로만(직각으로 꺾음), 겹치거나
+ *   상자 테두리를 따라 가지 않고, 갈래에는 작은 점. 같은 종류는 같은 크기(MFC 88×64 한 열 · 캐니스터 80×56
+ *   한 줄 · 펌프는 원 하나). 밸브 이름은 가로 배관이면 위, 세로 배관이면 오른쪽. 라인 이름 · 온도는 라인 왼쪽
+ *   끝 위에 한 줄. 묶음 제목은 작은 회색 대문자. 글자는 13 단위 이상(768 창에서 9 px 이상), 겹침 0.
  * ============================================================ */
 (function (w, d) {
   'use strict';
 
   var NS = 'http://www.w3.org/2000/svg';
   var VB_W = 600, VB_H = 507;   // 배관도 패널 비율(602×509)에 맞춘다
+  var G = 8;                    // 좌표 격자
 
   // 밸브 아이콘 크기
   var VW = 6, VH = 5;
 
-  // ★ v0.4.12 글자 크기(viewBox 단위). 배관도 패널은 좁은 창(768)에서 1 단위 ≈ 0.72 px(PEALD) · 0.80 px(Powder)라
-  //   13 단위면 화면 9 px 이상(960 창은 11 px 이상). 이 아래로 줄이지 않는다
-  var FS = 13, FV = 14, FH = 14, FT = 15;
-  // ★ v0.5.0(A3): 상자 테두리 · 모서리는 한 규칙 — 1 단위 회색 선, 모서리 3(펌프는 둥근 끝)
-  var BOX_SW = 1, BOX_R = 3;
+  // 글자 크기(viewBox 단위) — 작은 글자 13 · 기본 14 · 제목 15. 768 창에서 1 단위 ≈ 0.72 px 라 13 단위면 9 px 이상
+  var FS = 13, FV = 14, FT = 15;
+  // 상자 테두리 · 모서리는 한 규칙 — 1 단위 회색 선, 모서리 3. 배관은 한 굵기
+  var BOX_SW = 1, BOX_R = 3, PIPE_W = 1.8;
 
   var svg = null;
   var built = false;
@@ -78,35 +79,48 @@
     });
     t.textContent = s;
     if (o.bind) t.setAttribute('data-sv', o.bind);
+    if (o.spacing) t.setAttribute('letter-spacing', o.spacing);
     return add(t);
   }
 
-  /** 배관. key 를 주면 update() 에서 흐름 색을 바꾼다. */
+  /** 묶음 제목 — 작은 회색 대문자, 묶음 왼쪽 위 */
+  function title(x, y, s) {
+    return txt(x, y, String(s).toUpperCase(), { weight: 700, fill: 'var(--ink-faint)', spacing: 0.5 });
+  }
+
+  /** 배관(가로 · 세로 토막만). key 를 주면 update() 에서 흐름 색을 바꾼다. */
   function pipe(dstr, key, kind) {
     return add(el('path', {
-      d: dstr, fill: 'none', 'stroke-width': 1.8, 'stroke-linecap': 'round',
-      'stroke-linejoin': 'round',
+      d: dstr, fill: 'none', 'stroke-width': PIPE_W, 'stroke-linecap': 'butt',
+      'stroke-linejoin': 'miter',
       stroke: 'var(--' + (kind || 'pipe') + ')',
       'data-pipe': key || '', 'data-kind': kind || 'pipe'
     }));
   }
 
-  /** 조작 가능한 요소(배관도 HMI) — 누르면 그 옆에 조작 창(faceplate)이 뜬다. kind:key 와 둘레(x, y, w, h).
-   *  ★ 맞는 자리는 사각형(rect)이 아니라 path 로 — 글자 · 상자 겹침 검사는 rect 를 상자로 본다. */
-  function hmi(kind, key, x, y, wd, ht, title) {
-    hits.push({ kind: kind, key: key, x: x, y: y, w: wd, h: ht, title: title || key });
+  /** 갈래 점 — 배관이 갈라지는 자리. 흐름 색은 그 배관(key)을 따른다 */
+  function junction(x, y, key, kind) {
+    return add(el('circle', { cx: x, cy: y, r: 2.6, fill: 'var(--' + (kind || 'pipe') + ')',
+                              'data-jn': key, 'data-kind': kind || 'pipe' }));
   }
 
+  /** 조작 가능한 요소(배관도 HMI) — 누르면 그 옆에 조작 창(faceplate)이 뜬다. kind:key 와 둘레(x, y, w, h).
+   *  ★ 맞는 자리는 사각형(rect)이 아니라 path 로 — 글자 · 상자 겹침 검사는 rect 를 상자로 본다. */
+  function hmi(kind, key, x, y, wd, ht, ttl) {
+    hits.push({ kind: kind, key: key, x: x, y: y, w: wd, h: ht, title: ttl || key });
+  }
+
+  /** 조작 요소를 맨 위 겹으로 — Tab 순서는 위 → 아래, 왼쪽 → 오른쪽 */
   function hitLayer() {
     var layer = add(el('g', { 'data-hmi': '1' }));
-    hits.forEach(function (h) {
+    hits.slice().sort(function (a, b) { return (a.y - b.y) || (a.x - b.x); }).forEach(function (h) {
       var g = el('g', { 'data-fp': h.kind + ':' + h.key, tabindex: 0, role: 'button',
                         'aria-label': h.title, 'aria-haspopup': 'dialog' });
       var t = el('title', {});
       t.textContent = h.title + ' — 누르면 조작 창';
       g.appendChild(t);
       g.appendChild(el('path', {
-        'class': 'fp-hit', rx: 3,
+        'class': 'fp-hit',
         d: 'M' + h.x + ',' + h.y + ' h' + h.w + ' v' + h.h + ' h' + (-h.w) + ' Z'
       }));
       layer.appendChild(g);
@@ -114,66 +128,62 @@
   }
 
   /** 나비 밸브. 열림은 초록 채움, 닫힘은 회색 외곽선, 모름은 점선(CSS #schemSvg.unknown).
-   *  ★ v0.4.12: 이름은 밸브 옆에 — side 'r'(오른쪽) · 'l'(왼쪽) · 'a'(위) · 'b'(아래). false 면 이름 없음.
-   *  ★ v0.5.0: fp 를 주면 조작 가능한 요소로(기본 'valve', 벤트는 'vent', 조작 없는 밸브는 null). */
+   *  side 'a' = 가로 배관(이름은 위) · 'r' = 세로 배관(이름은 오른쪽, 아이콘도 세로로).
+   *  fp 를 주면 조작 가능한 요소로(기본 'valve', 벤트는 'vent', 조작 없는 밸브는 null). */
   function valve(tag, cx, cy, side, fp) {
     var g = add(el('g', {}));
-    g.appendChild(el('path', {
-      d: 'M' + (cx - VW) + ',' + (cy - VH) + ' L' + cx + ',' + cy + ' L' + (cx - VW) + ',' + (cy + VH) + ' Z ' +
-         'M' + (cx + VW) + ',' + (cy - VH) + ' L' + cx + ',' + cy + ' L' + (cx + VW) + ',' + (cy + VH) + ' Z',
-      'stroke-width': 1.2, 'data-valve': tag
-    }));
-    if (side) {
-      var a = { x: cx, y: cy + FS * 0.35, anchor: 'middle' };
-      if (side === 'r') a = { x: cx + VW + 3, y: cy + FS * 0.35, anchor: 'start' };
-      else if (side === 'l') a = { x: cx - VW - 3, y: cy + FS * 0.35, anchor: 'end' };
-      else if (side === 'a') a = { x: cx, y: cy - VH - 4, anchor: 'middle' };
-      else if (side === 'b') a = { x: cx, y: cy + VH + 3 + FS * 0.8, anchor: 'middle' };
-      var t = el('text', {
-        x: a.x, y: a.y, 'font-size': FS, 'text-anchor': a.anchor,
-        fill: 'var(--ink-faint)', 'font-family': 'var(--font-sans)'
-      });
-      t.textContent = tag;
-      g.appendChild(t);
-    }
-    if (fp !== null) hmi(fp || 'valve', tag, cx - 9, cy - 8, 18, 16, tag);
+    var dd = side === 'r'
+      ? 'M' + (cx - VH) + ',' + (cy - VW) + ' L' + cx + ',' + cy + ' L' + (cx + VH) + ',' + (cy - VW) + ' Z ' +
+        'M' + (cx - VH) + ',' + (cy + VW) + ' L' + cx + ',' + cy + ' L' + (cx + VH) + ',' + (cy + VW) + ' Z'
+      : 'M' + (cx - VW) + ',' + (cy - VH) + ' L' + cx + ',' + cy + ' L' + (cx - VW) + ',' + (cy + VH) + ' Z ' +
+        'M' + (cx + VW) + ',' + (cy - VH) + ' L' + cx + ',' + cy + ' L' + (cx + VW) + ',' + (cy + VH) + ' Z';
+    g.appendChild(el('path', { d: dd, 'stroke-width': 1.2, 'data-valve': tag }));
+    var a = side === 'r' ? { x: cx + VH + 5, y: cy + FS * 0.35, anchor: 'start' }
+                         : { x: cx, y: cy - VH - 5, anchor: 'middle' };
+    var t = el('text', {
+      x: a.x, y: a.y, 'font-size': FS, 'text-anchor': a.anchor, 'font-weight': 400,
+      fill: 'var(--ink-faint)', 'font-family': 'var(--font-sans)'
+    });
+    t.textContent = tag;
+    g.appendChild(t);
+    if (fp !== null) hmi(fp || 'valve', tag, cx - 9, cy - 9, 18, 18, tag);
     return g;
   }
 
   function box(x, y, wd, ht, o) {
     o = o || {};
     return add(el('rect', {
-      x: x, y: y, width: wd, height: ht, rx: o.r === undefined ? BOX_R : o.r,
+      x: x, y: y, width: wd, height: ht, rx: BOX_R,
       fill: o.fill || 'var(--panel-2)',
       stroke: o.stroke || 'var(--line-2)',
-      'stroke-width': BOX_SW,
-      'stroke-dasharray': o.dash || null
+      'stroke-width': BOX_SW
     }));
   }
 
-  /** MFC 상자(MFC_W × MFC_H): 'MFC1' / Actual / Setpoint('SP') 세 줄. 전체 이름은 툴팁.
-   *  배관이 붙는 높이는 y + MFC_PIPE. 줄 간격은 글꼴 줄 높이가 닿지 않게 20 이상 */
-  var MFC_W = 92, MFC_H = 64, MFC_PIPE = 32;
-  function mfcBox(x, y, no, name) {
+  /** MFC 상자(88×64): 'MFC1' / Actual / Setpoint('SP') 세 줄. 전체 이름은 툴팁. 출구는 상자 가운데 높이 */
+  var MFC_X = G, MFC_W = 11 * G, MFC_H = 8 * G;
+  function mfcBox(y, no, name) {
+    var x = MFC_X;
     group('MFC' + no + ' ' + name, function () {
       box(x, y, MFC_W, MFC_H);
-      txt(x + 5, y + 17, 'MFC' + no, { fill: 'var(--ink-faint)' });
-      txt(x + 5, y + 38, '—', { size: FV, weight: 600, fill: 'var(--pv)', mono: true, bind: 'mfc' + no + 'pv' });
-      txt(x + 5, y + 58, '—', { fill: 'var(--sv)', mono: true, bind: 'mfc' + no + 'sv' });
+      txt(x + 6, y + 17, 'MFC' + no, { fill: 'var(--ink-faint)' });
+      txt(x + 6, y + 38, '—', { size: FV, weight: 700, fill: 'var(--pv)', mono: true, bind: 'mfc' + no + 'pv' });
+      txt(x + 6, y + 58, '—', { fill: 'var(--sv)', mono: true, bind: 'mfc' + no + 'sv' });
     });
     hmi('mfc', no, x, y, MFC_W, MFC_H, 'MFC' + no + ' ' + name);
+    return y + MFC_H / 2;       // 출구 높이
   }
 
-  /** 용기(캐니스터 · 트랩): 이름(한 줄 또는 두 줄 배열)과 온도 채널. ★ v0.5.0(A3): 가열 여부와 상관없이 같은
-   *  회색 상자 — 온도 글자만. ch 가 있으면 히터 조작 요소. 두 줄이면 높이 50 이상. */
-  function vessel(x, y, wd, ht, label, ch, title) {
-    group(title || null, function () {
+  /** 용기(캐니스터 · 트랩): 이름(한 줄 또는 두 줄 배열)과 온도 채널. 가열 여부와 상관없이 같은 회색 상자 —
+   *  온도 글자만. ch 가 있으면 히터 조작 요소. */
+  function vessel(x, y, wd, ht, label, ch, ttl) {
+    group(ttl || null, function () {
       box(x, y, wd, ht, { fill: 'var(--vessel)', stroke: 'var(--vessel-line)' });
       var mid = y + ht / 2, lines = [].concat(label);
-      var o = { anchor: 'middle', fill: 'var(--ink)', weight: 600 };
+      var o = { anchor: 'middle', fill: 'var(--ink)', weight: 700 };
       if (ch) {
-        txt(x + wd / 2, mid - 8, lines[0], o);
-        txt(x + wd / 2, mid + 11, '—', { anchor: 'middle', mono: true, fill: 'var(--pv)', bind: 'h' + ch });
+        txt(x + wd / 2, mid - 7, lines[0], o);
+        txt(x + wd / 2, mid + 12, '—', { anchor: 'middle', mono: true, fill: 'var(--pv)', bind: 'h' + ch });
       } else if (lines.length > 1) {
         txt(x + wd / 2, mid - 6, lines[0], o);
         txt(x + wd / 2, mid + 13, lines[1], o);
@@ -181,19 +191,18 @@
         txt(x + wd / 2, mid + FS * 0.35, lines[0], o);
       }
     });
-    if (ch) hmi('heater', ch, x, y, wd, ht, title || [].concat(label).join(' '));
+    if (ch) hmi('heater', ch, x, y, wd, ht, ttl || [].concat(label).join(' '));
   }
 
-  /** 펌프(둥근 상자 + 운전 점 + 이름). cx = 배관 중심. 펌핑 조작 요소 */
-  function pump(cx, y, name, aux, wd) {
-    wd = wd || 110;
-    box(cx - wd / 2, y, wd, 30, { r: 15, fill: 'var(--panel)' });
-    add(el('circle', { cx: cx - wd / 2 + 13, cy: y + 15, r: 4, fill: 'var(--valve-closed)', 'data-aux': aux }));
-    txt(cx + 8, y + 15 + FS * 0.35, name, { anchor: 'middle', weight: 600, fill: 'var(--ink)' });
-    if (aux === 'PMP') hmi('pump', 'PMP', cx - wd / 2, y, wd, 30, name);
+  /** 펌프 — 원 하나(두 장비 같은 기호). 안의 점이 운전 표시(data-aux). 이름은 왼쪽(anchor end) 또는 아래 */
+  var PUMP_R = 12;
+  function pump(cx, cy, aux) {
+    add(el('circle', { cx: cx, cy: cy, r: PUMP_R, fill: 'var(--panel)', stroke: 'var(--line-2)',
+                       'stroke-width': 1.4 }));
+    add(el('circle', { cx: cx, cy: cy, r: 4, fill: 'var(--valve-closed)', 'data-aux': aux }));
   }
 
-  /** 범례 — 영문 용어(terms.js). 조작 가능한 요소는 누르면 조작 창이 뜬다 */
+  /** 범례 — 영문 한 줄(Open · Closed · Unknown · Flow) + 'Click to operate' */
   function legend() {
     var box2 = core.bind('schemLegend');
     if (!box2) return;
@@ -204,136 +213,130 @@
       '<span>' + sw + 'fill="none" stroke="var(--ink-faint)" stroke-width="1" stroke-dasharray="1.5 1.5"/></svg> ' +
       T('s.unknown') + '</span>' +
       '<span><i style="background:var(--flow)"></i>' + T('s.flow') + '</span>' +
-      '<span><i style="background:var(--pipe)"></i>' + T('s.idlePipe') + '</span>' +
-      '<span><i style="background:var(--exh)"></i>' + T('s.exhaust') + '</span>' +
-      '<span class="dim">누르면 조작 창</span>';
+      '<span class="dim">' + T('s.clickToOperate') + '</span>';
   }
 
   /* ===================== 그리기 ===================== */
-  // --- 좌표 격자 (두 장비 공통 — 왼쪽 공급 · 오른쪽 챔버 · 아래 배기). 겹침은 이 숫자만 고쳐서 잡는다 ---
-  var CH_L = 380, CH_R = 590, CH_T = 70, CH_B = 330;   // 챔버
-  var P_Y = 90;          // 전구체 라인(MFC1 상자 y 58 + 32)
-  var A_Y = 216;         // 어시스트 라인(MFC2 상자 y 184 + 32)
-  var CAN_T = 132, CAN_H = 52, CAN_W = 82;
-  var CX = 390;          // 챔버 안 글자 왼쪽
-  var EX_X = 466;        // 배기 중심
+  // --- 좌표(모두 8 격자, 두 장비 공통) — 겹침은 이 숫자만 고쳐서 잡는다 ---
+  var CH_L = 392, CH_R = 592, CH_T = 64, CH_B = 336;   // 챔버(반응기)
+  var CX = 400, CV = 504;                              // 챔버 안 이름 · 값 왼쪽
+  var P_Y = 72;            // 전구체 라인
+  var A_Y = 224;           // 어시스트 라인
+  var CAN_T = 128, CAN_H = 56, CAN_W = 80;
+  var EX_X = 472;          // 배기 중심
 
   /** 전구체 · 어시스트(두 장비 같음) */
   function buildPrecursor() {
-    txt(6, 20, T('eq.precursor'), { size: FH, weight: 700, fill: 'var(--ink)' });
-    mfcBox(6, P_Y - MFC_PIPE, 1, 'Precursor Carrier');
-    pipe('M' + (6 + MFC_W) + ',' + P_Y + ' H' + CH_L, 'pline');
-    txt(108, P_Y - 8, T('eq.pline'));
-    txt(226, P_Y - 8, '—', { mono: true, fill: 'var(--pv)', bind: 'h2' });
-    hmi('heater', 2, 104, P_Y - 24, 190, 20, 'CH2 ' + T('eq.pline'));
+    title(G, 24, T('eq.precursor'));
+    mfcBox(P_Y - MFC_H / 2, 1, 'Precursor Carrier');
+    pipe('M' + (MFC_X + MFC_W) + ',' + P_Y + ' H' + CH_L, 'pline');
+    txt(104, P_Y - 6, T('eq.pline'));
+    txt(208, P_Y - 6, '—', { mono: true, fill: 'var(--pv)', bind: 'h2' });
+    hmi('heater', 2, 100, P_Y - 22, 176, 18, 'CH2 ' + T('eq.pline'));
 
     var cans = [
-      { x: 104, out: 145, tag: 'PV-1', label: T('eq.can1'), ch: 0 },
-      { x: 194, out: 261, tag: 'PV-2', label: T('eq.can2'), ch: 4, inlet: 209, atag: 'PV-A1' },
-      { x: 284, out: 351, tag: 'PV-3', label: T('eq.can3'), ch: 5, inlet: 299, atag: 'PV-A2' }
+      { x: 112, out: 152, tag: 'PV-1', label: T('eq.can1'), ch: 0 },
+      { x: 200, out: 256, tag: 'PV-2', label: T('eq.can2'), ch: 4, inlet: 224, atag: 'PV-A1' },
+      { x: 288, out: 344, tag: 'PV-3', label: T('eq.can3'), ch: 5, inlet: 312, atag: 'PV-A2' }
     ];
     cans.forEach(function (c) {
       vessel(c.x, CAN_T, CAN_W, CAN_H, c.label, c.ch, c.ch ? 'CH' + c.ch + ' ' + c.label : c.label);
       pipe('M' + c.out + ',' + CAN_T + ' V' + P_Y, 'can' + c.tag);
-      valve(c.tag, c.out, (P_Y + CAN_T) / 2, 'l');
+      junction(c.out, P_Y, 'pline');
+      valve(c.tag, c.out, 104, 'r');
       if (c.inlet) {
         pipe('M' + c.inlet + ',' + A_Y + ' V' + (CAN_T + CAN_H), 'asst' + c.atag);
-        valve(c.atag, c.inlet, (A_Y + CAN_T + CAN_H) / 2, 'l');
+        valve(c.atag, c.inlet, 208, 'r');
       }
     });
 
-    mfcBox(6, A_Y - MFC_PIPE, 2, 'Assist');
-    pipe('M' + (6 + MFC_W) + ',' + A_Y + ' H306', 'aline');
-    txt(106, A_Y + 18, T('eq.assist'));          // 어시스트 라인 밑(오른쪽 끝은 챔버에 닿는다)
+    mfcBox(A_Y - MFC_H / 2, 2, 'Assist');
+    pipe('M' + (MFC_X + MFC_W) + ',' + A_Y + ' H312', 'aline');
+    junction(224, A_Y, 'aline');
+    txt(104, A_Y - 6, T('eq.assist'));
   }
 
-  /** 챔버 안 압력(CVG · CM) — y = 'CVG' 글자 기준선 */
-  function buildGauges(y) {
-    txt(CX, y, 'CVG');
-    txt(CX, y + 22, '—', { size: FT, weight: 600, mono: true, fill: 'var(--pv)', bind: 'cvg' });
-    txt(CX, y + 42, 'Torr', { fill: 'var(--ink-faint)' });
+  /** 챔버(반응기) — 큰 용기 하나. 안의 글자는 왼쪽 정렬: 이름 · 상태(리드) · 온도 · 압력 */
+  function buildVessel(name, lidLabel) {
+    box(CH_L, CH_T, CH_R - CH_L, CH_B - CH_T, { fill: 'var(--chamber-bg)', stroke: 'var(--chamber-line)' });
+    txt(CX, CH_T + 28, name, { size: FT, weight: 700, fill: 'var(--ink)' });
+    txt(CX, CH_T + 52, lidLabel);
+    txt(CV, CH_T + 52, '—', { size: FV, mono: true, fill: 'var(--pv)', bind: 'lid' });
+    txt(CX, CH_T + 76, T('eq.chamberTemp'));
+    txt(CV, CH_T + 76, '—', { size: FV, weight: 700, mono: true, fill: 'var(--pv)', bind: 'h1' });
+    hmi('heater', 1, CX - 4, CH_T + 60, CH_R - CX, 22, 'CH1 ' + name);
+    txt(CX, CH_T + 100, 'CVG Torr');
+    txt(CV, CH_T + 100, '—', { size: FV, weight: 700, mono: true, fill: 'var(--pv)', bind: 'cvg' });
     group(null, function () {
       parent.setAttribute('data-cm', '1');
-      txt(CX + 90, y, 'CM');
-      txt(CX + 90, y + 22, '—', { size: FT, weight: 600, mono: true, fill: 'var(--pv)', bind: 'cm' });
+      txt(CX, CH_T + 124, 'CM Torr');
+      txt(CV, CH_T + 124, '—', { size: FV, weight: 700, mono: true, fill: 'var(--pv)', bind: 'cm' });
     });
   }
 
-  /** N2 Vent(VV) — 챔버 위 왼쪽에서 들어간다. 벤트 조작 요소 */
+  /** N2 Vent(VV) — 챔버 위 왼쪽에서 올라가 왼쪽으로. 벤트 조작 요소 */
   function buildVent() {
-    pipe('M392,' + CH_T + ' V20', 'vv');
-    txt(386, 24, 'N2 ' + T('eq.vent'), { anchor: 'end' });
-    valve('VV', 392, 44, 'l', 'vent');
+    pipe('M408,' + CH_T + ' V32 H360', 'vv');
+    txt(352, 36, 'N2 ' + T('eq.vent'), { anchor: 'end' });
+    valve('VV', 384, 32, 'a', 'vent');
   }
 
   /** 배기 아래쪽 — 트랩 · 펌프 · '→ Exhaust' (두 장비 같음) */
-  function buildExhaustTail(trapTop, pumpTop, pumpName, pumpW) {
-    vessel(EX_X - 45, trapTop, 90, 52, T('eq.trap'), 6, 'CH6 ' + T('eq.trap'));
-    pump(EX_X, pumpTop, pumpName, 'PMP', pumpW);
-    txt(EX_X + pumpW / 2 + 6, pumpTop + 15 + FS * 0.35, '→ ' + T('eq.exhaust'));
+  function buildExhaustTail(pumpName) {
+    vessel(EX_X - 40, 424, 80, 48, T('eq.trap'), 6, 'CH6 ' + T('eq.trap'));
+    // 배관은 격자 점(펌프 가운데)까지 — 원이 그 위를 덮는다
+    pipe('M' + EX_X + ',472 V488 H520', 'exh2', 'exh');
+    pump(EX_X, 488, 'PMP');
+    txt(EX_X - PUMP_R - 4, 488 + FS * 0.35, pumpName, { anchor: 'end', weight: 700, fill: 'var(--ink)' });
+    hmi('pump', 'PMP', 392, 476, EX_X + PUMP_R - 392, 24, pumpName);
+    txt(524, 488 + FS * 0.35, '→ ' + T('eq.exhaust'));
   }
 
   function build() {
     svg.setAttribute('viewBox', '0 0 ' + VB_W + ' ' + VB_H);
     svg.innerHTML = '';
     hits = [];
-    var O3_Y = 306;      // O3 라인(발생기 상자 y 280 + 26)
-    var B_X = 150, B_Y = 420;   // 바이패스 갈래 · 바이패스 펌프 줄
+    var O3_Y = 320;            // O3 라인(발생기 출구 → 반응기)
+    var B_X = 152, B_Y = 432;  // 바이패스 갈래 · 바이패스 펌프 줄
 
     buildPrecursor();
 
     /* ---------- 반응물 (O3 라인) ---------- */
-    txt(6, 270, T('eq.reactant'), { size: FH, weight: 700, fill: 'var(--ink)' });
-    pipe('M90,258 V280', 'o2in');
-    txt(96, 272, T('eq.o2'));
-    box(6, 280, 120, 52);
-    txt(24, 298, T('eq.o3gen'), { weight: 600, fill: 'var(--ink)' });
-    txt(66, 320, '—', { anchor: 'middle', mono: true, fill: 'var(--pv)', bind: 'o3' });
-    add(el('circle', { cx: 16, cy: 293, r: 4, fill: 'var(--valve-closed)', 'data-aux': 'O3GEN' }));
-    hmi('o3', 'O3', 6, 280, 120, 52, T('eq.o3gen'));
+    title(G, 288, T('eq.reactant'));
+    pipe('M96,264 V296', 'o2in');
+    txt(104, 284, T('eq.o2'));
+    box(G, 296, 112, 56);
+    txt(16, 314, T('eq.o3gen'), { weight: 700, fill: 'var(--ink)' });
+    txt(16, 340, '—', { mono: true, fill: 'var(--pv)', bind: 'o3' });
+    add(el('circle', { cx: 110, cy: 309, r: 4, fill: 'var(--valve-closed)', 'data-aux': 'O3GEN' }));
+    hmi('o3', 'O3', G, 296, 112, 56, T('eq.o3gen'));
 
-    // 발생기 → 챔버
-    pipe('M126,' + O3_Y + ' H' + CH_L, 'toChamberR');
-    valve('PV-R', 300, O3_Y, 'a');
+    // 발생기 → 갈래 → PV-R → 반응기
+    pipe('M120,' + O3_Y + ' H' + B_X, 'o3out');
+    pipe('M' + B_X + ',' + O3_Y + ' H' + CH_L, 'toChamberR');
+    junction(B_X, O3_Y, 'o3out');
+    valve('PV-R', 304, O3_Y, 'a');
 
-    // 발생기 출구에서 갈라지는 바이패스 (PLC 자동)
+    // 발생기 출구에서 갈라지는 바이패스 (PLC 자동) → IV-B → 바이패스 펌프 → 배기
     pipe('M' + B_X + ',' + O3_Y + ' V' + B_Y, 'byp');
-    valve('PV-B', B_X, 340, 'r');
-    txt(B_X + 9, 366, T('eq.plcAuto'), { fill: 'var(--ink-faint)' });
-    pipe('M' + B_X + ',' + B_Y + ' H230', 'byp2');
-    valve('IV-B', 190, B_Y, 'a', null);
-    box(230, B_Y - 15, 120, 30, { r: 15, fill: 'var(--panel)' });
-    add(el('circle', { cx: 244, cy: B_Y, r: 4, fill: 'var(--valve-closed)', 'data-aux': 'BPMP' }));
-    txt(296, B_Y + FS * 0.35, T('eq.bypassPump'), { anchor: 'middle', weight: 600, fill: 'var(--ink)' });
-    // 바이패스 펌프 → 배기는 아래로(오른쪽은 배기 트랩 자리)
-    pipe('M290,' + (B_Y + 15) + ' V452', 'byp3', 'exh');
-    txt(290, 470, '↓ ' + T('eq.exhaust'), { anchor: 'middle' });
+    valve('PV-B', B_X, 376, 'r');
+    txt(B_X + 10, 400, T('eq.plcAuto'), { fill: 'var(--ink-faint)' });
+    pipe('M' + B_X + ',' + B_Y + ' H264', 'byp2');
+    valve('IV-B', 200, B_Y, 'a', null);
+    pipe('M264,' + B_Y + ' H304', 'byp3', 'exh');         // 펌프 원이 가운데를 덮는다
+    pump(264, B_Y, 'BPMP');
+    txt(264, 464, T('eq.bypassPump'), { anchor: 'middle', weight: 700, fill: 'var(--ink)' });
+    txt(308, B_Y + FS * 0.35, '→ ' + T('eq.exhaust'));
 
-    /* ---------- 챔버 ---------- */
-    box(CH_L, CH_T, CH_R - CH_L, CH_B - CH_T, { fill: 'var(--chamber-bg)', stroke: 'var(--chamber-line)' });
-    txt(CX, CH_T + 26, T('eq.reactor'), { size: FT, weight: 700, fill: 'var(--ink)' });
-    txt(CX, CH_T + 46, T('eq.lid'));
-    txt(CX + 36, CH_T + 46, '—', { mono: true, fill: 'var(--pv)', bind: 'lid' });
-
-    txt(CX, CH_T + 75, T('eq.chamberTemp'));
-    txt(CX, CH_T + 96, '—', { size: FV, weight: 600, mono: true, fill: 'var(--pv)', bind: 'h1' });
-    hmi('heater', 1, CX - 4, CH_T + 61, 140, 42, 'CH1 ' + T('eq.reactor'));
-
-    buildGauges(CH_T + 120);
-
-    // 분말 베드
-    add(el('rect', { x: CH_L + 20, y: CH_B - 34, width: (CH_R - CH_L) - 40, height: 14, rx: 3,
-                     fill: 'var(--stage)', stroke: 'var(--line-2)', 'stroke-width': .8 }));
-    txt(CX, CH_B - 40, T('eq.bed'), { fill: 'var(--ink-faint)' });
-
+    /* ---------- 반응기 ---------- */
+    buildVessel(T('eq.reactor'), T('eq.lid'));
     buildVent();
 
     /* ---------- 배기 ---------- */
-    // 배관은 용기 · 펌프 사이만 잇는다(상자 뒤로 지나가지 않게)
-    pipe('M' + EX_X + ',' + CH_B + ' V402 M' + EX_X + ',454 V462', 'exh', 'exh');
-    valve('IV-E', EX_X, 366, false, null);
-    txt(EX_X + 16, 366 + FS * 0.35, 'IV-E Isolation');
-    buildExhaustTail(402, 462, 'Main Pump', 104);
+    title(400, 360, T('eq.exhaust'));
+    pipe('M' + EX_X + ',' + CH_B + ' V424', 'exh', 'exh');
+    valve('IV-E', EX_X, 392, 'r', null);
+    buildExhaustTail('Main Pump');
 
     hitLayer();
     built = true;
@@ -357,6 +360,10 @@
     Array.prototype.forEach.call(svg.querySelectorAll('[data-pipe="' + key + '"]'), function (e) {
       var base = e.getAttribute('data-kind') || 'pipe';
       e.setAttribute('stroke', on ? 'var(--flow)' : 'var(--' + (kind || base) + ')');
+    });
+    Array.prototype.forEach.call(svg.querySelectorAll('[data-jn="' + key + '"]'), function (e) {
+      var base = e.getAttribute('data-kind') || 'pipe';
+      e.setAttribute('fill', on ? 'var(--flow)' : 'var(--' + (kind || base) + ')');
     });
   }
 
@@ -388,6 +395,7 @@
     svg.classList.toggle('unknown', !conn);
 
     // --- 밸브 (D00010 실제 출력) ---
+    // 요청(D04012)했는데 출력이 안 나간 밸브(허가 대기)는 점선으로 구분한다.
     var pend = conn ? ((t.manual || {}).pending || []).concat((t.manual || {}).aux_pending || []) : [];
     var vmap = {};
     (str.valves || []).forEach(function (v) {
@@ -444,15 +452,17 @@
     paint('asstPV-A1', f2 && vmap['PV-A1']);
     paint('asstPV-A2', f2 && vmap['PV-A2']);
     paint('o2in', !!ex.o3_on);
+    paint('o3out', !!ex.o3_on && (vmap['PV-R'] || vmap['PV-B']));
     paint('toChamberR', !!vmap['PV-R']);
     paint('byp', !!vmap['PV-B']);
     paint('byp2', vmap['PV-B'] && amap['IV-B']);
     paint('byp3', !!amap['BPMP'], 'exh');
     paint('vv', !!amap['VV']);
     paint('exh', !!amap['IV-E'], 'exh');
+    paint('exh2', !!amap['IV-E'] && !!amap['PMP'], 'exh');
     if (w.viewFaceplate) w.viewFaceplate.update();
   }
 
   core.register('schematic', { render: render, update: update });
-  w.viewSchematic = { render: render, update: update };
+  w.viewSchematic = { render: render, update: update, grid: G };
 })(window, document);

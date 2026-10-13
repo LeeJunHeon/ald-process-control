@@ -29,26 +29,29 @@
   --sp-5: 16px; --sp-6: 20px; --sp-7: 28px;
   --r-1: 3px; --r-2: 4px; --r-3: 6px;
 
-  /* ---- 글자 크기 ---- */
-  --fs-xs: 10px; --fs-sm: 11px; --fs-md: 12px; --fs-lg: 13px;
-  --fs-xl: 15px; --fs-2xl: 18px; --fs-3xl: 22px;
+  /* ---- 글자 크기 ---- ★ v0.5.1(A4): 세 가지만 — 작은 글자 12 · 기본 13 · 제목 15 (굵기는 400 · 700 둘).
+   *  화면은 960 폭 설계를 배율로 줄이므로 768 창에서 작은 글자도 9.6 px. 옛 이름(xs~3xl)은 이 셋으로 모은다 */
+  --fs-small: 12px; --fs-base: 13px; --fs-title: 15px;
+  --fs-xs: 12px; --fs-sm: 12px; --fs-md: 13px; --fs-lg: 13px;
+  --fs-xl: 15px; --fs-2xl: 15px; --fs-3xl: 15px;
+  --fw-normal: 400; --fw-bold: 700;
 
   /* ---- 장비 고유색 기본값 (JS 가 덮어쓴다 — 머리의 장비 이름 표시에만) ---- */
   --accent: #6b6f76;
   --accent-ink: #ffffff;
 
-  /* ---- 라이트 테마 — 무채색 ---- */
-  --bg:        #eeeff1;
-  --bg-deep:   #e2e4e7;
-  --panel:     #ffffff;
-  --panel-2:   #f6f7f8;
-  --panel-head:#f3f4f5;
-  --sel-bg:    #e7e9ec;     /* 고른 줄(목록) */
-  --line:      #e0e2e5;
-  --line-2:    #c9ccd1;
-  --ink:       #1f2226;
-  --ink-dim:   #555b63;
-  --ink-faint: #8a9098;
+  /* ---- 라이트 테마(기본 — v0.5.1) — 밝은 회색 바탕 · 거의 흰 칸 · 1 px 옅은 회색 선 · 진한 회색 글자(순수 검정 아님) ---- */
+  --bg:        #eceef0;
+  --bg-deep:   #e3e5e8;
+  --panel:     #fafafb;
+  --panel-2:   #f3f4f6;
+  --panel-head:#f3f4f6;
+  --sel-bg:    #e6e8eb;     /* 고른 줄(목록) */
+  --line:      #dcdfe3;
+  --line-2:    #c6cad0;
+  --ink:       #2b2f35;
+  --ink-dim:   #565c64;
+  --ink-faint: #858b93;
 
   /* 채운 단추(Start 하나) · 체크 표시 — 무채색 진한 색 */
   --primary:      #2f3338;
@@ -60,12 +63,12 @@
   --warn:  #a87b00;  --warn-bg: #fbf5e1;  --warn-line: #e6d08a;
   --stop:  #c4363c;  --stop-bg: #fbecec;  --stop-line: #ebbcbc;
   --stop-ink: #ffffff;                       /* 빨간 띠 위 글자 */
-  --info:  #555b63;  --info-bg: #f3f4f5;  --info-line: #d7dadf;
-  --off:   #8a9098;  --off-bg:  #f3f4f5;  --off-line:  #d7dadf;
-  --neutral-bg: #f3f4f5; --neutral-line: #d7dadf;
+  --info:  #565c64;  --info-bg: #f3f4f6;  --info-line: #d7dadf;
+  --off:   #858b93;  --off-bg:  #f3f4f6;  --off-line:  #d7dadf;
+  --neutral-bg: #f3f4f6; --neutral-line: #d7dadf;
 
-  --pv: #1f2226;   /* 현재값 = 기본 글자색 */
-  --sv: #8a9098;   /* 설정값 = 흐린 회색 */
+  --pv: #2b2f35;   /* 현재값 = 기본 글자색 */
+  --sv: #858b93;   /* 설정값 = 흐린 회색 */
 
   /* ---- 배관도 ---- */
   --pipe:  #b7bbc1;   /* 대기 중인 배관 */
@@ -73,13 +76,13 @@
   --exh:   #8d9299;   /* 배기 경로 */
   --valve-open: #1f8a4c;
   --valve-closed: #9aa0a8;
-  --vessel: #f6f7f8;        /* 용기(캐니스터 · 트랩) — 가열 여부와 상관없이 같은 회색 상자 */
+  --vessel: #f3f4f6;        /* 용기(캐니스터 · 트랩) — 가열 여부와 상관없이 같은 회색 상자 */
   --vessel-line: #9aa0a8;
-  --vessel-cold: #f6f7f8;
-  --chamber-bg: #ffffff;
+  --vessel-cold: #f3f4f6;
+  --chamber-bg: #fafafb;
   --chamber-line: #6f757d;
   --stage: #c9ccd1;
-  --hmi-hover: #1f2226;     /* 조작 가능한 요소 — 포인터를 올린 테두리 */
+  --hmi-hover: #2b2f35;     /* 조작 가능한 요소 — 포인터를 올린 테두리 */
 
   /* ---- 트렌드 시리즈 (순서 고정) — 상태색(초록 · 노랑 · 빨강 · 파랑)과 겹치지 않는 차분한 색 ---- */
   --series-1: #4f6d8f;
@@ -104,47 +107,48 @@
   --overlay: rgba(20, 22, 26, .42);
 }
 
-/* ---- 다크 테마 — 같은 변수 이름, 다른 값 ---- */
+/* ---- 다크 테마(설정에서 고를 때만) — 같은 변수 이름, 다른 값.
+ *  ★ v0.5.1(A2): 한 단계 밝게 — 바탕과 칸의 대비를 줄이고 칸은 테두리로 나눈다 ---- */
 :root[data-theme="dark"] {
-  --bg:        #17191c;
-  --bg-deep:   #111315;
-  --panel:     #1d2023;
-  --panel-2:   #23262a;
-  --panel-head:#25282c;
-  --sel-bg:    #2c3035;
-  --line:      #2f3337;
-  --line-2:    #3e4348;
-  --ink:       #e2e4e7;
-  --ink-dim:   #a3a8af;
-  --ink-faint: #737980;
+  --bg:        #24272b;
+  --bg-deep:   #1f2225;
+  --panel:     #2a2d32;
+  --panel-2:   #30343a;
+  --panel-head:#30343a;
+  --sel-bg:    #383c42;
+  --line:      #41464d;
+  --line-2:    #50565d;
+  --ink:       #e1e3e6;
+  --ink-dim:   #aab0b7;
+  --ink-faint: #848a92;
 
   --primary:      #d6d9dd;
-  --primary-ink:  #17191c;
-  --primary-soft: #2c3035;
+  --primary-ink:  #24272b;
+  --primary-soft: #383c42;
 
-  --ok:    #3dba70;  --ok-bg:   #17291e;  --ok-line:   #2a5a3b;
-  --warn:  #d8b040;  --warn-bg: #2e2812;  --warn-line: #6a5a22;
-  --stop:  #e5646a;  --stop-bg: #331a1c;  --stop-line: #6e3034;
+  --ok:    #3dba70;  --ok-bg:   #20332a;  --ok-line:   #2a5a3b;
+  --warn:  #d8b040;  --warn-bg: #3a331c;  --warn-line: #6a5a22;
+  --stop:  #e5646a;  --stop-bg: #3e2427;  --stop-line: #6e3034;
   --stop-ink: #ffffff;
-  --info:  #a3a8af;  --info-bg: #25282c;  --info-line: #3e4348;
-  --off:   #737980;  --off-bg:  #25282c;  --off-line:  #3a3e43;
-  --neutral-bg: #25282c; --neutral-line: #3a3e43;
+  --info:  #aab0b7;  --info-bg: #30343a;  --info-line: #50565d;
+  --off:   #848a92;  --off-bg:  #30343a;  --off-line:  #474c53;
+  --neutral-bg: #30343a; --neutral-line: #474c53;
 
-  --pv: #e2e4e7;
-  --sv: #8a9098;
+  --pv: #e1e3e6;
+  --sv: #848a92;
 
-  --pipe:  #464b51;
+  --pipe:  #5a6067;
   --flow:  #4f8ae8;
   --exh:   #5f656c;
   --valve-open: #3dba70;
   --valve-closed: #646a71;
-  --vessel: #23262a;
-  --vessel-line: #646a71;
-  --vessel-cold: #23262a;
-  --chamber-bg: #1d2023;
-  --chamber-line: #8a9098;
-  --stage: #464b51;
-  --hmi-hover: #e2e4e7;
+  --vessel: #30343a;
+  --vessel-line: #6e747b;
+  --vessel-cold: #30343a;
+  --chamber-bg: #2a2d32;
+  --chamber-line: #8f959c;
+  --stage: #50565d;
+  --hmi-hover: #e1e3e6;
 
   --series-1: #7f9cc0;
   --series-2: #c98a64;
@@ -160,8 +164,8 @@
   --series-12: #c4b494;
   --band-a: rgba(160,164,170,.06);
   --band-b: rgba(160,164,170,.13);
-  --grid: #26292d;
-  --axis: #646a71;
+  --grid: #33373c;
+  --axis: #6e747b;
 
   --shadow: 0 1px 2px rgba(0, 0, 0, .35);
   --shadow-lg: 0 8px 28px rgba(0, 0, 0, .55);

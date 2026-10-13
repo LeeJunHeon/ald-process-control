@@ -24,7 +24,7 @@ from .convert import Converters
 
 DEFAULTS = {
     "server": {"host": "127.0.0.1", "port": DEV.DEFAULT_PORT},
-    "window": {"side": DEV.DEFAULT_SIDE},
+    "window": {"side": DEV.DEFAULT_SIDE, "theme": DEV.THEME},     # theme: light(기본) · dark
     "plc": {
         "host": "", "port": 502, "unit_id": 1,     # ★ 주소 기본값은 없다(다른 장비에 붙지 않게)
         "timeout_ms": 1000, "poll_ms": 100, "heartbeat_ms": 250,
@@ -232,6 +232,8 @@ def validate(cfg: dict) -> list:
         # ★ v0.4.12: 이름 · 공백 · 잘못된 주소 — 서버를 열지 못하고 멈춘다(포트를 먼저 묶을 때 같은 이유로)
         p.append(("err", f"server.host 형식이 올바르지 않습니다: {srv.get('host')!r} — 빈 값(= 127.0.0.1) · "
                          "localhost · IP 주소만 씁니다(모든 주소는 0.0.0.0 또는 ::)"))
+    if (cfg.get("window") or {}).get("theme", "light") not in ("light", "dark"):
+        p.append(("err", "window.theme 은 light 또는 dark 여야 합니다"))
     if (cfg.get("window") or {}).get("side") not in ("left", "right"):
         p.append(("warn", "window.side 는 left 또는 right 여야 합니다"))
 

@@ -39,7 +39,7 @@
   'use strict';
 
   var PAD_L = 52, PAD_R = 196, PAD_T = 10, PAD_B = 30;
-  var ROW_H = 13, ROW_MIN = 12, LEAD_W = 14;     // 줄 간격은 12 px 아래로 줄이지 않는다(글자 10 px)
+  var ROW_H = 15, ROW_MIN = 14, LEAD_W = 14;     // v0.5.1: 글자 12 px(768 창에서 9 px 이상) — 줄 간격은 14 px 아래로 줄이지 않는다
   var BAND_MIN_MS = 1000;                          // 띠 글자만 다시 쓰는 것은 초당 1 번까지(v0.4.13)
   var OVER_W = 120;                                // 띠 넘침 안내 자리(띠 오른쪽 끝에서) — 플롯 오른쪽 여백(196) 안
   var PALETTE_N = 12;
@@ -376,7 +376,7 @@
       var r = range();
       lastR = r;
       var grid = cssVar('--grid'), axis = cssVar('--axis');
-      g.font = '10px ' + cssVar('--font-sans');
+      g.font = '12px ' + cssVar('--font-sans');
 
       // 배경 띠(블록·스텝)
       st.bands.forEach(function (b, i) {
@@ -533,12 +533,12 @@
         g.lineTo(G.x1 + LEAD_W - 1, e.ly);
         g.stroke();
         g.setLineDash([]);
-        g.font = '10px ' + mono; g.textAlign = 'right'; g.textBaseline = 'middle';
+        g.font = '12px ' + mono; g.textAlign = 'right'; g.textBaseline = 'middle';
         var val = e.text + (e.when ? ' · ' + e.when : '');
         g.fillStyle = e.stale || e.v == null ? faint : dim;
         g.fillText(val, G.W - 4, e.ly);
         var vw = g.measureText(val).width;
-        g.font = 'bold 10px ' + sans; g.textAlign = 'left';
+        g.font = 'bold 12px ' + sans; g.textAlign = 'left';
         g.fillStyle = e.stale ? faint : ink;
         var room = G.W - 4 - vw - 6 - (G.x1 + LEAD_W + 2);
         e.shown = fitLabel(e, room);
@@ -547,7 +547,7 @@
       });
       g.restore();
       if (overflow) {
-        g.fillStyle = faint; g.font = '9px ' + sans; g.textAlign = 'right'; g.textBaseline = 'top';
+        g.fillStyle = faint; g.font = '12px ' + sans; g.textAlign = 'right'; g.textBaseline = 'top';
         g.fillText('휠로 더 보기', G.W - 4, G.y1 + 3);
       }
     }
@@ -604,7 +604,7 @@
       // 커서 시각(과 배경 띠 이름)은 x 축 아래 — 플롯 밖
       var band = st.bands.filter(function (b) { return x >= b.x0 && x <= b.x1; })[0];
       var text = st.xLabel(x, 0, true) + (band ? ' · ' + band.label : '');
-      g.font = 'bold 10px ' + cssVar('--font-sans');
+      g.font = 'bold 12px ' + cssVar('--font-sans');
       var tw = g.measureText(text).width + 10;
       var bx = Math.max(G.x0, Math.min(G.x1 - tw, px - tw / 2));
       g.fillStyle = cssVar('--panel'); g.fillRect(bx, G.y1 + 2, tw, PAD_B - 4);

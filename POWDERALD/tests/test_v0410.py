@@ -561,7 +561,7 @@ async def test_b1_alarm_tab_unknown_when_plc_down(rig):
         await pg.evaluate("() => core.setTab('alarm')")
         await asyncio.sleep(0.5)
         c0 = await pg.evaluate("() => core.bind('alarmCount').textContent")
-        assert c0.startswith("중대 "), c0                  # 처음 열 때 '—' 가 아니다
+        assert c0.startswith("Critical "), c0              # 처음 열 때 '—' 가 아니다(v0.5.0 영문: 'Critical 0 · Warning 0')
         rig.plc.stop()
         # v0.4.16: 요소가 아직 없으면 거짓(바로 TypeError 로 끝나지 않게)
         await pg.wait_for_function("() => { const e = core.bind('alarmCount'); return !!e && e.textContent === 'Unknown'; }",

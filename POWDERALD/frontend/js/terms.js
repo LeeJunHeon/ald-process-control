@@ -49,7 +49,7 @@
     's.normal': 'Normal', 's.limitUnset': 'Limit Unset', 's.idle': 'Idle', 's.running': 'Running',
     's.paused': 'Paused', 's.pending': 'Pending', 's.commLost': 'Comm Lost', 's.ctrlAlarm': 'Controller Alarm',
     's.tableOk': 'Table OK', 's.tableNg': 'Table NG', 's.noAlarm': 'No Alarm', 's.critical': 'Critical',
-    's.warning': 'Warning', 's.flow': 'Flow', 's.idlePipe': 'Idle', 's.exhaust': 'Exhaust', 's.heated': 'Heated',
+    's.warning': 'Warning', 's.flow': 'Flow', 's.clickToOperate': 'Click to operate', 's.idlePipe': 'Idle', 's.exhaust': 'Exhaust', 's.heated': 'Heated',
     's.serverLost': 'Server Lost', 's.plcLost': 'PLC Lost', 's.plcStalled': 'PLC Stalled', 's.noAddress': 'No PLC Address',
     's.feedbackOk': 'Feedback OK', 's.noFeedback': 'No Feedback', 's.match': 'Match', 's.mismatch': 'Mismatch',
     's.unconfirmed': 'Unconfirmed', 's.thisPc': 'This PC', 's.viewOnly': 'View Only', 's.recording': 'Recording',
@@ -87,6 +87,28 @@
       else if (!e.children.length) e.textContent = v;
       else e.insertBefore(e.ownerDocument.createTextNode(v), first);
     });
+  };
+
+  /** ★ v0.5.1(D6): 옛 데이터 로그(한글로 적힌 상태 칸 값)를 화면에서만 영문으로 — 파일은 그대로 둔다 */
+  var OLD = {
+    '초기화': 'Init', '대기': 'Idle', '공정 준비': 'Ready', '공정 중': 'Running', '일시정지': 'Paused',
+    '사이클 후 정지 중': 'Stopping after Cycle', '안전 정지': 'Safe Stop',
+    '조건 확인': 'Check', '표 복사': 'Table Copy', '블록 준비': 'Block Prep', '스텝 실행': 'Step Run',
+    '다음 스텝 계산': 'Next Step', '완료': 'Done', '중단': 'Aborted',
+    'PLC 끊김': 'PLC Lost', 'PLC 멈춤': 'PLC Stalled'
+  };
+  T.oldValue = function (v) {
+    return (typeof v === 'string' && Object.prototype.hasOwnProperty.call(OLD, v)) ? OLD[v] : v;
+  };
+
+  /** ★ v0.5.1(A3): 공정 결과 · 진행 문구의 수준 — '' = 정상(회색) · 'warn' = 중단 등(노랑) · 'stop' = 실패(빨강).
+   *  문장은 서버가 정한 한글 그대로다(process.end_result) — 색만 고른다 */
+  T.resultLevel = function (r) {
+    r = String(r || '');
+    if (/^정상 종료/.test(r)) return /안전 정지/.test(r) ? 'warn' : '';
+    if (/안전 정지|PLC 재시작|레시피 표 오류|PLC 중단|실패|거절|못 보냄|오류/.test(r)) return 'stop';
+    if (/중단|사이클 후 정지|확인 안 됨|알 수 없음/.test(r)) return 'warn';
+    return '';
   };
 
   if (typeof module !== 'undefined' && module.exports) module.exports = T;

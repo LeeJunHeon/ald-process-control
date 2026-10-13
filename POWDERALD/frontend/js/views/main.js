@@ -227,19 +227,27 @@
       core.html(cl, (!run && bad.length)
         ? bad.slice(0, 3).map(function (c) {
             var det = checkDetail(c);
-            return sti(c.label + (det ? ': ' + det : ''), c.key === 'base' ? 'warn' : 'stop',
-                       c.label + (det ? ' — ' + det : ''));
-          }).join('') + (bad.length > 3 ? sti('+' + (bad.length - 3) + ' more', 'stop') : '') +
+            return sti(c.label, c.key === 'base' ? 'warn' : 'stop', c.label + (det ? ' — ' + det : ''));
+          }).join('') + (bad.length > 3 ? sti('+' + (bad.length - 3) + ' more', 'stop',
+            bad.slice(3).map(function (c) { var det = checkDetail(c); return c.label + (det ? ' — ' + det : ''); })
+              .join('\n')) : '') +
           // O3 허가·발생기가 빠졌으면 수동 창의 O3 라인 켜기로 바로 간다(설정값은 거기서 확인)
           (bad.some(function (c) { return c.action === 'o3_on'; })
             ? ' <button class="btn sm" data-mnopen="o3">' + T('b.o3On') + '</button>' : '')
         : '');
     }
 
-    var msg = p.message || '';
-    if (p.last_result && !run && !msg) msg = 'Last: ' + p.last_result;
+    // ★ v0.5.1(A3 · D4): 결과 수준으로 색(정상 = 회색 · 중단 등 = 노랑 · 실패 = 빨강). 'Last' 는 영문 칩, 문장은 한글 그대로
+    var msg = p.message || '', last = false;
+    if (p.last_result && !run && !msg) { msg = p.last_result; last = true; }
     var pm = core.bind('seqMsg');
-    if (pm) { pm.textContent = msg; pm.hidden = !msg; }
+    if (pm) {
+      var lv = T.resultLevel(msg);
+      var html = msg ? (last ? '<span class="chip">Last</span> ' : '') + core.esc(msg) : '';
+      if (pm.innerHTML !== html) pm.innerHTML = html;
+      pm.className = 'procmsg' + (lv ? ' ' + lv : '');
+      pm.hidden = !msg;
+    }
     var cancel = core.bind('sqCancel');
     if (cancel) cancel.hidden = (p.phase !== 'base_wait');
 
@@ -325,12 +333,13 @@
 
   /** 입력 한 줄(상태 점).
    *  ★ ok_when=false 인 입력(펌프 알람·가스 누출·과온·RF 알람)은 '이상일 때 1'이다 —
-   *    정상(0)이면 회색 글자 + 초록 점, 이상(1)이면 빨강. ok_when=true 는 1 이 정상.
+   *    v0.5.1(A3): 이름이 알람이라 '정상 = 초록 점'이면 '알람이 켜짐'으로 읽힌다 — 정상(0)이면 회색 점,
+   *    이상(1)일 때만 빨강. ok_when=true 는 1 이 정상(초록).
    *    ok_when 이 없는 입력(운전 · 리미트)은 켜짐 = 초록 점, 꺼짐 = 회색 점(이상 아님). */
   function inputChip(word, k, why) {
     var on = core.bit(word, k.bit);
     var lvl;
-    if (k.ok_when === false) lvl = on ? 'stop' : 'ok';
+    if (k.ok_when === false) lvl = on ? 'stop' : '';
     else if (k.ok_when === true) lvl = on ? 'ok' : 'stop';
     else lvl = on ? 'ok' : '';
     return sti(k.name, lvl, why);
@@ -445,7 +454,7 @@
       var mt = why ? why + ' — 수동 조작을 열 수 없습니다' : '';
       if (mo.title !== mt) mo.title = mt;
     }
-    core.setText('schemNote', !conn ? core.downText() + ' — 값 없음'
+    core.setText('schemNote', !conn ? core.downText() + ' — No Data'
       : (t.state ? t.state.name : ''));
   }
 

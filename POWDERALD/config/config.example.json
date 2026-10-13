@@ -2,7 +2,7 @@
   "_주의": "예시 설정입니다. 현장 값을 넣은 config.json 을 exe 옆에 두세요. confirmed:false 인 항목은 실제 스케일을 확인한 뒤 true 로 바꿉니다.",
 
   "server": { "host": "127.0.0.1", "port": 8101 },
-  "window": { "side": "left" },
+  "window": { "side": "left", "theme": "light" },
 
   "plc": {
     "host": "192.168.10.11",

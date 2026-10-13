@@ -101,9 +101,12 @@
       m.rows.push([T_('v.forward') + ' / ' + T_('v.reflected'), conn ? num(er.rf_fwd, F.watt) + ' / ' + num(er.rf_ref, F.watt) + ' W' : D]);
       m.rows.push([T_('v.setpoint'), conn ? num(er.rf_sv, F.watt) + ' W' : D]);
       m.rows.push([T_('v.status'), conn ? (er.rf_on ? T_('s.on') : T_('s.off')) : D]);
-      if (permit) m.rows.push(['RF Permit', conn ? (bit(t.interlock, permit.bit) ? T_('s.normal') : 'NG') : D]);
+      var rfOk = !permit || (conn && bit(t.interlock, permit.bit));
+      if (permit) m.rows.push(['RF Permit', conn ? (rfOk ? T_('s.normal') : 'NG') : D]);
+      // ★ v0.5.1(D3): 허가가 NG 면 ON 을 막고 이유를 보인다(끄기는 그대로)
+      if (!rfOk) extraWhy = 'RF Permit NG — 허가 조건이 맞을 때만 켤 수 있습니다';
       m.inputs.push({ id: 'sp', label: T_('v.setpoint'), unit: 'W', step: 1, off: !!block });
-      btn('on', T_('b.on'), true);
+      btn('on', T_('b.on'), rfOk);
       btn('off', T_('b.off'), true);
     } else if (kind === 'o3') {
       var eo = t.extra || {};
@@ -112,10 +115,12 @@
       m.rows.push([T_('v.actual'), conn ? num(eo.o3_pv, function (x) { return F.num(x, 1); }) + ' ' + (eo.o3_unit || '') : D]);
       m.rows.push([T_('v.setpoint'), conn ? num(eo.o3_sv, function (x) { return F.num(x, 1); }) + ' ' + (eo.o3_unit || '') : D]);
       m.rows.push([T_('v.status'), conn ? (eo.o3_on ? T_('s.on') : T_('s.off')) : D]);
-      if (op) m.rows.push(['O3 Permit', conn ? (bit(t.interlock, op.bit) ? T_('s.normal') : 'NG') : D]);
+      var o3Ok = !op || (conn && bit(t.interlock, op.bit));
+      if (op) m.rows.push(['O3 Permit', conn ? (o3Ok ? T_('s.normal') : 'NG') : D]);
+      if (!o3Ok) extraWhy = 'O3 Permit NG — 허가 조건이 맞을 때만 켤 수 있습니다';      // v0.5.1(D3)
       m.inputs.push({ id: 'sp', label: T_('v.setpoint'), unit: eo.o3_unit || '', step: 0.1, off: !!block });
       btn('apply', T_('b.apply'), true);
-      btn('on', T_('b.on'), true);
+      btn('on', T_('b.on'), o3Ok);
       btn('off', T_('b.off'), true);
     } else if (kind === 'pump') {
       var am = auxMap(str, t, conn);
@@ -202,9 +207,7 @@
         (x.max != null ? ' max="' + x.max + '"' : '') + ' step="' + x.step + '" data-fpin="' + x.id + '">' +
         '<span class="u" data-fpunit="' + x.id + '">' + w.core.esc(x.unit || '') + '</span></div>';
     });
-    h += '<div class="fp-btns">' + m.buttons.map(function (x) {
-      return '<button class="btn sm fp-btn ' + x.cls + '" data-fpa="' + x.a + '">' + w.core.esc(x.label) + '</button>';
-    }).join('') + '</div><div class="fp-why" data-fpbind="why"></div><div class="fp-res" data-fpbind="res"></div></div>';
+    h += '<div class="fp-btns" data-fpbind="btns">' + btnsHtml(m) + '</div><div class="fp-why" data-fpbind="why"></div><div class="fp-res" data-fpbind="res"></div></div>';
     b.innerHTML = h;
     b.setAttribute('aria-label', m.title);
     b.hidden = false;
@@ -212,6 +215,12 @@
     paint();
     var first = b.querySelector('input:not([disabled]), .fp-btn:not([disabled])');
     if (first) { try { first.focus(); } catch (e) { /* 없음 */ } }
+  }
+
+  function btnsHtml(m) {
+    return m.buttons.map(function (x) {
+      return '<button class="btn sm fp-btn ' + x.cls + '" data-fpa="' + x.a + '">' + w.core.esc(x.label) + '</button>';
+    }).join('');
   }
 
   /** 요소 옆(오른쪽, 자리가 없으면 왼쪽)에 — 배관도 칸 안에서. #app 배율(fit)을 거친 좌표를 되돌린다 */
@@ -257,6 +266,18 @@
       var u = b.querySelector('[data-fpunit="' + x.id + '"]');
       if (u && u.textContent !== (x.unit || '')) u.textContent = x.unit || '';
     });
+    // ★ v0.5.1(D2): 단추 묶음이 바뀌면(잠금이 풀려 Unlock 이 사라짐 등) 단추 줄을 다시 만든다
+    var bb = b.querySelector('[data-fpbind="btns"]');
+    var want = m.buttons.map(function (x) { return x.a; }).join(',');
+    if (bb && bb.getAttribute('data-set') !== want) {
+      var had = bb.getAttribute('data-set') !== null;
+      bb.innerHTML = btnsHtml(m);
+      bb.setAttribute('data-set', want);
+      if (had && d.activeElement === d.body) {
+        var f = bb.querySelector('.fp-btn');
+        if (f) { try { f.focus(); } catch (e) { /* 없음 */ } }
+      }
+    }
     m.buttons.forEach(function (x) {
       var e = b.querySelector('[data-fpa="' + x.a + '"]');
       if (!e) return;

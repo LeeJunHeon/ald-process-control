@@ -95,6 +95,7 @@ class AlarmTracker:
                     if h is not None and h["cleared"] == ALARM_UNKNOWN:
                         # 꺼져 있던 동안 계속 서 있던 것 — 닫아 둔 줄을 다시 열고 CSV 에 새 '발생' 을 쓰지 않는다
                         h["cleared"] = ""
+                        h["name"], h["crit"] = d["name"], d["crit"]     # v0.5.1: 지금 이름으로(옛 파일의 한글 이름)
                         self.active[code] = {"code": code, "name": d["name"], "crit": d["crit"],
                                              "since": h["since"], "date": h["date"]}
                         fresh.append(code)
@@ -267,10 +268,15 @@ class State:
         self._last_new_alarm = new
 
     # ===================== 화면용 스냅샷 =====================
+    def _theme(self) -> str:
+        t = str(((self.cfg or {}).get("window") or {}).get("theme") or DEV.THEME).lower()
+        return t if t in ("light", "dark") else "light"
+
     def device_info(self) -> dict:
         return {
             "key": DEV.KEY, "name": DEV.NAME, "title": DEV.TITLE,
-            "theme": DEV.THEME, "accent": DEV.ACCENT,
+            # v0.5.1: 저장된 테마 설정(window.theme)을 따르고, 없으면 밝은 테마
+            "theme": self._theme(), "accent": DEV.ACCENT,
             "app_version": version.APP_VERSION,
             "plc_addr": self.link.addr_text if self.link else "",
             "simulate": bool(self.link and self.link.simulate),
@@ -488,14 +494,14 @@ class State:
                 return c.cvg.to_torr(raw), "Torr"
             if addr == A.D_PRM_MFC_TOL:
                 if raw == 0:
-                    return 0, "감시 안 함"
+                    return 0, "Off"
                 return (m1.to_eng(raw) if m1 else None), "sccm"
             if addr in (A.D_PRM_RF_MAX, A.D_PRM_RF_REF_MAX):
                 return c.rf.to_eng(raw), "W"
             if addr == A.D_PRM_O3_MAX:
                 return c.o3.to_eng(raw), o3_unit
             if A.D_PRM_HEATER_MAX <= addr < A.D_PRM_HEATER_MAX + 12:
-                return (_ht(raw), "℃") if raw else (0, "감시 안 함")
+                return (_ht(raw), "℃") if raw else (0, "Off")
             if addr in (A.D_PRM_PC_WDT_MS, A.D_PRM_VALVE_MIN_MS, A.D_PRM_RF_REF_MS):
                 return raw, "ms"
             return raw, "s"
