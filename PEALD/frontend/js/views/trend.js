@@ -64,6 +64,28 @@
     core.html(box, charts[k].series.map(function (se) {
       return '<span>' + HistChart.swatch(cm[String(se.key)]) + core.esc(se.label) + '</span>';
     }).join(''));
+    fitLegend(box);
+  }
+
+  /** ★ v0.5.2(A3): 범례는 두 줄까지. 넘치면 끝에서부터 가리고 '+N'(가린 이름은 툴팁) — 숨은 줄로 사라지지 않게 */
+  function fitLegend(box) {
+    if (!box || !box.clientHeight) return;
+    var items = Array.prototype.slice.call(box.querySelectorAll('span:not(.more)'));
+    items.forEach(function (e) { e.hidden = false; });
+    var old = box.querySelector('span.more');
+    if (old) old.remove();
+    if (box.scrollHeight <= box.clientHeight + 1) return;
+    var more = d.createElement('span');
+    more.className = 'more';
+    box.appendChild(more);
+    var hid = [];
+    for (var i = items.length - 1; i > 0 && box.scrollHeight > box.clientHeight + 1; i--) {
+      items[i].hidden = true;
+      hid.unshift(items[i].textContent);
+      more.textContent = '+' + hid.length;
+      more.title = hid.join('\n');
+    }
+    if (!hid.length) more.remove();
   }
 
   function refill() {

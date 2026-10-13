@@ -180,10 +180,10 @@
         tbl(prmRows) +
         '<div class="hint" style="margin-top:6px">저장하면 원시값으로 바꿔 PLC 에 다시 쓰고 되읽어 확인합니다. ' +
         '0 이면 PLC 가 해당 기능을 막거나 감시하지 않습니다.</div>' +
-        '<table class="tbl prmtbl" style="margin-top:8px"><thead><tr><th class="l">PRM / Address</th><th>' + T('v.setpoint') + '</th><th>' + T('v.written') + '</th>' +
+        '<div class="tblx" style="margin-top:8px"><table class="tbl prmtbl"><thead><tr><th class="l">PRM / Address</th><th>' + T('v.setpoint') + '</th><th>' + T('v.written') + '</th>' +
         '<th>' + T('v.readback') + '</th><th>' + T('v.match') + '</th></tr></thead><tbody data-bind="prmBody">' +
-        '<tr><td class="l dim" colspan="5">PLC 에 연결되면 표시합니다</td></tr></tbody></table>') +
-      panel('MFC', '<span class="dim">개수는 장비 고정</span>',
+        '<tr><td class="l dim" colspan="5">PLC 에 연결되면 표시합니다</td></tr></tbody></table></div>') +
+      panel('MFC', '<span class="dim" title="개수는 장비 고정">Fixed by Device</span>',
         '<div class="tblx"><table class="tbl form"><thead><tr><th class="l">' + T('v.number') + '</th><th>' + T('v.name') + '</th><th>' + T('v.gas') +
           '</th><th>' + T('v.fullScale') + ' sccm</th><th>' + T('v.confirmed') + '</th></tr></thead>' +
         '<tbody>' + mfcRows + '</tbody></table></div>') +

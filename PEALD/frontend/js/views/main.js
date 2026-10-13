@@ -185,7 +185,7 @@
     var run = !!p.running;
 
     core.setText('sqRec', !conn ? fmt.DASH
-      : (p.recipe || '레시피를 고르세요') + (p.number ? ' · No. ' + p.number : ''));
+      : (p.recipe || 'Select a recipe') + (p.number ? ' · No. ' + p.number : ''));
     if (!conn) p = {};
 
     if (run && p.total_ms) {
@@ -348,7 +348,8 @@
 
   /** 상태 점 목록 한 줄 — 이름 + 점. lvl: ok(초록 점) · warn · stop(점과 글자) · ''(회색 점) */
   function sti(name, lvl, why) {
-    return '<span class="sti' + (lvl ? ' ' + lvl : '') + '"' + (why ? ' title="' + core.esc(why) + '"' : '') +
+    // ★ v0.5.2(A1): 한 열에 안 들어가는 이름은 두 열을 쓴다(잘리지 않게)
+    return '<span class="sti' + (lvl ? ' ' + lvl : '') + (T.stiSpan(name) > 1 ? ' w2' : '') + '"' + (why ? ' title="' + core.esc(why) + '"' : '') +
       '><i></i>' + core.esc(name) + '</span>';
   }
 

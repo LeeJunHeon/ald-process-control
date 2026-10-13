@@ -160,17 +160,18 @@ _GEOM = r'''
     const a = rects[i], b = rects[j];
     if (a.x0 < b.x1 && b.x0 < a.x1 && a.y0 < b.y1 && b.y0 < a.y1) bad.push('box/box ' + JSON.stringify([a, b]));
   }
-  // Tab 순서 — 위 → 아래, 왼쪽 → 오른쪽
+  // Tab 순서 — v0.5.2(B7): 무리(Precursor → Reactant → Chamber → Exhaust) 다음 위 → 아래, 왼쪽 → 오른쪽
   const fp = all.filter(e => e.tag === 'g' && e.a['data-fp']).map(e => {
-    const m = e.kids.find(k => k.tag === 'path').a.d.match(/M(-?[\d.]+),(-?[\d.]+)/); return [+m[2], +m[1]]; });
-  for (let i = 1; i < fp.length; i++)
-    if (fp[i][0] < fp[i - 1][0] || (fp[i][0] === fp[i - 1][0] && fp[i][1] < fp[i - 1][1])) bad.push('tab order ' + i);
+    const m = e.kids.find(k => k.tag === 'path').a.d.match(/M(-?[\d.]+),(-?[\d.]+)/); return [+e.a['data-grp'], +m[2], +m[1]]; });
+  const cmp = (a, b) => (a[0] - b[0]) || (a[1] - b[1]) || (a[2] - b[2]);
+  for (let i = 1; i < fp.length; i++) if (cmp(fp[i - 1], fp[i]) > 0) bad.push('tab order ' + i);
   console.log(JSON.stringify({ bad, nseg: segs.length, nrect: rects.length, ndot: dots.length, nfp: fp.length,
                                tabs: all.filter(e => e.a && e.a.tabindex !== undefined).length }));
 '''
 
 
 def test_pid_grid_hv_lines_no_overlap_and_tab_order():
+    # v0.5.2: Tab 순서는 무리 순서가 먼저(B7) — y · x 만 보던 검사를 고쳤다
     out = _schem(_GEOM)
     assert not out["bad"], out["bad"]
     assert out["nseg"] > 15 and out["ndot"] >= 4 and out["nfp"] >= 15 and out["tabs"] == out["nfp"], out
@@ -344,4 +345,4 @@ def test_d6_old_datalog_values_shown_in_english():
 # ===================== E2. 버전 =====================
 def test_version_051():
     from peald import version
-    assert version.APP_VERSION == "0.5.1"
+    assert version.APP_VERSION.startswith("0.5.")       # v0.5.2: 버전이 오를 때마다 깨지지 않게

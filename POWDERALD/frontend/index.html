@@ -51,7 +51,7 @@
           <div class="panel" style="flex:0 0 540px">
             <div class="panel-head"><span data-t="panel.pid">P&amp;ID</span><span class="note" data-bind="schemNote">&mdash;</span></div>
             <div class="panel-body flush col">
-              <div class="schem-wrap"><svg id="schemSvg" preserveAspectRatio="xMidYMid meet"></svg><div class="faceplate" id="faceplate" role="dialog" hidden></div></div>
+              <div class="schem-wrap"><svg id="schemSvg" preserveAspectRatio="xMidYMin meet"></svg><div class="faceplate" id="faceplate" role="dialog" hidden></div></div>
               <div class="legend" data-bind="schemLegend"></div>
             </div>
           </div>
@@ -122,7 +122,7 @@
               <div class="panel-body scroll" data-bind="rcEdit"></div>
             </div>
             <div class="panel" style="flex:0 0 132px">
-              <div class="panel-head"><span data-t="panel.check">Check</span><span class="note">서버가 판정합니다 · 항목을 누르면 해당 칸으로 갑니다</span></div>
+              <div class="panel-head"><span data-t="panel.check">Check</span><span class="note" title="서버가 판정합니다 · 항목을 누르면 해당 칸으로 갑니다">Server check · click to jump</span></div>
               <div class="panel-body tight scroll" data-bind="rcCheck"></div>
             </div>
           </div>
@@ -166,7 +166,7 @@
         <div class="hseries" data-bind="hSeries" hidden></div>
         <div class="col grow" data-bind="histPanels" hidden>
           <div class="panel chartpanel">
-            <div class="panel-head"><span data-t="chart.pressure">Pressure (Torr)</span> · log<span class="note">끌어서 확대 · 되돌리기</span></div>
+            <div class="panel-head"><span data-t="chart.pressure">Pressure (Torr)</span> · log<span class="note" title="끌어서 확대 · 되돌리기">Drag to zoom · Undo</span></div>
             <div class="panel-body"><canvas data-hchart="p"></canvas></div>
           </div>
           <div class="panel chartpanel">
@@ -222,7 +222,7 @@
             </div>
             <div class="col grow" data-bind="dlChart">
               <div class="hseries" data-bind="dlSeries"></div>
-              <div class="panel chartpanel"><div class="panel-head"><span data-t="chart.pressure">Pressure (Torr)</span><span class="note">배경 띠 = 블록·스텝 · 끌어서 확대 · 두 번 누르면 전체</span></div>
+              <div class="panel chartpanel"><div class="panel-head"><span data-t="chart.pressure">Pressure (Torr)</span><span class="note" title="배경 띠 = 블록·스텝 · 끌어서 확대 · 두 번 누르면 전체">Bands = Block / Step · drag to zoom · double-click for all</span></div>
                 <div class="panel-body"><canvas data-dlchart="p"></canvas></div></div>
               <div class="panel chartpanel"><div class="panel-head" data-t="chart.mfcShort">MFC (sccm)</div>
                 <div class="panel-body"><canvas data-dlchart="m"></canvas></div></div>
@@ -238,7 +238,7 @@
               <div class="panel-body tight scroll"><table class="tbl mono small" data-bind="dlTbl"></table></div>
             </div>
             <div class="panel grow" data-bind="dlRecipe" hidden>
-              <div class="panel-head"><span data-t="panel.recipeCopy">Recipe Copy</span><span class="note">읽기 전용</span></div>
+              <div class="panel-head"><span data-t="panel.recipeCopy">Recipe Copy</span><span class="note">Read Only</span></div>
               <div class="panel-body scroll"><pre class="jsonbox" data-bind="dlRecipeBox"></pre></div>
             </div>
           </div>
@@ -256,7 +256,7 @@
           <div class="panel-body tight cap-alarm"><table class="tbl" data-bind="alarmTbl"></table></div>
         </div>
         <div class="panel" style="flex:0 0 auto">
-          <div class="panel-head"><span data-t="panel.notices">Program Notices</span><span class="note">PLC 알람이 아니라 이 프로그램이 판단한 것</span></div>
+          <div class="panel-head"><span data-t="panel.notices">Program Notices</span><span class="note" title="PLC 알람이 아니라 이 프로그램이 판단한 것">Program checks, not PLC alarms</span></div>
           <div class="panel-body tight cap-notice" data-bind="pcNotices"></div>
         </div>
         <div class="panel" style="flex:0 0 190px">

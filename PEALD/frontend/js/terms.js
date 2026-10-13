@@ -111,6 +111,21 @@
     return '';
   };
 
+  /** ★ v0.5.2(A1): 글자 폭 어림(px, 굵게 기준 — 넉넉히). 상태 점 목록에서 긴 이름이 두 열을 쓸지 정한다 */
+  T.textPx = function (s, px) {
+    var w = 0;
+    String(s || '').split('').forEach(function (ch) {
+      w += ' .'.indexOf(ch) >= 0 ? 0.3 : '()'.indexOf(ch) >= 0 ? 0.36 : ch === '-' ? 0.38
+        : '/ftjr'.indexOf(ch) >= 0 ? 0.4 : 'ilI'.indexOf(ch) >= 0 ? 0.3 : 'mwMW'.indexOf(ch) >= 0 ? 0.9
+          : /[0-9]/.test(ch) ? 0.6 : /[A-Z]/.test(ch) ? 0.68 : /[a-z]/.test(ch) ? 0.56 : 1.0;
+    });
+    return w * (px || 12) * 1.05;
+  };
+  T.STI_COL = 96;          // 상태 점 목록 한 열의 최소 폭(px) — style.css 의 minmax(96px, 1fr) 와 같게
+  T.stiSpan = function (name) {           // 점(7) + 사이(5) + 이름이 한 열을 넘으면 두 열
+    return T.textPx(name, 12) + 12 > T.STI_COL ? 2 : 1;
+  };
+
   if (typeof module !== 'undefined' && module.exports) module.exports = T;
   else root.T = T;
 })(typeof window !== 'undefined' ? window : this);

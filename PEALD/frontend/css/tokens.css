@@ -141,7 +141,7 @@
   --flow:  #4f8ae8;
   --exh:   #5f656c;
   --valve-open: #3dba70;
-  --valve-closed: #646a71;
+  --valve-closed: #a3a9b0;     /* v0.5.2(B11): 배관(#5a6067)과 구분되게 밝게 */
   --vessel: #30343a;
   --vessel-line: #6e747b;
   --vessel-cold: #30343a;

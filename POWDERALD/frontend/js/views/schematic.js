@@ -20,6 +20,8 @@
  * ★ 색은 CSS 변수만 쓴다. 이 파일에 hex 를 쓰지 않는다.
  * ★ v0.5.0: 이름은 영문 용어(terms.js) · 상자는 같은 회색 · 밸브 열림 = 초록 채움 · 닫힘 = 회색 외곽선 ·
  *   모름 = 점선 · 흐름 선만 파랑. 조작 가능한 요소(data-fp)를 누르면 그 옆에 조작 창(faceplate.js)이 뜬다.
+ * ★ v0.5.2: 챔버 상자는 내용 높이로 · 배기 제목은 배관 왼쪽 · 누르기 영역에 밸브 이름까지 · Tab 은 무리 순서 ·
+ *   매니폴드 출구를 한 격자 비켜 세 갈래 둘 · 라인 이름과 값 간격 같게(이름 폭 + 12).
  * ★ v0.5.1 다시 그림: 상자 · 밸브 · 배관 좌표는 모두 8 격자. 배관은 가로 · 세로만(직각으로 꺾음), 겹치거나
  *   상자 테두리를 따라 가지 않고, 갈래에는 작은 점. 같은 종류는 같은 크기(MFC 88×64 한 열 · 캐니스터 80×56
  *   한 줄 · 펌프는 원 하나). 밸브 이름은 가로 배관이면 위, 세로 배관이면 오른쪽. 라인 이름 · 온도는 라인 왼쪽
@@ -44,6 +46,7 @@
   var built = false;
   var parent = null;            // group() 안에서 그리는 동안의 부모(툴팁 <title> 을 함께 묶는다)
   var hits = [];                // 조작 가능한 요소(faceplate) — build 끝에 맨 위 겹으로 놓는다
+  var grp = 0;                  // 지금 그리는 무리(0 전구체 · 1 반응물 · 2 챔버 · 3 배기) — Tab 순서
 
   /* ---------- 작은 빌더 ---------- */
   function el(tag, a) {
@@ -83,9 +86,36 @@
     return add(t);
   }
 
-  /** 묶음 제목 — 작은 회색 대문자, 묶음 왼쪽 위 */
-  function title(x, y, s) {
-    return txt(x, y, String(s).toUpperCase(), { weight: 700, fill: 'var(--ink-faint)', spacing: 0.5 });
+  /** 묶음 제목 — 작은 회색 대문자. anchor 'end' 면 x 에서 왼쪽으로(배관 왼쪽에 붙일 때) */
+  function title(x, y, s, anchor) {
+    return txt(x, y, String(s).toUpperCase(), { weight: 700, fill: 'var(--ink-faint)', spacing: 0.5, anchor: anchor });
+  }
+
+  /** 글자 폭 어림(viewBox 단위) — 누르기 영역 · 값 자리를 잡는 데만 쓴다(브라우저에서는 실제 길이로 다시 맞춤) */
+  function textW(str, size, mono) {
+    var wsum = 0;
+    String(str).split('').forEach(function (ch) {
+      var c = ch.charCodeAt(0);
+      wsum += mono ? 0.62 : (c >= 0xAC00 && c <= 0xD7A3) || ch === '℃' || ch === '—' || ch === '→' ? 1.0
+        : ch === ' ' || ch === '.' ? 0.3 : '()'.indexOf(ch) >= 0 ? 0.36 : ch === '-' ? 0.38 : ch === '/' ? 0.4
+          : 'ilI'.indexOf(ch) >= 0 ? 0.3 : 'ftjr'.indexOf(ch) >= 0 ? 0.4 : 'mwMW'.indexOf(ch) >= 0 ? 0.9
+            : /[0-9]/.test(ch) ? 0.6 : /[A-Z]/.test(ch) ? 0.68 : /[a-z]/.test(ch) ? 0.56 : 0.7;
+    });
+    return wsum * (size || FS);
+  }
+
+  /** 라인 이름 + 값 한 줄 — 값은 이름 폭 + 12 뒤(모든 라인 같은 간격). 브라우저에서는 실제 글자 길이로 맞춘다 */
+  var NAME_GAP = 12;
+  function labelValue(x, y, name, bind) {
+    var n = txt(x, y, name);
+    var v = txt(x + Math.ceil(textW(name)) + NAME_GAP, y, '—', { mono: true, fill: 'var(--pv)', bind: bind });
+    if (typeof n.getComputedTextLength === 'function') {
+      try {
+        var L = n.getComputedTextLength();
+        if (L > 0) v.setAttribute('x', Math.ceil(x + L + NAME_GAP));
+      } catch (e) { /* 아직 그려지지 않음 — 어림값 그대로 */ }
+    }
+    return Math.ceil(textW(name)) + NAME_GAP + textW('250.0 ℃', FS, true);   // 이름 + 값 폭(누르기 영역)
   }
 
   /** 배관(가로 · 세로 토막만). key 를 주면 update() 에서 흐름 색을 바꾼다. */
@@ -107,17 +137,18 @@
   /** 조작 가능한 요소(배관도 HMI) — 누르면 그 옆에 조작 창(faceplate)이 뜬다. kind:key 와 둘레(x, y, w, h).
    *  ★ 맞는 자리는 사각형(rect)이 아니라 path 로 — 글자 · 상자 겹침 검사는 rect 를 상자로 본다. */
   function hmi(kind, key, x, y, wd, ht, ttl) {
-    hits.push({ kind: kind, key: key, x: x, y: y, w: wd, h: ht, title: ttl || key });
+    hits.push({ kind: kind, key: key, x: x, y: y, w: wd, h: ht, title: ttl || key, grp: grp });
   }
 
-  /** 조작 요소를 맨 위 겹으로 — Tab 순서는 위 → 아래, 왼쪽 → 오른쪽 */
+  /** 조작 요소를 맨 위 겹으로 — ★ v0.5.2(B7): Tab 순서는 무리(Precursor → Reactant → Chamber → Exhaust) 다음
+   *  위 → 아래, 왼쪽 → 오른쪽(열 사이를 오가지 않게) */
   function hitLayer() {
     var layer = add(el('g', { 'data-hmi': '1' }));
-    hits.slice().sort(function (a, b) { return (a.y - b.y) || (a.x - b.x); }).forEach(function (h) {
-      var g = el('g', { 'data-fp': h.kind + ':' + h.key, tabindex: 0, role: 'button',
+    hits.slice().sort(function (a, b) { return (a.grp - b.grp) || (a.y - b.y) || (a.x - b.x); }).forEach(function (h) {
+      var g = el('g', { 'data-fp': h.kind + ':' + h.key, 'data-grp': h.grp, tabindex: 0, role: 'button',
                         'aria-label': h.title, 'aria-haspopup': 'dialog' });
       var t = el('title', {});
-      t.textContent = h.title + ' — 누르면 조작 창';
+      t.textContent = h.title + ' — click to operate';
       g.appendChild(t);
       g.appendChild(el('path', {
         'class': 'fp-hit',
@@ -146,7 +177,15 @@
     });
     t.textContent = tag;
     g.appendChild(t);
-    if (fp !== null) hmi(fp || 'valve', tag, cx - 9, cy - 9, 18, 18, tag);
+    // ★ v0.5.2(B6): 누르기 영역은 아이콘 + 이름 글자까지
+    if (fp !== null) {
+      var tw = Math.ceil(textW(tag));
+      if (side === 'r') hmi(fp || 'valve', tag, cx - 9, cy - 9, 9 + VH + 5 + tw + 3, 18, tag);
+      else {
+        var hw = Math.max(9, Math.ceil(tw / 2) + 2);
+        hmi(fp || 'valve', tag, cx - hw, cy - VH - 5 - 15, 2 * hw, 15 + 5 + VH + 9, tag);
+      }
+    }
     return g;
   }
 
@@ -218,21 +257,24 @@
 
   /* ===================== 그리기 ===================== */
   // --- 좌표(모두 8 격자, 두 장비 공통) — 겹침은 이 숫자만 고쳐서 잡는다 ---
-  var CH_L = 392, CH_R = 592, CH_T = 64, CH_B = 336;   // 챔버(반응기)
+  // ★ v0.5.2(B5): 챔버(반응기) 상자는 내용 높이에 맞춰 줄이고(아래 232), 남는 세로 공간은 배기 쪽 간격으로
+  var CH_L = 392, CH_R = 592, CH_T = 64, CH_B = 232;   // 챔버(반응기)
+  var CH_IN = 216;         // 반응물이 챔버에 들어가는 높이(챔버 왼쪽, 아래에서 한 칸 위)
   var CX = 400, CV = 504;                              // 챔버 안 이름 · 값 왼쪽
   var P_Y = 72;            // 전구체 라인
   var A_Y = 224;           // 어시스트 라인
   var CAN_T = 128, CAN_H = 56, CAN_W = 80;
   var EX_X = 472;          // 배기 중심
+  var EX_T = 264;          // 배기 무리 제목 기준선
 
   /** 전구체 · 어시스트(두 장비 같음) */
   function buildPrecursor() {
+    grp = 0;
     title(G, 24, T('eq.precursor'));
     mfcBox(P_Y - MFC_H / 2, 1, 'Precursor Carrier');
     pipe('M' + (MFC_X + MFC_W) + ',' + P_Y + ' H' + CH_L, 'pline');
-    txt(104, P_Y - 6, T('eq.pline'));
-    txt(208, P_Y - 6, '—', { mono: true, fill: 'var(--pv)', bind: 'h2' });
-    hmi('heater', 2, 100, P_Y - 22, 176, 18, 'CH2 ' + T('eq.pline'));
+    var lw = labelValue(104, P_Y - 6, T('eq.pline'), 'h2');
+    hmi('heater', 2, 100, P_Y - 22, Math.ceil(lw) + 8, 18, 'CH2 ' + T('eq.pline'));
 
     var cans = [
       { x: 112, out: 152, tag: 'PV-1', label: T('eq.can1'), ch: 0 },
@@ -258,6 +300,7 @@
 
   /** 챔버(반응기) — 큰 용기 하나. 안의 글자는 왼쪽 정렬: 이름 · 상태(리드) · 온도 · 압력 */
   function buildVessel(name, lidLabel) {
+    grp = 2;
     box(CH_L, CH_T, CH_R - CH_L, CH_B - CH_T, { fill: 'var(--chamber-bg)', stroke: 'var(--chamber-line)' });
     txt(CX, CH_T + 28, name, { size: FT, weight: 700, fill: 'var(--ink)' });
     txt(CX, CH_T + 52, lidLabel);
@@ -276,18 +319,31 @@
 
   /** N2 Vent(VV) — 챔버 위 왼쪽에서 올라가 왼쪽으로. 벤트 조작 요소 */
   function buildVent() {
+    grp = 2;
     pipe('M408,' + CH_T + ' V32 H360', 'vv');
     txt(352, 36, 'N2 ' + T('eq.vent'), { anchor: 'end' });
     valve('VV', 384, 32, 'a', 'vent');
   }
 
-  /** 배기 아래쪽 — 트랩 · 펌프 · '→ Exhaust' (두 장비 같음) */
+  /** 배기 무리 제목 — ★ v0.5.2(B1): 배기 배관(EX_X) 왼쪽에 오른쪽 맞춤(배관에 닿지 않게) */
+  function exhaustTitle() {
+    grp = 3;
+    title(EX_X - G, EX_T, T('eq.exhaust'), 'end');
+  }
+
+  /** 펌프 이름 — 두 펌프 같은 자리 규칙(원 왼쪽, 오른쪽 맞춤) */
+  function pumpLabel(cx, cy, name) {
+    return txt(cx - PUMP_R - 4, cy + FS * 0.35, name, { anchor: 'end', weight: 700, fill: 'var(--ink)' });
+  }
+
+  /** 배기 아래쪽 — 트랩(캐니스터와 같은 80×56) · 펌프 · '→ Exhaust' (두 장비 같음) */
   function buildExhaustTail(pumpName) {
-    vessel(EX_X - 40, 424, 80, 48, T('eq.trap'), 6, 'CH6 ' + T('eq.trap'));
+    grp = 3;
+    vessel(EX_X - 40, 400, CAN_W, CAN_H, T('eq.trap'), 6, 'CH6 ' + T('eq.trap'));
     // 배관은 격자 점(펌프 가운데)까지 — 원이 그 위를 덮는다
-    pipe('M' + EX_X + ',472 V488 H520', 'exh2', 'exh');
+    pipe('M' + EX_X + ',456 V488 H520', 'exh2', 'exh');
     pump(EX_X, 488, 'PMP');
-    txt(EX_X - PUMP_R - 4, 488 + FS * 0.35, pumpName, { anchor: 'end', weight: 700, fill: 'var(--ink)' });
+    pumpLabel(EX_X, 488, pumpName);
     hmi('pump', 'PMP', 392, 476, EX_X + PUMP_R - 392, 24, pumpName);
     txt(524, 488 + FS * 0.35, '→ ' + T('eq.exhaust'));
   }
@@ -297,45 +353,51 @@
     svg.innerHTML = '';
     hits = [];
     var O3_Y = 320;            // O3 라인(발생기 출구 → 반응기)
-    var B_X = 152, B_Y = 432;  // 바이패스 갈래 · 바이패스 펌프 줄
+    var B_X = 184;             // 바이패스 갈래(세로로 내려가 바이패스 펌프)
+    var GEN_X = 40, GEN_W = 120, GEN_T = 296, GEN_H = 56;   // O3 발생기
 
     buildPrecursor();
 
     /* ---------- 반응물 (O3 라인) ---------- */
+    grp = 1;
     title(G, 288, T('eq.reactant'));
-    pipe('M96,264 V296', 'o2in');
-    txt(104, 284, T('eq.o2'));
-    box(G, 296, 112, 56);
-    txt(16, 314, T('eq.o3gen'), { weight: 700, fill: 'var(--ink)' });
-    txt(16, 340, '—', { mono: true, fill: 'var(--pv)', bind: 'o3' });
-    add(el('circle', { cx: 110, cy: 309, r: 4, fill: 'var(--valve-closed)', 'data-aux': 'O3GEN' }));
-    hmi('o3', 'O3', G, 296, 112, 56, T('eq.o3gen'));
+    // ★ v0.5.2(B3): O2 공급은 왼쪽 바깥에서 발생기로 들어온다(화살표로 방향)
+    pipe('M' + G + ',336 H' + GEN_X, 'o2in');
+    add(el('path', { d: 'M' + (GEN_X - 7) + ',332 L' + GEN_X + ',336 L' + (GEN_X - 7) + ',340 Z',
+                     fill: 'var(--ink-faint)', 'data-arrow': 'o2in' }));
+    txt(G, 372, T('eq.o2'));
+    box(GEN_X, GEN_T, GEN_W, GEN_H);
+    txt(GEN_X + 8, 314, T('eq.o3gen'), { weight: 700, fill: 'var(--ink)' });
+    // ★ v0.5.2(B2): 운전 점은 제목이 아니라 값 옆
+    add(el('circle', { cx: GEN_X + 12, cy: 336, r: 4, fill: 'var(--valve-closed)', 'data-aux': 'O3GEN' }));
+    txt(GEN_X + 22, 340, '—', { mono: true, fill: 'var(--pv)', bind: 'o3' });
+    hmi('o3', 'O3', GEN_X, GEN_T, GEN_W, GEN_H, T('eq.o3gen'));
 
     // 발생기 → 갈래 → PV-R → 반응기
-    pipe('M120,' + O3_Y + ' H' + B_X, 'o3out');
-    pipe('M' + B_X + ',' + O3_Y + ' H' + CH_L, 'toChamberR');
+    pipe('M' + (GEN_X + GEN_W) + ',' + O3_Y + ' H' + B_X, 'o3out');
+    pipe('M' + B_X + ',' + O3_Y + ' H376 V' + CH_IN + ' H' + CH_L, 'toChamberR');
     junction(B_X, O3_Y, 'o3out');
     valve('PV-R', 304, O3_Y, 'a');
 
-    // 발생기 출구에서 갈라지는 바이패스 (PLC 자동) → IV-B → 바이패스 펌프 → 배기
-    pipe('M' + B_X + ',' + O3_Y + ' V' + B_Y, 'byp');
+    // 발생기 출구에서 갈라지는 바이패스 (PLC 자동) → IV-B → 바이패스 펌프 → 배기 — 세로로 내려간다
+    pipe('M' + B_X + ',' + O3_Y + ' V424', 'byp');
     valve('PV-B', B_X, 376, 'r');
     txt(B_X + 10, 400, T('eq.plcAuto'), { fill: 'var(--ink-faint)' });
-    pipe('M' + B_X + ',' + B_Y + ' H264', 'byp2');
-    valve('IV-B', 200, B_Y, 'a', null);
-    pipe('M264,' + B_Y + ' H304', 'byp3', 'exh');         // 펌프 원이 가운데를 덮는다
-    pump(264, B_Y, 'BPMP');
-    txt(264, 464, T('eq.bypassPump'), { anchor: 'middle', weight: 700, fill: 'var(--ink)' });
-    txt(308, B_Y + FS * 0.35, '→ ' + T('eq.exhaust'));
+    pipe('M' + B_X + ',424 V472', 'byp2');
+    valve('IV-B', B_X, 432, 'r', null);
+    pipe('M' + B_X + ',472 H224', 'byp3', 'exh');          // 펌프 원이 가운데를 덮는다
+    pump(B_X, 472, 'BPMP');
+    pumpLabel(B_X, 472, T('eq.bypassPump'));                // ★ v0.5.2(B10): Main Pump 과 같은 자리 규칙
+    txt(228, 472 + FS * 0.35, '→ ' + T('eq.exhaust'));
 
     /* ---------- 반응기 ---------- */
     buildVessel(T('eq.reactor'), T('eq.lid'));
     buildVent();
 
     /* ---------- 배기 ---------- */
-    title(400, 360, T('eq.exhaust'));
-    pipe('M' + EX_X + ',' + CH_B + ' V424', 'exh', 'exh');
-    valve('IV-E', EX_X, 392, 'r', null);
+    exhaustTitle();
+    pipe('M' + EX_X + ',' + CH_B + ' V400', 'exh', 'exh');
+    valve('IV-E', EX_X, 320, 'r', null);
     buildExhaustTail('Main Pump');
 
     hitLayer();
