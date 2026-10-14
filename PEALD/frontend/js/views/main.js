@@ -319,19 +319,18 @@
     // 같은 칩을 두 번 그리면 인터락 패널이 넘친다.
     core.html(box, stiList(out));
     snapIlks(box);
-    keepProblems(box);
   }
 
-  /** 인터락 목록 칸 높이를 줄 높이의 배수로 — 낮은 화면(1280×900 등)에서 마지막 줄이 반만 보이지 않게
-   *  (넘치는 줄은 스크롤로 본다). */
+  /** 인터락 목록 칸 높이를 줄 높이의 배수로 — 줄이 반쯤 잘리지 않게(넘치는 줄은 스크롤로 본다).
+   *  ★ v0.5.4: 넘칠 때만이 아니라 늘 — 상자의 실제 높이(clientHeight)를 18 의 배수로 내려 맞춘다 */
   function snapIlks(box) {
-    var chip = box.querySelector('.sti');
-    if (!chip) return;
     box.style.maxHeight = '';
-    var gap = 0, rowH = chip.offsetHeight + gap, h = box.clientHeight;     // v0.5.3: 줄 사이 0 · 줄 높이 18
-    if (!rowH || !h || box.scrollHeight <= h + 1) return;
-    box.style.maxHeight = Math.max(rowH - gap, Math.floor((h + gap) / rowH) * rowH - gap) + 'px';
+    var h = box.clientHeight;
+    if (!h) return;
+    box.style.maxHeight = snapRows(h) + 'px';
   }
+
+  function snapRows(h) { return Math.max(STI_ROW, Math.floor(h / STI_ROW) * STI_ROW); }
 
   /** 입력 한 줄(상태 점).
    *  ★ ok_when=false 인 입력(펌프 알람·가스 누출·과온·RF 알람)은 '이상일 때 1'이다 —
@@ -347,13 +346,30 @@
     return { name: k.name, lvl: lvl, why: why };
   }
 
-  /** ★ v0.5.3: 상태 목록은 알람(빨강) → 경고(노랑) → 그 밖 순(T.stiOrder) — 문제 항목이 위로 */
+  /** ★ v0.5.3: 상태 목록은 알람(빨강) → 경고(노랑) → 그 밖 순(T.stiOrder) — 문제 항목이 위로.
+   *  ★ v0.5.4: 알람이나 경고가 있으면 문제 항목만 그리고, 정상 항목은 회색 '+N OK' 한 칸(올리면 툴팁 · 누르면 알림에
+   *  전체 이름) — 칸이 좁아도 문제 항목이 스크롤 아래로 숨지 않게(T.stiCompact) */
   function stiList(items) {
-    return T.stiOrder(items).map(function (i) { return sti(i.name, i.lvl, i.why); }).join('');
+    var c = T.stiCompact(items);
+    var h = c.items.map(function (i) { return sti(i.name, i.lvl, i.why); }).join('');
+    if (c.ok.length) {
+      var names = c.ok.map(function (i) { return i.name; }).join(' · ');
+      h += '<span class="sti more" tabindex="0" role="button" data-okall="' + core.esc(names) + '" title="' +
+        core.esc(names) + '"><i></i>+' + c.ok.length + ' OK</span>';
+    }
+    return h;
+  }
+
+  if (d && d.addEventListener) {
+    d.addEventListener('click', function (ev) {
+      var m = ev.target.closest && ev.target.closest('[data-okall]');
+      if (m) core.toast('OK — ' + m.getAttribute('data-okall'), 'info');
+    });
   }
 
   /** ★ v0.5.3: 알람 · 경고 항목은 줄 수 제한(max-height)과 상관없이 늘 보이게 — 맨 위에 모여 있으니
-   *  그 줄 수만큼은 상자 높이를 늘린다(그 밖 항목은 스크롤) */
+   *  그 줄 수만큼은 상자 높이를 늘린다(그 밖 항목은 스크롤). ★ v0.5.4: 높이가 늘 수 있는 장비 전용 칸(RF · O3)에만 쓴다 —
+   *  인터락 목록은 높이 고정 칸 안이라 늘지 않으므로 문제 항목만 + '+N OK' 와 snapIlks 로 맞춘다 */
   var STI_ROW = 18;
   function keepProblems(box) {
     if (!box || !w.getComputedStyle) return;

@@ -128,6 +128,14 @@
       .sort(function (a, b) { return (T.stiRank(a[0].lvl) - T.stiRank(b[0].lvl)) || (a[1] - b[1]); })
       .map(function (x) { return x[0]; });
   };
+  /** ★ v0.5.4: 알람이나 경고가 하나라도 있으면 문제 항목만(알람 먼저) + 정상 항목은 '+N OK' 한 칸으로 묶는다.
+   *  { items: 그릴 항목, ok: 묶은 정상 항목(없으면 []) } — 문제가 없으면 전체를 순서대로 */
+  T.stiCompact = function (items) {
+    var ord = T.stiOrder(items);
+    var probs = ord.filter(function (i) { return T.stiRank(i.lvl) < 2; });
+    if (!probs.length) return { items: ord, ok: [] };
+    return { items: probs, ok: ord.slice(probs.length) };
+  };
   T.STI_COL = 96;          // 상태 점 목록 한 열의 최소 폭(px) — style.css 의 minmax(96px, 1fr) 와 같게
   T.stiSpan = function (name) {           // 점(7) + 사이(5) + 이름이 한 열을 넘으면 두 열
     return T.textPx(name, 12) + 12 > T.STI_COL ? 2 : 1;

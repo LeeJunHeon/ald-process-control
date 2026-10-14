@@ -33,9 +33,11 @@ def test_2_all_status_lists_use_order_and_keep_problems():
     main = _src("js", "views", "main.js")
     # 인터락 목록 · RF(PEALD) / O3(Powder) 목록 모두 같은 규칙
     assert main.count("stiList(out)") == 2, main.count("stiList(out)")
-    assert "core.html(box, stiList(out));\n    snapIlks(box);\n    keepProblems(box);" in main
+    # v0.5.4: 인터락 목록은 높이 고정 칸이라 keepProblems 로 늘 수 없다 — 문제 항목만 + '+N OK'(stiList) 와 snapIlks 로
+    assert "core.html(box, stiList(out));\n    snapIlks(box);\n  }" in main
     assert "chips.style.maxHeight = '';\n    core.html(chips, stiList(out));\n    keepProblems(chips);" in main
-    assert "return T.stiOrder(items).map(" in main
+    # v0.5.4: 순서는 T.stiCompact 안의 T.stiOrder 가 정한다(알람 → 경고 → 그 밖)
+    assert "var c = T.stiCompact(items);" in main
     # 문제 항목(빨강 · 노랑)이 차지하는 줄 수만큼은 줄 수 제한(max-height)보다 높이를 늘린다
     assert "box.querySelectorAll('.sti.stop, .sti.warn')" in main and "box.style.maxHeight = need + 'px'" in main
     assert "out.push(sti(" not in main and "return sti(k.name" not in main
@@ -51,7 +53,8 @@ def test_3_interlock_box_height_is_row_multiple():
     m = re.search(r"\[data-bind=\"devPanelBody\"\] \.stl \{[^}]*grid-auto-rows: (\d+)px; max-height: (\d+)px;[^}]*row-gap: 0;", css)
     assert m and int(m.group(2)) % int(m.group(1)) == 0, m and m.groups()
     main = _src("js", "views", "main.js")
-    assert "var gap = 0, rowH = chip.offsetHeight + gap" in main          # 줄 사이 0 — 자르는 높이도 18 의 배수
+    # v0.5.4: 자르는 높이는 늘(넘칠 때만이 아니라) 18 의 배수 — snapRows
+    assert "function snapRows(h) { return Math.max(STI_ROW, Math.floor(h / STI_ROW) * STI_ROW); }" in main
     assert "var STI_ROW = 18;" in main
 
 
@@ -105,4 +108,4 @@ def test_7_plc_auto_on_pv_b_line():
 
 def test_version_053():
     from peald import version
-    assert version.APP_VERSION == "0.5.3"
+    assert tuple(int(x) for x in version.APP_VERSION.split(".")) >= (0, 5, 3)   # v0.5.4: 버전이 오를 때 깨지지 않게

@@ -772,3 +772,6 @@ header .chip.alarm { border-color: var(--stop-line); color: var(--stop); }
 .kv .v { min-width: 0; text-align: right; }
 .stl { grid-auto-flow: row dense; }
 .stl .sti.w2 { grid-column: span 2; }
+/* v0.5.4: 정상 항목 묶음 '+N OK' — 회색, 누를 수 있음 */
+.sti.more { cursor: pointer; }
+.sti.more > i { background: var(--off); }

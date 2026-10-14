@@ -88,6 +88,7 @@
   });
 
   /* ===================== 상태 디스패치 ===================== */
+  var fitAfterState = false;
   function applyState(s) {
     lastState = s;
     setOffline(false);
@@ -96,6 +97,7 @@
       try { VIEWS[k].render(s); } catch (e) { console.error('render ' + k, e); }
     }
     if (s.live) applyLive(s.live);
+    if (!fitAfterState) { fitAfterState = true; fit(); }      // v0.5.4: 표가 그려진 뒤의 높이로 다시 잰다
     // 조작판이 열려 있으면 스위치를 다시 그린다(누른 뒤 서버가 보낸 상태로 — 열 때만 그리면 그대로 남는다)
     var sm = d.getElementById('simModal');
     if (sm && !sm.hidden) renderSimPanel();
@@ -546,23 +548,33 @@
     }
   }
 
-  /** ★ v0.5.3: 창이 폭에 비해 길어(768 폭 등) 캔버스가 기본 높이(CANVAS_H)보다 길면, 늘어난 높이는 배관도 줄이
-   *  아니라 아래 줄(히터 · MFC 표)이 받는다 — 배관도 칸 아래가 비지 않게. 배관도 줄은 기본 높이일 때의 높이로 둔다.
-   *  기본 높이(1280×900 등)에서는 아무것도 바꾸지 않는다. */
+  /** ★ v0.5.3 · v0.5.4: 창이 폭에 비해 길어(768 폭 등) 캔버스가 기본 높이(CANVAS_H)보다 길면, 늘어난 높이는
+   *  배관도 줄이 아니라 아래 줄(히터 · MFC 표)이 받는다 — 배관도 칸 아래가 비지 않게.
+   *  ★ v0.5.4: 위 줄은 .row.grow(flex:1, 기준 0)라 max-height 로는 지키지 못했다(두 줄이 남는 높이를 나눠 가져
+   *  Pressure 칸이 찌그러짐) — 위 줄은 '0 0 h0px'(기본 높이일 때의 높이로 고정), 아래 줄만 '1 1 auto'.
+   *  기본 높이(1280×900 등)에서는 원래 값(위 '' · 아래 HTML 의 '0 0 auto')으로 되돌린다. */
+  function rowFlex(hh, canvasH, h0, bottom0) {
+    if (hh <= canvasH + 1 || !(h0 > 0)) return { main: '', bottom: bottom0 };
+    return { main: '0 0 ' + Math.round(h0) + 'px', bottom: '1 1 auto' };
+  }
+
   function fitMainRows(app, hh) {
     var main = d.querySelector('#view-main > .row.grow');
     var bottom = d.querySelector('#view-main > .row:not(.grow)');
     if (!main || !bottom) return;
-    main.style.maxHeight = '';
-    bottom.style.flexGrow = '';
-    if (hh <= CANVAS_H + 1) return;
-    app.style.height = CANVAS_H + 'px';          // 기본 높이일 때의 배관도 줄 높이를 잰다
-    var h0 = main.offsetHeight;
-    app.style.height = hh + 'px';
-    if (h0 > 0) {
-      main.style.maxHeight = h0 + 'px';
-      bottom.style.flexGrow = '1';
+    if (bottom.getAttribute('data-flex0') === null) bottom.setAttribute('data-flex0', bottom.style.flex || '');
+    var bottom0 = bottom.getAttribute('data-flex0');
+    main.style.flex = '';                        // 원래대로 놓고 기본 높이일 때의 위 줄 높이를 잰다
+    bottom.style.flex = bottom0;
+    var h0 = 0;
+    if (hh > CANVAS_H + 1) {
+      app.style.height = CANVAS_H + 'px';
+      h0 = main.offsetHeight;
+      app.style.height = hh + 'px';
     }
+    var f = rowFlex(hh, CANVAS_H, h0, bottom0);
+    main.style.flex = f.main;
+    bottom.style.flex = f.bottom;
   }
 
   w.addEventListener('resize', fit);
