@@ -1,0 +1,61 @@
+{
+  "_설명": "가짜 PLC(test/fake_plc.py)의 장비 물리 값. 시간은 실제 시간(초)이고 --speed 배속을 곱해 흐른다. 래더 타이머 · 스텝 시간은 배속과 상관없이 실제 시간이다(내장 시뮬레이터와 같은 규칙).",
+
+  "pressure": {
+    "atm_torr": 760.0,
+    "ultimate_torr": 0.003,
+    "pumpdown_tau_s": 110.0,
+    "_pumpdown": "로그 곡선 — log10(p) 가 log10(ultimate) 쪽으로 이 시간 상수로 간다. 760 → 5E-2 Torr 약 2.7 분",
+    "vent_tau_s": 12.0,
+    "_vent": "N2 벤트 — 대기압 입력(700 Torr)까지 약 30 s",
+    "leak_torr_per_s": 0.00002,
+    "flow_torr_per_slm": 0.35,
+    "pcv_gain": 1.5,
+    "_pcv": "PEALD PCV 개도(%) 가 작을수록 공정 압력이 오른다. 0 은 '쓰지 않음(완전 열림)'",
+    "pulse_rise_torr": 0.06,
+    "pulse_decay_s": 0.4,
+    "atm_input_torr": 700.0
+  },
+
+  "mfc": {
+    "tau_s": 0.8,
+    "noise_fs": 0.002,
+    "_noise": "풀스케일 대비 표준편차"
+  },
+
+  "heaters": {
+    "default": { "ramp_c_per_min": 5.0, "damping": 0.55, "settle_tau_s": 25.0, "overshoot_c": 1.5, "cool_tau_s": 900.0, "noise_c": 0.05 },
+    "ch": {
+      "1": { "ramp_c_per_min": 4.0, "damping": 0.5, "overshoot_c": 3.0 },
+      "2": { "ramp_c_per_min": 8.0, "damping": 0.7 },
+      "3": { "ramp_c_per_min": 8.0, "damping": 0.7 },
+      "4": { "ramp_c_per_min": 3.0, "damping": 0.6, "settle_tau_s": 40.0 },
+      "5": { "ramp_c_per_min": 3.0, "damping": 0.6, "settle_tau_s": 40.0 },
+      "6": { "ramp_c_per_min": 6.0, "damping": 0.45, "overshoot_c": 4.0 }
+    },
+    "ambient_c": 25.0
+  },
+
+  "gauges": {
+    "cvg_noise_rel": 0.02,
+    "cm_noise_rel": 0.003,
+    "_range": "환산 범위 밖은 원시값이 끝에 붙는다(실제 게이지처럼 범위 밖 표시)"
+  },
+
+  "rf": {
+    "ramp_s": 0.5,
+    "reflect_ratio": 0.02,
+    "fault_reflect_ratio": 0.50,
+    "noise_w": 0.4
+  },
+
+  "pcv": { "tau_s": 2.0 },
+
+  "o3": { "tau_s": 15.0, "noise_rel": 0.01 },
+
+  "states": {
+    "atm": { "pressure": 760.0 },
+    "vac": { "pressure": 0.03 },
+    "hot": { "pressure": 0.03, "heaters": { "1": 150.0, "2": 90.0, "3": 90.0, "4": 60.0, "5": 60.0, "6": 120.0 } }
+  }
+}

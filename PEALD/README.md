@@ -7,7 +7,7 @@ PLC 가 서버, 이 프로그램이 클라이언트입니다.
 - 화면: pywebview 창 안의 HTML/CSS/JS (**외부 라이브러리 없음**, 오프라인 전제)
 - 화면 통신: WebSocket 하나 (`/ws`) — 상태의 주인은 서버입니다
 
-> **버전 0.5.4** — 768 폭 운전 탭의 줄 높이(Pressure 칸이 찌그러지던 것)와 인터락 목록(문제 항목만 + '+N OK')을 고쳤습니다. 서버 판단 · PLC 통신 · 명령 처리 규칙은 v0.4.16 그대로입니다.
+> **버전 0.6.0** — 실장비 없이 '실제 공정처럼' 시험하는 도구를 넣었습니다: 가짜 PLC(별도 프로세스 · 실제 같은 물리) · plc_ctl 시험 콘솔 · 실제 공정 시나리오 자동 시험(test/). 프로그램 동작(서버 판단 · PLC 통신 · 화면)은 v0.5.4 그대로입니다.
 > 2단계(수동 조작 · 레시피 · 공정 시작 흐름 · 시뮬레이터 공정 실행 · 데이터 로그)에 더했습니다.
 
 ```bash
@@ -418,6 +418,86 @@ b13 레시피 표 검증 실패(경고) · b14 가스 누출 · b15 전구체·�
   챔버 대기압). 화면은 요청(`D04012`)은 있는데 출력(`D00010`)이 없는 밸브를 **'대기'** 로 보여 줍니다
 - (PEALD) RF 출력 = ((시퀀서 동작 중 AND RF 스텝) OR (시퀀서 멈춤 AND `D04050` b8)) AND RF 허가(인터락 b8)
 - 펌핑 시작(8)은 펌프·배기 요청을 세우고 **벤트 요청을 지웁니다** → VV 가 바로 닫히고 IV-E 가 열립니다
+
+## 시험 도구 (test/ — 가짜 PLC · plc_ctl · 실제 공정 시나리오)
+
+PLC 가 준비되기 전에 '실제 공정처럼' 시험하는 도구다. 내장 시뮬레이터(plc.simulate = true)와 달리 **가짜 PLC 를 별도
+프로세스로 실제 PLC 자리에 두고**, 프로그램은 plc.simulate = false 로 실제 PLC 에 붙듯이 붙는다. test/ 는 exe 에
+들어가지 않는다(build.spec 은 run.py 가 import 하는 것만 묶는다 · config/ 는 예시 설정 한 파일만).
+
+| 파일 | 하는 일 |
+|---|---|
+| `test/fake_plc.py` | 가짜 PLC — Modbus TCP 서버. 래더(스캔 순서 · 타이머 · 알람 · 장비 ID)는 `simulator.PlcSim` 그대로, 장비 물리만 실제처럼 |
+| `test/fake_plant.json` | 물리 값 한곳 — 펌프다운(로그 곡선, 760 → 5E-2 Torr 약 3 분) · 벤트(약 30 s) · 공정 압력 · 펄스 압력 상승 · MFC 응답 · 잡음 · 히터 램프 · 오버슈트 · 정착(채널마다) · CVG · CM 잡음 · RF 순방향 · 반사 · PCV · O3 농도 · 시작 상태(atm · vac · hot) |
+| `test/plc_ctl.py` | 시험 콘솔 — 가짜 PLC · 실제 PLC 모두. status · read · write, 가짜 PLC 전용 fault · cut · id · speed · plant |
+| `test/e2e_process.py` | 실제 공정 시나리오 자동 시험 — 가짜 PLC 와 프로그램(headless)을 띄워 운전자처럼 WebSocket 으로 조작하고 PASS / FAIL 표 |
+
+★ 시간: 물리(펌핑 · 벤트 · 승온 · O3)는 `--speed` 배속, 래더 타이머 · 스텝 시간은 실제 시간(내장 시뮬레이터와 같은 규칙).
+
+### 1. 가짜 PLC 띄우기 → 프로그램을 가짜 PLC 로
+
+```
+python test/fake_plc.py --port 15301 --speed 10 --log fake_plc.log
+python test/fake_plc.py --port 15301 --state vac            (진공에서 시작 · hot = 진공 + 가열됨)
+python test/fake_plc.py --port 15301 --device-id 0x1234     (틀린 장비 ID 시험)
+```
+
+config.json 의 plc 를 `"host": "127.0.0.1", "port": 15301, "simulate": false` 로 바꾸고 프로그램을 실행한다
+(`python run.py`). 가짜 PLC 는 같은 설정 파일을 `--config` 로 받아야 아날로그 환산이 같다(기본은 예시 설정).
+`--log` 파일에는 PLC 쪽에서 본 PC 하트비트 공백(600 ms 이상) · 받은 명령(번호 · 코드) · 장비 상태 · 시퀀서 ·
+알람 워드 변화가 남는다. 제어 포트는 `--port + 1`(127.0.0.1 만), 제어 파일(`--ctl-file`)에 JSON 한 줄씩 덧붙여도 된다.
+
+### 2. plc_ctl 로 고장 넣기
+
+```
+python test/plc_ctl.py --port 15301 status                  (1 s 마다 — 상태 · 시퀀서 · 알람 · 입력 · 출력 · 압력 · 온도)
+python test/plc_ctl.py --port 15301 faults                  (고장 목록 · 켜짐 표시)
+python test/plc_ctl.py --port 15301 fault emo on            (끄기는 off)
+python test/plc_ctl.py --port 15301 cut blackhole 2.0       (요청을 받고 답하지 않음 n 초)
+python test/plc_ctl.py --port 15301 cut refuse 3            (연결을 끊고 n 초 동안 연결 거부)
+python test/plc_ctl.py --port 15301 id 0x1234               (장비 ID 바꾸기)
+python test/plc_ctl.py --port 15301 speed 20 · plant vac
+```
+
+고장 키: emo · air · n2 · cw · lid · pump_alm · leak · ot · mfc1_stuck · tc1_comm~tc3_comm · pc_hb_stop · plc_stop ·
+ive_stuck · pump_nofb · rf_notready · rf_alm · rf_ref
+(내장 시뮬레이터 조작판과 같은 목록).
+
+### 3. 실제 공정 시나리오 자동 시험
+
+```
+python test/e2e_process.py                       (전부, 배속 10)
+python test/e2e_process.py startup recipe faults --speed 20
+python test/e2e_process.py faults --faults emo,leak --keep   (--keep: 임시 폴더 · 로그 · 데이터 로그를 남김)
+```
+
+| 시나리오 | 보는 것 |
+|---|---|
+| startup | 연결(simulate = false) · 장비 ID · PRM 쓰기/되읽기 · PLC/PC 하트비트(PLC 쪽 기록에 공백 없음) |
+| pumpdown | 펌프 기동 · 피드백 → 베이스 압력(로그 곡선 · 물리 몇 분) → 히터 승온 · 오버슈트 · 정착 |
+| recipe | 레시피 저장 · 올리기 · 시작 → 정상 종료 — TMA–H2O 열 ALD · TMA–O2 플라즈마 · 블록 · 그룹 반복, 끝 결과 · 데이터 로그 행 수 · 메타 |
+| control | 일시정지 · 재개 · 사이클 후 정지 · 즉시 중단 |
+| faults | 공정 중 EMO · 펌프 알람 · 가스 누출 · 히터 과온 · RF 반사 · MFC 막힘 → 안전 정지 · 끝 결과 문구 · 알람 이력 |
+| comm | 블랙홀 1.2 s · 2.0 s(공정 계속) · 3.6 s(PC 통신 끊김 트립) · PLC STOP → RUN(PLC 재시작) · 프로그램 재시작 뒤 이어받기 |
+| device_id | 틀린 장비 ID → 막힘 · 명령 거절 → 되돌리면 풀림 |
+| manual | 밸브 · MFC · PCV · RF(가스를 흘려 RF 허가를 만든 뒤) · 공정 중 잠금 · 벤트 |
+| long · dual | 500 사이클 긴 공정 · 다른 프로그램 e2e 와 동시 실행(클라우드에서) |
+
+끝에 시나리오별 PASS / FAIL 표와 판정 근거(기대 · 실제)를 찍고, 띄운 프로세스(가짜 PLC · 프로그램)를 모두 끈다.
+프로그램은 빈 포트 · 임시 데이터 폴더 · 뮤텍스 없이 뜨므로 이 PC 에서 돌고 있는 프로그램과 data/ 는 건드리지 않는다.
+시험용 설정은 예시 설정에서 만든다(빈 풀스케일 · 과온 한계를 채우고 확정 표시 · valve_min_ms 20).
+
+### 4. 실기 시운전 때 plc_ctl
+
+실제 PLC 에서는 **제어 프로그램을 끈 상태에서** 쓴다(프로그램과 같은 PLC 에 동시에 쓰지 않는다).
+```
+python test/plc_ctl.py --host <PLC 주소> --port 502 status --count 1
+python test/plc_ctl.py --host <PLC 주소> --port 502 read D00000 30
+python test/plc_ctl.py --host <PLC 주소> --port 502 write D01004 1     (밸브 요청 하나 — 확인 질문)
+```
+쓰기는 대상 주소 · 장비 ID(이 장비 ID 와 다르면 표시) · 장비 상태를 먼저 보이고 확인을 받는다. 공정 중(준비 · 공정 중 ·
+일시정지 · 사이클 후 정지 중)이면 거절하고, 하트비트 · 명령 영역(D01000~D01003)은 `WRITE` 를 그대로 쳐야 쓴다.
+`--yes`(확인 생략)는 가짜 PLC 에만 듣는다. 고장 · 끊기 · ID 명령은 가짜 PLC 에만 보낸다.
 
 ## 내장 PLC 시뮬레이터
 

@@ -114,4 +114,4 @@ def test_2_main_renders_plus_ok_and_snaps_rows():
 
 def test_version_054():
     from peald import version
-    assert version.APP_VERSION == "0.5.4"
+    assert tuple(int(x) for x in version.APP_VERSION.split(".")) >= (0, 5, 4)   # v0.6.0: 버전이 오를 때 깨지지 않게
