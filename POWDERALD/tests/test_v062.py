@@ -113,7 +113,7 @@ def test_b1_render_counts_hidden_problems_and_box_title():
     out = _node(script)
     last = out["over"][out["over"].rindex('<span class="sti'):]
     assert ">+3 more</span>" in last and 'class="sti more stop"' in last, last          # 숨은 문제 3 개(OK 11 은 빼고)
-    assert 'title="Pump Alarm · RF Permit · Pump · OK 11 개"' in last, last
+    assert 'title="Pump Alarm · RF Permit · Pump · OK 11"' in last, last              # v0.6.3(B2): 알림과 같게 'OK n'
     assert 'data-lvl="err"' in last
     assert "more" not in out["noOk"].replace("sti more", "") and "OK</span>" not in out["noOk"], out["noOk"]
     assert out["t1"].startswith("OK 11 — Ok 0 · Ok 1") and out["t2"] == "" and out["t0"] == "", out
@@ -380,8 +380,8 @@ def test_d8_e2e_dual_finally_and_serve_app_flag():
     import e2e_process as E
     dual = inspect.getsource(E.Run.dual)
     assert "finally:" in dual and "except Exception" not in dual
-    sa = inspect.getsource(E.serve_app)
-    assert "isatty" not in sa and "if exit_on_eof:" in sa
+    # v0.6.3(A1): serve_app 의 EOF 감시는 글자(독스트링이 'isatty' 를 이유로 적는다) 대신 동작으로 본다 —
+    #   test_v063 test_a1_*(stdin=DEVNULL 이면 계속 뜸 · --exit-on-eof 와 stdin 닫힘이면 끝남)
     assert '"--exit-on-eof"]' in inspect.getsource(E.Harness.start_app)
 
 

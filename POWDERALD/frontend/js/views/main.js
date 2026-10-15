@@ -393,13 +393,13 @@
         core.esc(names) + '"><i></i>+' + c.ok.length + ' OK</span>';
     }
     if (c.more && c.more.length) {
-      // ★ v0.6.2(B1 · B2): N 은 숨은 문제 항목 수만 — 툴팁은 숨은 문제 이름 + 'OK n 개', 누르면(Enter 도) 수준별 알림
+      // ★ v0.6.2(B1 · B2): N 은 숨은 문제 항목 수만 — 툴팁은 숨은 문제 이름 + 'OK n'(v0.6.3: 알림과 같은 말), 누르면(Enter 도) 수준별 알림
       var lv = T.stiWorst(c.more);
       var hid = c.more.map(function (i) { return i.name; }).join(' · ');
       var okn = (c.okHid || []).length;
       h += '<span class="sti more' + (lv ? ' ' + lv : '') + '" tabindex="0" role="button" data-more="' +
         core.esc(T.stiMoreText(c.more, c.okHid)) + '" data-lvl="' + (lv === 'stop' ? 'err' : lv === 'warn' ? 'warn' : 'info') +
-        '" title="' + core.esc(hid + (okn ? ' · OK ' + okn + ' 개' : '')) + '"><i></i>+' + c.more.length + ' more</span>';
+        '" title="' + core.esc(hid + (okn ? ' · OK ' + okn : '')) + '"><i></i>+' + c.more.length + ' more</span>';
     }
     return h;
   }

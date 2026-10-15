@@ -2,7 +2,10 @@
 
 가짜 PLC(test/fake_plc.py)를 별도 프로세스로 띄우고, 프로그램을 plc.simulate = false 로 그 가짜 PLC 에 붙여
 headless 로 띄운 뒤, 화면이 보내는 것과 같은 명령을 WebSocket 으로 보내 결과를 PASS / FAIL 로 판정한다.
-끝나면 띄운 프로세스(가짜 PLC · 프로그램)를 모두 정리한다. 로그 · 데이터 로그는 임시 폴더에 쓰고 지운다(--keep 이면 남김).
+끝나면 띄운 프로세스(가짜 PLC · 프로그램)를 모두 정리한다. 로그 · 데이터 로그는 임시 폴더에 쓰고 지운다(--keep 이면 남김 —
+FAIL 이 하나라도 있으면 --keep 이 없어도 남기고 경로를 찍는다). FAIL 판정 문구 끝에는 그때의 가짜 PLC 상태(압력 · VV ·
+IV-E 출력과 리미트 · 대기압 입력 · 벤트 요청 · 인터락 워드 · 장비 상태 · 시퀀서)와 프로그램 live 를 마지막으로 받은 뒤
+경과 s 를 붙인다(v0.6.3 B1 — 가끔 나는 실패의 원인이 남게).
 
 실행:
     python test/e2e_process.py                       (전부, 배속 10)
@@ -65,8 +68,15 @@ class Report:
     def __init__(self):
         self.rows = []          # (시나리오, 항목, 기대, 실제, 통과)
         self.skips = set()      # 건너뛴 항목 (시나리오, 항목)
+        self.diag = None        # FAIL 때 붙일 진단 글을 돌려주는 함수(amain 이 fail_diag 로 건다)
 
     def check(self, scen, item, ok, expected, actual):
+        if not ok and self.diag:
+            # ★ v0.6.3(B1): FAIL(시간 초과 포함)이면 그때의 가짜 PLC 상태 · live 경과를 판정 문구에 붙인다
+            try:
+                actual = f"{actual} ‖ {self.diag()}"
+            except Exception as e:  # noqa: BLE001
+                actual = f"{actual} ‖ (진단 실패: {type(e).__name__}: {e})"
         self.rows.append((scen, item, str(expected), str(actual), bool(ok)))
         mark = "PASS" if ok else "FAIL"
         print(f"  [{mark}] {item} — 기대: {expected} / 실제: {actual}", flush=True)
@@ -96,6 +106,32 @@ class Report:
                 out.append(f"        ✕ {r[1]} — 기대 {r[2]} / 실제 {r[3]}")
         out.append("=" * 78)
         return "\n".join(out)
+
+
+def fail_diag(h, op) -> str:
+    """FAIL 진단 한 줄 — 가짜 PLC status 요약 · 프로그램 live 를 마지막으로 받은 뒤 경과 s(v0.6.3 B1)."""
+    st = h.ctl({"op": "status"}, quiet=True) if h is not None else None
+    if st and st.get("ok"):
+        def b(k):
+            return "1" if st.get(k) else "0"
+        p = st.get("pressure")
+        plc = (f"가짜 PLC: 압력 {p:.4g} Torr" if isinstance(p, (int, float)) else f"가짜 PLC: 압력 {p}") +               (f" · VV {b('vv')} · IV-E 출력 {b('iv_e')}(리미트 열림 {b('ive_open_in')} · 닫힘 {b('ive_close_in')})"
+               f" · 대기압 입력 {b('atm_in')} · 벤트 요청 {b('vent_req')} · 인터락 0x{int(st.get('interlock') or 0):04X}"
+               f" · 장비 {st.get('state_name')} · 시퀀서 {st.get('seq_name')}")
+    else:
+        plc = "가짜 PLC 상태: 받지 못함"
+    age = op.live_age() if op is not None else None
+    live = "프로그램 live: 받은 적 없음" if age is None else f"프로그램 live 마지막 수신 {age:.1f} s 전"
+    return f"{plc} · {live}"
+
+
+def keep_on_fail(h, rep) -> bool:
+    """FAIL 이 하나라도 있으면 --keep 이 없어도 임시 폴더(가짜 PLC 기록 · 프로그램 로그 · 데이터 로그)를 남긴다(v0.6.3 B1)."""
+    if rep.failed() and not h.keep:
+        h.keep = True
+        print("(FAIL 이 있어 --keep 없이도 임시 폴더를 남깁니다 — 가짜 PLC 기록 fake_plc.log · 프로그램 로그 app.out · "
+              "데이터 로그 app/)", flush=True)
+    return h.keep
 
 
 MFC_TIMEOUT_S = 15             # 시험용 설정의 MFC 준비 제한(params.mfc_timeout_s) — 블록 준비 중 막힘을 기다리는 시간
@@ -316,7 +352,12 @@ class Operator:
         self.notices = []
         self.logs = []
         self.msgs = {}
+        self.live_t = None          # live 를 마지막으로 받은 때(monotonic) — FAIL 진단(v0.6.3 B1)
         self._task = None
+
+    def live_age(self):
+        """live 를 마지막으로 받은 뒤 경과 s(받은 적 없으면 None)."""
+        return None if self.live_t is None else time.monotonic() - self.live_t
 
     async def connect(self, timeout=20.0):
         import websockets
@@ -357,10 +398,12 @@ class Operator:
                 t = m.get("type")
                 if t == "live":
                     self.live = m
+                    self.live_t = time.monotonic()
                 elif t == "state":
                     self.snap = m
                     if isinstance(m.get("live"), dict):
                         self.live = m["live"]
+                        self.live_t = time.monotonic()
                 elif t == "notice":
                     self.notices.append((time.monotonic(), m.get("level"), m.get("msg", "")))
                     if self.h.verbose:
@@ -1055,6 +1098,7 @@ async def amain(args) -> int:
     rep = Report()
     h = Harness(args.speed, args.keep, args.verbose)
     op = None
+    rep.diag = lambda: fail_diag(h, op)        # op 는 아래에서 채운다(클로저라 그때의 값을 본다)
     try:
         print(f"{DEV.NAME} e2e — 가짜 PLC 127.0.0.1:{h.plc_port} · 프로그램 :{h.web_port} · 배속 {h.speed:g}"
               f" · 임시 폴더 {h.tmp}", flush=True)
@@ -1084,6 +1128,7 @@ async def amain(args) -> int:
         if rep.failed() or args.keep:
             print("가짜 PLC 기록(끝 40 줄):")
             print("\n".join(h.plc_log_text().splitlines()[-40:]))
+        keep_on_fail(h, rep)
         h.close()
 
 

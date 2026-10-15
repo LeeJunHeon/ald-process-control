@@ -225,6 +225,12 @@ class PlantSim(SIM.PlcSim):
             "heaters": [round(x, 2) for x in self.heater_pv[:DEV.HEATER_COUNT]],
             "mfc": [round(x, 2) for x in self.mfc_pv[:DEV.MFC_COUNT]],
             "pump": self.pump_on, "iv_e": self.ive_out, "vv": self.vv_on,
+            # ★ v0.6.3(B1): e2e FAIL 진단 — 벤트 요청 · 입력0(IV-E 리미트 · 대기압) · 인터락 워드 · 시퀀서 이름
+            "vent_req": bool(self.vent_req), "in0": self.reg[A.D_INPUT0],
+            "ive_open_in": bool((self.reg[A.D_INPUT0] >> A.IN0_IVE_OPEN) & 1),
+            "ive_close_in": bool((self.reg[A.D_INPUT0] >> A.IN0_IVE_CLOSE) & 1),
+            "atm_in": bool((self.reg[A.D_INPUT0] >> A.IN0_ATM) & 1),
+            "interlock": self.reg[A.D_INTERLOCK], "seq_name": A.SEQ_NAMES.get(self.reg[A.D_SEQ_STATE], "?"),
             "rf_w": round(self.rf_fwd_w, 1) if DEV.HAS_RF else None,
             "o3": round(self.o3_conc, 2) if DEV.HAS_O3 else None,
             "faults": sorted(k for k, v in self.faults.items() if v),

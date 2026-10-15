@@ -162,20 +162,22 @@
     while (k > 0 && used(spans.slice(0, k).concat([1])) > rows) k--;
     return { items: c.items.slice(0, k), ok: [], more: c.items.slice(k), okHid: c.ok };
   };
-  /** ★ v0.6.2(B2): 숨은 항목을 수준별 글로 — 'Alarm: a · b / Warning: c / OK n'(알림 · 툴팁). 알람 · 경고가 아닌
-   *  숨은 항목(문제가 없는 목록이 넘친 경우)과 정상 묶음은 'OK n' 으로 센다 */
+  /** ★ v0.6.2(B2): 숨은 항목을 수준별 글로 — 'Alarm: a · b / Warning: c / OK n'(알림). 알람 · 경고가 아닌
+   *  숨은 항목(문제가 없는 목록이 넘친 경우)과 정상 묶음은 'OK n' 으로 센다
+   *  ★ v0.6.3(B2): 숨은 문제 항목이 없으면(모두 정상인데 넘침) 'OK n — 이름 · …' 으로 이름도 보인다 */
   T.stiMoreText = function (more, okHid) {
-    var by = { stop: [], warn: [] }, okn = (okHid || []).length;
+    var by = { stop: [], warn: [] }, oks = [];
     (more || []).forEach(function (i) {
       var r = T.stiRank(i.lvl);
       if (r === 0) by.stop.push(i.name);
       else if (r === 1) by.warn.push(i.name);
-      else okn++;
+      else oks.push(i.name);
     });
+    (okHid || []).forEach(function (i) { oks.push(i.name); });
     var out = [];
     if (by.stop.length) out.push('Alarm: ' + by.stop.join(' · '));
     if (by.warn.length) out.push('Warning: ' + by.warn.join(' · '));
-    if (okn) out.push('OK ' + okn);
+    if (oks.length) out.push('OK ' + oks.length + (out.length ? '' : ' — ' + oks.join(' · ')));
     return out.join(' / ');
   };
   /** 항목 중 가장 나쁜 수준('stop' · 'warn' · '') */

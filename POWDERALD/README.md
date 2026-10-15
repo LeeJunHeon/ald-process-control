@@ -7,7 +7,10 @@ PLC 가 서버, 이 프로그램이 클라이언트입니다.
 - 화면: pywebview 창 안의 HTML/CSS/JS (**외부 라이브러리 없음**, 오프라인 전제)
 - 화면 통신: WebSocket 하나 (`/ws`) — 상태의 주인은 서버입니다
 
-> **버전 0.6.2** — 인터락 목록 '+N more' 는 숨은 문제 항목만 세고(정상 묶음 때문에 문제 항목을 숨기지 않음), 누르면 숨은 항목을
+> **버전 0.6.3** — e2e 의 FAIL 판정 문구에 그때의 가짜 PLC 상태(압력 · VV · IV-E · 대기압 입력 · 벤트 요청 · 인터락 ·
+> 장비 상태 · 시퀀서)와 프로그램 live 경과를 붙이고, FAIL 이 있으면 --keep 없이도 임시 폴더를 남김 · '+N more' 툴팁과 알림을
+> 'OK n' 으로 같게, 모두 정상인데 넘치면 알림에 이름도 · serve_app 시험을 동작으로. 프로그램 · PLC 통신 · 래더는 v0.6.2 그대로입니다.
+> 버전 0.6.2 — 인터락 목록 '+N more' 는 숨은 문제 항목만 세고(정상 묶음 때문에 문제 항목을 숨기지 않음), 누르면 숨은 항목을
 > 수준별 알림으로(탭은 그대로) · 'Vacuum OK' → 'Vacuum' · config.json 이 UTF-8(BOM)이어도 읽고, 못 읽으면 이유(줄 · 칸)를 알리고
 > 설정 저장을 막음 · plc_ctl 쓰기 막기(--raw 와 WRITE 누적 · 히터 요청 워드 WRITE · 느린 하트비트의 프로그램 · 장비 ID 0) ·
 > e2e(MFC 막힘 · 끊김 중 명령) · 제어 파일 · 작은 것. PLC 통신 · 래더는 v0.6.0 그대로입니다.
@@ -489,6 +492,7 @@ ive_stuck · pump_nofb · o3_alm · o3_room · bp_alm · bp_nofb
 python test/e2e_process.py                       (전부, 배속 10)
 python test/e2e_process.py startup recipe faults --speed 20
 python test/e2e_process.py faults --faults emo,leak --keep   (--keep: 임시 폴더 · 로그 · 데이터 로그를 남김)
+                                                            (FAIL 이 하나라도 있으면 --keep 없이도 남기고 경로를 찍는다)
 ```
 
 | 시나리오 | 보는 것 |
@@ -504,6 +508,11 @@ python test/e2e_process.py faults --faults emo,leak --keep   (--keep: 임시 폴
 | long · dual | 500 사이클 긴 공정 · 다른 프로그램 e2e 와 동시 실행(클라우드에서 — 다른 프로그램 폴더가 없으면 SKIP) |
 
 끝에 시나리오별 PASS / FAIL 표와 판정 근거(기대 · 실제)를 찍고, 띄운 프로세스(가짜 PLC · 프로그램)를 모두 끈다.
+**FAIL(시간 초과 포함)이면** 실제 값 뒤에 `‖` 로 그때의 진단을 붙인다 — 가짜 PLC 상태(압력 · VV · IV-E 출력과 리미트 열림/닫힘 ·
+대기압 입력 · 벤트 요청 · 인터락 워드 · 장비 상태 · 시퀀서)와 프로그램 live 를 마지막으로 받은 뒤 경과 s. 가끔 나는 실패도
+원인이 남게, FAIL 이 하나라도 있으면 `--keep` 이 없어도 임시 폴더(가짜 PLC 기록 `fake_plc.log` · 프로그램 로그 `app.out` ·
+데이터 로그 `app/`)를 남기고 경로를 찍는다. 가짜 PLC 의 `status` 에도 같은 값(`vent_req` · `in0` · `ive_open_in` ·
+`ive_close_in` · `atm_in` · `interlock` · `seq_name`)이 있다.
 프로그램은 빈 포트 · 임시 데이터 폴더 · 뮤텍스 없이 뜨므로 이 PC 에서 돌고 있는 프로그램과 data/ 는 건드리지 않는다.
 시험용 설정은 예시 설정에서 만든다(빈 풀스케일 · 과온 한계를 채우고 확정 표시 · valve_min_ms 20 · mfc_timeout_s 15).
 WebSocket · HTTP 는 프록시를 타지 않는다(websockets 15 이상의 proxy=True 기본을 끔 — 시스템 프록시가 있어도 127.0.0.1 로).
@@ -1222,8 +1231,9 @@ HTTP 는 읽기 전용이라 원격 보기에서도 됩니다. 내보내기·폴
 
 - **정상 묶음 때문에 문제 항목을 숨기지 않는다**: 문제 항목 + '+N OK' 가 다 들어가면 그대로, 문제 항목만 들어가면
   문제 항목을 모두 보이고 OK 칸은 뺀다(OK 개수 · 이름은 상자 툴팁), 문제 항목도 다 안 들어가면 앞에서부터(알람 먼저)
-  들어가는 만큼 + **'+N more'** — N 은 숨은 문제 항목 수만, 색은 그중 가장 나쁜 수준, 툴팁은 숨은 문제 이름 + 'OK n 개'
-- **'+N more' 를 누르면(Enter 도)** 숨은 항목을 수준별 알림으로(Alarm: … / Warning: … / OK n) — 탭은 옮기지 않는다
+  들어가는 만큼 + **'+N more'** — N 은 숨은 문제 항목 수만, 색은 그중 가장 나쁜 수준, 툴팁은 숨은 문제 이름 + 'OK n'(v0.6.3: 알림과 같은 말)
+- **'+N more' 를 누르면(Enter 도)** 숨은 항목을 수준별 알림으로(Alarm: … / Warning: … / OK n) — 탭은 옮기지 않는다.
+  v0.6.3: 숨은 문제 항목이 없으면(모두 정상인데 넘침) 이름도 보인다(`OK 4 — Lid · Pump Alarm · …`)
   (Start · Valve · Vent Permit · Basic · Vacuum 같은 허가 · 조건은 Alarm/Log 탭에 없다)
 - **갱신 순서**: 인터락 목록은 같은 줄의 RF/O3 목록을 그린 뒤 맨 끝에 칸을 잰다 — 새 RF/O3 알람이 뜰 때 마지막 줄이
   반만 보이던 2 프레임이 없다
