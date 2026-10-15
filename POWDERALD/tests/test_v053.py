@@ -79,15 +79,46 @@ def test_5_h2o_box_single_line():
 
 
 # ===================== 6. 긴 창(768 폭)에서 늘어난 높이는 아래 줄이 받는다 =====================
+# ★ v0.6.1(A2): v0.5.4 에서 일부러 바꾼 옛 구현 글자(maxHeight · flexGrow · 'if (hh <= CANVAS_H + 1) return;')를 찾지
+#   않고, core.js 의 fit · rowFlex · fitMainRows · setTab 을 그대로 떼어 가짜 DOM 위에서 돌려 동작을 본다.
+_FIT = r'''
+  var CANVAS_W = 960, CANVAS_H = 1000, lastScale = 0, VIEWS = {}, lastState = null, curTab = 'main';
+  function requestAnimationFrame() {}
+  const mk = () => ({ style: {}, attrs: {}, classList: { toggle() {} },
+    getAttribute(k) { return k in this.attrs ? this.attrs[k] : null; }, setAttribute(k, v) { this.attrs[k] = String(v); } });
+  const app = mk(), main = mk(), bottom = mk();
+  bottom.style.flex = '0 0 auto';                       // index.html 의 아래 줄
+  // 위 줄 높이 — 기본 높이 캔버스(1000)에서 재면 616, 늘어난 캔버스에서는 flex 가 나눈 값(다르게)
+  Object.defineProperty(main, 'offsetHeight', { get() { return parseFloat(app.style.height) <= 1000 ? 616 : 777; } });
+  var w = { innerWidth: 1280, innerHeight: 900 };
+  var d = { getElementById: () => app, querySelectorAll: () => [],
+            querySelector: s => s.indexOf(':not(.grow)') >= 0 ? bottom : main };
+  %s
+  %s
+  %s
+  %s
+  const snap = () => ({ main: main.style.flex, bottom: bottom.style.flex, h: app.style.height });
+  const out = {};
+  fit(); out.base = snap();                                         // 1280×900 — 기본 높이
+  w.innerWidth = 768; w.innerHeight = 1024; fit(); out.tall = snap(); // 768×1024 — 긴 캔버스
+  // 다른 탭에 있는 동안 창이 바뀌었다가(옛 flex 가 남음) 운전 탭으로 돌아오면 다시 맞춘다
+  w.innerWidth = 1280; w.innerHeight = 900; main.style.flex = 'stale'; bottom.style.flex = 'stale';
+  curTab = 'trend'; setTab('main'); out.back = snap();
+  console.log(JSON.stringify(out));
+'''
+
+
 def test_6_tall_canvas_gives_extra_height_to_bottom_row():
+    from test_v054 import _fn
     core = _src("js", "core.js")
-    assert "fitMainRows(app, hh);" in core
-    body = core[core.index("function fitMainRows(app, hh) {"):]
-    body = body[:body.index("\n  }\n") + 4]
-    assert "if (hh <= CANVAS_H + 1) return;" in body                         # 기본 높이(1280×900 등)는 그대로
-    assert "main.style.maxHeight = h0 + 'px';" in body and "bottom.style.flexGrow = '1';" in body
-    assert "if (name === 'main') fit();" in core
-    assert '<svg id="schemSvg" preserveAspectRatio="xMidYMin meet">' in _src("index.html")   # 위 붙임 유지
+    out = _node(_FIT % tuple(_fn(core, n) for n in ("rowFlex", "fitMainRows", "fit", "setTab")))
+    # 기본 높이(1280×900 등): 두 줄 flex 를 비운다(위 '' · 아래는 HTML 의 원래 값)
+    assert out["base"] == {"main": "", "bottom": "0 0 auto", "h": "1000px"}, out
+    # 긴 창: 위 줄은 기본 높이일 때의 높이(h0 = 616)로 고정, 아래 줄만 는다
+    assert out["tall"] == {"main": "0 0 616px", "bottom": "1 1 auto", "h": "1280px"}, out
+    # 운전 탭으로 돌아오면 다시 맞춘다
+    assert out["back"] == {"main": "", "bottom": "0 0 auto", "h": "1000px"}, out
+    assert '<svg id="schemSvg" preserveAspectRatio="xMidYMin meet">' in _src("index.html")   # 배관도 위 붙임
 
 
 # ===================== 7. 'PV-B (PLC Auto)' — PV-B 이름 줄에 =====================

@@ -136,6 +136,32 @@
     if (!probs.length) return { items: ord, ok: [] };
     return { items: probs, ok: ord.slice(probs.length) };
   };
+  /** ★ v0.6.1(B2): 목록을 rows 줄 × cols 열 안에 맞춘다(stiCompact 결과를 받아). 넘치면 앞에서부터(알람 먼저) 들어가는 만큼만
+   *  두고 마지막 칸은 '+N more' — { items, ok, more: 숨은 항목(정상 묶음 포함) }. 배치는 순서 그대로(dense 아님 — B3):
+   *  두 열짜리가 줄 끝에 안 들어가면 다음 줄에서 시작한다(style.css 의 .stl.ordered 와 같은 규칙) */
+  T.stiFit = function (c, rows, cols) {
+    rows = Math.max(1, rows | 0);
+    cols = Math.max(1, cols | 0);
+    function used(spans) {
+      if (!spans.length) return 0;
+      var r = 1, col = 0;
+      spans.forEach(function (s) {
+        if (col + s > cols) { r++; col = 0; }
+        col += s;
+      });
+      return r;
+    }
+    var spans = c.items.map(function (i) { return Math.min(cols, T.stiSpan(i.name)); });
+    if (used(spans.concat(c.ok.length ? [1] : [])) <= rows) return { items: c.items, ok: c.ok, more: [] };
+    var k = c.items.length;
+    while (k > 0 && used(spans.slice(0, k).concat([1])) > rows) k--;
+    return { items: c.items.slice(0, k), ok: [], more: c.items.slice(k).concat(c.ok) };
+  };
+  /** 항목 중 가장 나쁜 수준('stop' · 'warn' · '') */
+  T.stiWorst = function (items) {
+    var r = Math.min.apply(null, [2].concat((items || []).map(function (i) { return T.stiRank(i.lvl); })));
+    return r === 0 ? 'stop' : r === 1 ? 'warn' : '';
+  };
   T.STI_COL = 96;          // 상태 점 목록 한 열의 최소 폭(px) — style.css 의 minmax(96px, 1fr) 와 같게
   T.stiSpan = function (name) {           // 점(7) + 사이(5) + 이름이 한 열을 넘으면 두 열
     return T.textPx(name, 12) + 12 > T.STI_COL ? 2 : 1;

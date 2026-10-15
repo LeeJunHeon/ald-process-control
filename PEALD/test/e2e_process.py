@@ -11,10 +11,14 @@ headless 로 띄운 뒤, 화면이 보내는 것과 같은 명령을 WebSocket �
     python test/e2e_process.py --list
 시나리오: startup · pumpdown · recipe · control · faults · comm · device_id · manual · long · dual
 
-★ 래더 타이머 · 스텝 시간은 실제 시간이다(--speed 는 펌핑 · 벤트 · 승온 같은 물리만 빠르게).
+★ 래더 타이머 · 스텝 시간은 실제 시간이다(--speed 는 펌핑 · 벤트 · 승온 · O3 만 빠르게 — 펄스 감쇠 · PCV · MFC ·
+  RF 램프 같은 빠른 기기 반응도 실제 시간).
 ★ 이 PC 의 프로그램 데이터(data/)와 실행 중인 프로그램은 건드리지 않는다 — 빈 포트 · 임시 폴더 · 뮤텍스 없이.
+★ 자식(가짜 PLC · headless 프로그램)은 stdin 파이프가 닫히면 스스로 끝난다 — 이 시험 틀이 작업 관리자 · IDE 정지로
+  강제로 꺼져도 남지 않게(v0.6.1 C9).
 """
 import os
+import re
 import sys
 import json
 import time
@@ -60,12 +64,20 @@ def free_pair() -> int:
 class Report:
     def __init__(self):
         self.rows = []          # (시나리오, 항목, 기대, 실제, 통과)
+        self.skips = set()      # 건너뛴 항목 (시나리오, 항목)
 
     def check(self, scen, item, ok, expected, actual):
         self.rows.append((scen, item, str(expected), str(actual), bool(ok)))
         mark = "PASS" if ok else "FAIL"
         print(f"  [{mark}] {item} — 기대: {expected} / 실제: {actual}", flush=True)
         return bool(ok)
+
+    def skip(self, scen, item, why):
+        """건너뜀 — 실패가 아니다(예: 다른 프로그램 폴더가 없음)."""
+        self.rows.append((scen, item, "-", str(why), True))
+        self.skips.add((scen, item))
+        print(f"  [SKIP] {item} — {why}", flush=True)
+        return True
 
     def failed(self, scen=None):
         return [r for r in self.rows if not r[4] and (scen is None or r[0] == scen)]
@@ -77,7 +89,9 @@ class Report:
             by.setdefault(r[0], []).append(r)
         for scen, rows in by.items():
             bad = [r for r in rows if not r[4]]
-            out.append(f"{'PASS' if not bad else 'FAIL':4}  {scen:<10} {len(rows) - len(bad)}/{len(rows)} 항목")
+            skipped = all((r[0], r[1]) in self.skips for r in rows)
+            out.append(f"{'SKIP' if skipped else 'PASS' if not bad else 'FAIL':4}  {scen:<10} "
+                       f"{len(rows) - len(bad)}/{len(rows)} 항목")
             for r in bad:
                 out.append(f"        ✕ {r[1]} — 기대 {r[2]} / 실제 {r[3]}")
         out.append("=" * 78)
@@ -98,6 +112,8 @@ class Harness:
         self.web_port = self._other_port()
         self.plc = None
         self.app = None
+        self._plc_out = None        # 자식 출력 파일 — 멈출 때 닫는다(Windows 에서 임시 폴더가 지워지게, C7)
+        self._app_out = None
         self.cfg_path = os.path.join(self.tmp, "config.json")
         self.cfg = self._write_config()
         self.plc_log = os.path.join(self.tmp, "fake_plc.log")
@@ -142,11 +158,13 @@ class Harness:
     def start_plc(self, state="atm", device_id=""):
         args = [PY, os.path.join(_pkg.TEST_DIR, "fake_plc.py"), "--port", str(self.plc_port),
                 "--ctl-port", str(self.ctl_port), "--speed", str(self.speed), "--state", state,
-                "--config", self.cfg_path, "--log", self.plc_log, "--seed", "1"]
+                "--config", self.cfg_path, "--log", self.plc_log, "--seed", "1", "--exit-on-eof"]
         if device_id:
             args += ["--device-id", device_id]
-        out = open(os.path.join(self.tmp, "fake_plc.out"), "a", encoding="utf-8")
-        self.plc = subprocess.Popen(args, stdout=out, stderr=subprocess.STDOUT, cwd=_pkg.ROOT)
+        self._plc_out = open(os.path.join(self.tmp, "fake_plc.out"), "a", encoding="utf-8")
+        # stdin=PIPE — 이 틀이 강제로 꺼지면 파이프가 닫혀(EOF) 가짜 PLC 가 스스로 끝난다(C9)
+        self.plc = subprocess.Popen(args, stdin=subprocess.PIPE, stdout=self._plc_out, stderr=subprocess.STDOUT,
+                                    cwd=_pkg.ROOT)
         for _ in range(100):
             if self.ctl({"op": "ping"}, quiet=True):
                 return True
@@ -167,20 +185,23 @@ class Harness:
             return None
 
     def stop_plc(self):
-        if self.plc and self.plc.poll() is None:
+        if _pkg.alive(self.plc):
             self.ctl({"op": "quit"}, quiet=True)
             try:
                 self.plc.wait(5)
             except subprocess.TimeoutExpired:
                 self.plc.kill()
                 self.plc.wait(5)
+        _close_child(self.plc)
         self.plc = None
+        self._plc_out = _close(self._plc_out)
 
     # ---------- 프로그램 ----------
     def start_app(self):
         args = [PY, os.path.abspath(__file__), "--serve-app", self.cfg_path, os.path.join(self.tmp, "app")]
-        out = open(os.path.join(self.tmp, "app.out"), "a", encoding="utf-8")
-        self.app = subprocess.Popen(args, stdout=out, stderr=subprocess.STDOUT, cwd=_pkg.ROOT)
+        self._app_out = open(os.path.join(self.tmp, "app.out"), "a", encoding="utf-8")
+        self.app = subprocess.Popen(args, stdin=subprocess.PIPE, stdout=self._app_out, stderr=subprocess.STDOUT,
+                                    cwd=_pkg.ROOT)
         for _ in range(200):
             try:
                 with urllib.request.build_opener(urllib.request.ProxyHandler({})).open(
@@ -195,14 +216,17 @@ class Harness:
         raise RuntimeError("프로그램이 뜨지 않았습니다 — " + self._tail("app.out"))
 
     def stop_app(self):
-        if self.app and self.app.poll() is None:
+        # ★ terminate 그대로 — comm 의 '프로그램 재시작 → 이어받기'는 갑자기 꺼진 프로그램을 흉내 낸다
+        if _pkg.alive(self.app):
             self.app.terminate()
             try:
                 self.app.wait(10)
             except subprocess.TimeoutExpired:
                 self.app.kill()
                 self.app.wait(5)
+        _close_child(self.app)
         self.app = None
+        self._app_out = _close(self._app_out)
 
     def get(self, path: str):
         with urllib.request.build_opener(urllib.request.ProxyHandler({})).open(
@@ -232,6 +256,25 @@ class Harness:
             shutil.rmtree(self.tmp, ignore_errors=True)
 
 
+def _close(f):
+    """열어 둔 파일을 닫는다(없으면 그대로). 늘 None."""
+    if f is not None:
+        try:
+            f.close()
+        except OSError:
+            pass
+    return None
+
+
+def _close_child(p):
+    """멈춘 자식의 stdin 파이프를 닫는다(핸들을 남기지 않게)."""
+    if p is not None and p.stdin:
+        try:
+            p.stdin.close()
+        except OSError:
+            pass
+
+
 def serve_app(cfg_path: str, data_root: str):
     """--serve-app — 프로그램을 headless 로(임시 데이터 폴더 · 뮤텍스 없이). e2e 가 띄우는 자식 프로세스."""
     paths = _pkg.mod("paths")
@@ -243,7 +286,15 @@ def serve_app(cfg_path: str, data_root: str):
     app = server.create_app(cfg_path, single_instance=False)
     state = _pkg.mod("state").state
     srv = state.cfg.get("server") or {}
-    uvicorn.Server(server.uvicorn_config(app, "127.0.0.1", int(srv.get("port")))).run()
+    us = uvicorn.Server(server.uvicorn_config(app, "127.0.0.1", int(srv.get("port"))))
+
+    def on_eof():                   # 시험 틀이 강제로 꺼짐(stdin EOF) — 스스로 끝낸다(C9)
+        us.should_exit = True
+        import threading
+        threading.Timer(15.0, lambda: os._exit(0)).start()
+    if not sys.stdin.isatty():
+        _pkg.exit_on_stdin_eof(on_eof)
+    us.run()
 
 
 # ===================== 운전자(WebSocket) =====================
@@ -262,9 +313,13 @@ class Operator:
         import websockets
         end = time.monotonic() + timeout
         while True:
+            url = f"ws://127.0.0.1:{self.h.web_port}/ws"
             try:
-                self.ws = await websockets.connect(f"ws://127.0.0.1:{self.h.web_port}/ws", max_size=None,
-                                                   open_timeout=5)
+                # ★ v0.6.1(C2): websockets 15 이상은 proxy=True 가 기본 — 시스템 프록시가 있으면 127.0.0.1 도 프록시로 간다
+                try:
+                    self.ws = await websockets.connect(url, max_size=None, open_timeout=5, proxy=None)
+                except TypeError:           # proxy 인자가 없는 옛 websockets
+                    self.ws = await websockets.connect(url, max_size=None, open_timeout=5)
                 break
             except Exception:  # noqa: BLE001
                 if time.monotonic() > end:
@@ -445,20 +500,44 @@ class Run:
         await self.op.wait(lambda: not self.op.live.get("alarms"), 8)
 
     async def pumped(self, label="베이스 압력 도달") -> bool:
-        """펌핑 시작 → 베이스 압력(인터락 진공 비트). 이미 진공이면 그대로."""
+        """펌핑 시작 → 베이스 압력(인터락 진공 비트). 이미 진공이면 그대로(판정 항목은 늘 남긴다 — 실행마다 항목 수가 같게).
+        ★ v0.6.1(C3): 펌핑 시작이 2 s 안에 받아졌는지(PMP 켜짐 또는 '처리되었습니다') 보고, 안 되면 한 번 더 보낸다 —
+          거절을 못 보고 42 s 를 기다린 뒤 '베이스 압력 FAIL' 로 끝나지 않게."""
         op = self.op
+        base = float((self.h.cfg.get("params") or {}).get("base_press_torr") or 0.05)
+        expect = f"CVG ≤ {base} Torr (인터락 진공)"
 
         def done():                     # 진공 · 펌프 운전 · 밸브 허가 · IV-E 열림(압력만 낮아서는 시작 조건이 안 된다)
             return (op.ilk(A.ILK_VACUUM) and op.ilk(A.ILK_PUMP) and op.ilk(A.ILK_VALVE_OK)
                     and op.aux_on("IV-E"))
         if done():
-            return True
-        await op.send("pump_start")
-        base = float((self.h.cfg.get("params") or {}).get("base_press_torr") or 0.05)
-        ok = await op.wait(done, self.t(420, 30))
-        return self.check(label, ok, f"CVG ≤ {base} Torr (인터락 진공)", f"CVG {self.op.cvg()}")
+            return self.check(label, True, expect, f"이미 진공 · CVG {op.cvg()}")
+        t0 = time.monotonic()
+        took = False
+        for _ in range(2):
+            t1 = time.monotonic()
+            await op.send("pump_start")
+            took = await op.wait(lambda: op.aux_on("PMP") or any(
+                "펌핑 시작" in n[2] and "처리되었습니다" in n[2] for n in op.notices_since(t1)), 2.0)
+            if took:
+                break
+        ok = took and await op.wait(done, self.t(420, 30))
+        actual = f"CVG {op.cvg()}" + ("" if took else " · 펌핑 시작이 두 번 다 받아지지 않음")
+        if not ok:
+            recent = [f"[{n[1]}] {n[2]}" for n in op.notices_since(t0)][-3:]
+            actual += " · 최근 알림: " + (" | ".join(recent) if recent else "(없음)")
+        return self.check(label, ok, expect, actual)
+
+    async def plc_ready(self, timeout=30.0) -> bool:
+        """PLC 연결 · PLC 하트비트 정상 · 멈춤 아님 · 장비 ID 맞음 — 명령을 보내도 거절되지 않는 상태.
+        ★ v0.6.1(C3): PLC STOP 을 풀고 바로 알람 확인 · 펌핑 시작을 보내면 프로그램은 아직 'PLC 하트비트 멈춤' 이라 거절한다."""
+        def ok():
+            p = self.op.live.get("plc") or {}
+            return p.get("connected") and p.get("hb_ok") and not p.get("hb_stalled") and p.get("id_state") == "ok"
+        return await self.op.wait(ok, timeout)
 
     async def ready(self):
+        await self.plc_ready()
         await self.clear_alarms()
         if self.op.proc.get("running"):
             await self.op.send("process_abort")
@@ -660,6 +739,18 @@ class Run:
     # ---------- 5) 공정 중 고장 ----------
     FAULT_CASES = [("emo", "EMO"), ("pump_alm", "펌프 알람"), ("leak", "가스 누출"), ("ot", "히터 과온")] + (
         [("rf_ref", "RF 반사")] if DEV.HAS_RF else [("o3_room", "실내 O3 감지")]) + [("mfc1_stuck", "MFC 막힘")]
+    # ★ v0.6.1(C11): 고장마다 기대 알람(워드, 비트) — 이름은 장비 정의(DEV.ALARMS0/1)에서
+    FAULT_ALARM = {"emo": (0, A.ALM0_EMO), "pump_alm": (0, A.ALM0_PUMP), "leak": (0, A.ALM0_LEAK),
+                   "ot": (0, A.ALM0_OT), "mfc1_stuck": (0, A.ALM0_MFC),
+                   "rf_ref": (1, A.ALM1_RF_REF), "o3_room": (1, A.ALM1_O3_ROOM)}
+    RECIPE_VALVES = ("PV-1", "PV-R", "PV-R2", "PV-R3")      # 시험 레시피가 여는 밸브(정지 뒤 출력 0 이어야)
+
+    @staticmethod
+    def alarm_name(word: int, bit: int) -> str:
+        return next((d["name"] for d in (DEV.ALARMS0 if word == 0 else DEV.ALARMS1) if d["bit"] == bit), f"알람 {word}.{bit}")
+
+    def recipe_valves_on(self) -> list:
+        return [v["tag"] for v in DEV.VALVES if v["tag"] in self.RECIPE_VALVES and self.op.valve_on(v["tag"])]
 
     async def faults(self):
         op = self.op
@@ -693,8 +784,18 @@ class Run:
                 st = (op.live.get("state") or {}).get("code")
                 self.check(f"{label} → 안전 정지 상태", st == A.STATE_SAFE_STOP, "Safe Stop",
                            (op.live.get("state") or {}).get("name"))
+            # 정지 뒤 출력 — 레시피 밸브 0 · RF 꺼짐(공정이 멈췄다고 출력이 남으면 안 된다)
+            outs_off = await op.wait(lambda: not self.recipe_valves_on() and not (
+                DEV.HAS_RF and (op.live.get("extra") or {}).get("rf_on")), 5)
+            self.check(f"{label} → 밸브 출력 0" + (" · RF 꺼짐" if DEV.HAS_RF else ""), outs_off,
+                       "레시피 밸브 꺼짐" + (" · RF 꺼짐" if DEV.HAS_RF else ""),
+                       f"켜진 밸브 {self.recipe_valves_on() or '없음'}"
+                       + (f" · RF {(op.live.get('extra') or {}).get('rf_on')}" if DEV.HAS_RF else ""))
             hist = await self._hist(hist0)
-            self.check(f"{label} → 알람 이력", len(hist) >= 1, "새 알람 줄 ≥ 1", " · ".join(h["name"] for h in hist[:3]))
+            want_alarm = self.alarm_name(*self.FAULT_ALARM[key])
+            names = [h["name"] for h in hist] + [a.get("name") for a in op.live.get("alarms") or []]
+            self.check(f"{label} → 알람 '{want_alarm}'", len(hist) >= 1 and want_alarm in names,
+                       f"새 알람 줄 ≥ 1 · '{want_alarm}'", " · ".join(h["name"] for h in hist[:4]) or "(없음)")
             self.h.ctl({"op": "fault", "key": key, "on": False})
             await self.clear_alarms()
 
@@ -730,6 +831,25 @@ class Run:
                 names = " · ".join(a["name"] for a in op.live.get("alarms") or [])
                 self.check(f"블랙홀 {secs} s → PC 통신 끊김 트립", ok and "안전 정지" in res, "중단 (안전 정지 — …)",
                            f"{res} / 알람 {names}")
+        # 통신이 끊긴 사이 보낸 명령 — 블랙홀(요청은 받고 답 없음) · 케이블 뽑힘(요청도 버림). 프로그램은 오류로 알리고
+        # 다시 보내지 않는다(PLC 가 받은 횟수 ≤ 1), 끊김이 끝나면 링크가 돌아온다(C12)
+        for mode in ("blackhole", "unplug"):
+            await self.ready()
+            n0 = len(self.h.plc_log_text())
+            self.h.ctl({"op": "cut", "mode": mode, "s": 2.0})
+            await asyncio.sleep(0.05)
+            t0 = time.monotonic()
+            await op.send("alarm_ack")
+            await asyncio.sleep(2.0 + 3)
+            back = await self.plc_ready(15)
+            ns = [n for n in op.notices_since(t0) if "알람 확인" in n[2]]
+            bad = [n for n in ns if n[1] in ("warn", "err")]
+            done = [n for n in ns if "처리되었습니다" in n[2]]
+            got = len(re.findall(r"명령 받음: 번호 \d+ · 코드 %d " % A.CMD_ALARM_ACK, self.h.plc_log_text()[n0:]))
+            self.check(f"{'블랙홀' if mode == 'blackhole' else '케이블 뽑힘'} 2 s 중 보낸 명령 → 오류 알림 · 다시 보내지 않음",
+                       bool(bad) and not done and got <= 1 and back,
+                       "경고/오류 알림 · '처리되었습니다' 없음 · PLC 받은 횟수 ≤ 1 · 링크 회복",
+                       f"{(bad or done or [(0, '', '(알림 없음)')])[-1][2]} · PLC 받음 {got} 회 · 회복 {back}")
         # PLC STOP → 하트비트 멈춤 → RUN(P00 첫 스캔) → PLC 재시작
         await self.ready()
         started, _ = await self.run_recipe("E2E Comm", long_recipe("E2E Comm", 400, 100), wait_end=False)
@@ -748,6 +868,7 @@ class Run:
         started, _ = await self.run_recipe(name, long_recipe(name, 120, 100), wait_end=False)
         if started:
             await asyncio.sleep(2)
+            n0 = len(self.h.plc_log_text())
             await op.close()
             self.h.stop_app()
             self.h.start_app()
@@ -755,10 +876,16 @@ class Run:
             ok = await op.wait(lambda: op.proc.get("running") and (op.proc.get("adopted") or op.proc.get("adopting")
                                                                    or op.proc.get("recipe") == name), 20)
             self.check("프로그램 재시작 → 공정 이어받기", ok, "공정 중 · 이어받음",
-                       f"running {op.proc.get('running')} · {op.proc.get('recipe')}")
+                       f"running {op.proc.get('running')} · {op.proc.get('recipe')} · {self._hb_gaps(n0)}")
             ok = await op.wait(lambda: not op.proc.get("running") and op.proc.get("last_result"), 120)
             self.check("이어받은 공정 끝 결과", ok and (op.proc.get("last_result") or "").startswith("정상 종료"),
-                       "정상 종료", op.proc.get("last_result"))
+                       "정상 종료", f"{op.proc.get('last_result')} · {self._hb_gaps(n0)}")
+
+    def _hb_gaps(self, n0: int) -> str:
+        """가짜 PLC 기록의 PC 하트비트 공백(재시작 동안) — 느린 PC 에서 3 s 를 넘으면 실제 장비처럼 트립한다(C6).
+        판정은 그대로 두고 원인이 보이게 판정 문구에 붙인다."""
+        gaps = [int(g) for g in re.findall(r"PC 하트비트 공백 (\d+) ms", self.h.plc_log_text()[n0:])]
+        return f"PLC 쪽 하트비트 공백 최대 {max(gaps)} ms({len(gaps)} 건)" if gaps else "PLC 쪽 하트비트 공백 없음"
 
     # ---------- 7) 장비 ID 틀림 ----------
     async def device_id(self):
@@ -773,7 +900,7 @@ class Run:
         refused = [n for n in op.notices_since(t0) if n[1] in ("warn", "err")]
         self.check("다른 장비 ID → 명령 거절", bool(refused) and op.aux_on("PMP"), "알림으로 거절 · 펌프 그대로",
                    (refused[-1][2] if refused else "(알림 없음)") + f" · PMP {op.aux_on('PMP')}")
-        self.h.ctl({"op": "id", "value": str(DEV.DEVICE_ID)})
+        self.h.ctl({"op": "id", "value": f"{DEV.DEVICE_ID:04X}"})        # 장비 ID 는 16 진
         ok = await op.wait(lambda: op.live["plc"]["id_state"] == "ok", 10)
         self.check("장비 ID 되돌림 → 풀림", ok, "id_state ok", op.live["plc"].get("id_state"))
 
@@ -853,17 +980,22 @@ class Run:
     async def dual(self):
         other = os.path.join(os.path.dirname(_pkg.ROOT), OTHER, "test", "e2e_process.py")
         if not os.path.isfile(other):
-            self.check("두 프로그램 동시 실행", False, f"{OTHER}/test/e2e_process.py", "없음")
+            # 이 프로그램만 받은 PC — 실패가 아니라 건너뜀(C8)
+            self.rep.skip(self.scen, "두 프로그램 동시 실행", f"{OTHER}/test/e2e_process.py 없음")
             return
-        p = subprocess.Popen([PY, other, "startup", "recipe", "--speed", str(self.h.speed)],
-                             stdout=subprocess.PIPE, stderr=subprocess.STDOUT, cwd=os.path.dirname(os.path.dirname(other)))
-        try:
-            await self.long(cycles=150)
-            out, _ = await asyncio.to_thread(p.communicate, None, 900)
-        except Exception:  # noqa: BLE001
-            p.kill()
-            out, _ = p.communicate()
-        tail = (out or b"").decode("utf-8", "replace").strip().splitlines()[-6:]
+        # 자식 출력은 파일로 — PIPE 는 읽지 않는 동안 가득 차면 자식이 쓰다 막힌다(C8)
+        log_path = os.path.join(self.h.tmp, "dual_other.out")
+        with open(log_path, "w", encoding="utf-8") as logf:
+            p = subprocess.Popen([PY, other, "startup", "recipe", "--speed", str(self.h.speed)], stdin=subprocess.DEVNULL,
+                                 stdout=logf, stderr=subprocess.STDOUT, cwd=os.path.dirname(os.path.dirname(other)))
+            try:
+                await self.long(cycles=150)
+                await asyncio.to_thread(p.wait, 900)
+            except Exception:  # noqa: BLE001
+                p.kill()
+                p.wait(10)
+        with open(log_path, encoding="utf-8", errors="replace") as f:
+            tail = f.read().strip().splitlines()[-6:]
         self.check(f"두 프로그램 동시 실행 — {OTHER} e2e", p.returncode == 0, "종료 코드 0", f"{p.returncode} {' | '.join(tail)}")
 
 
@@ -914,7 +1046,7 @@ async def amain(args) -> int:
 def parse_args(argv=None):
     ap = argparse.ArgumentParser(description=f"{DEV.NAME} 실제 공정 시나리오 자동 시험")
     ap.add_argument("scenarios", nargs="*", help="시나리오 이름(없으면 전부)")
-    ap.add_argument("--speed", type=float, default=10.0, help="물리 배속(펌핑 · 벤트 · 승온)")
+    ap.add_argument("--speed", type=float, default=10.0, help="물리 배속(펌핑 · 벤트 · 승온 · O3 만)")
     ap.add_argument("--state", default="atm", help="가짜 PLC 시작 상태(atm · vac · hot)")
     ap.add_argument("--keep", action="store_true", help="임시 폴더(로그 · 데이터 로그 · 가짜 PLC 기록)를 남긴다")
     ap.add_argument("--verbose", action="store_true", help="프로그램 알림을 모두 찍는다")

@@ -53,7 +53,7 @@ def test_tools_exist_and_not_bundled():
     for k in ("pressure", "mfc", "heaters", "gauges", "rf", "pcv", "o3", "states"):
         assert k in plant, k
     assert set(plant["states"]) >= {"atm", "vac", "hot"}
-    assert version.APP_VERSION == "0.6.0"
+    assert tuple(int(x) for x in version.APP_VERSION.split(".")) >= (0, 6, 0)   # v0.6.1: 버전이 오를 때 깨지지 않게
 
 
 def test_fake_plc_runs_ladder_from_simulator_and_physics_only():
@@ -115,6 +115,9 @@ def test_plc_ctl_status_and_fault(fake_plc):
     assert code == 0, out
     code, out = _ctl(port, "status", "--count", "1")
     assert "ID 0x1234" in out and "아님" in out, out
+    # v0.6.1(C1): 장비 ID 가 다르면 쓰기를 거절한다(--force 일 때만 — test_v061) — 쓰기 전에 ID 를 되돌린다
+    code, out = _ctl(port, "id", f"{DEV.DEVICE_ID:04X}")
+    assert code == 0, out
     # 공정 중이 아닐 때만 쓴다 · 가짜 PLC 는 --yes 로 확인 생략 · 하트비트 · 명령 영역은 WRITE 를 쳐야
     code, out = _ctl(port, "--yes", "write", "D01040", "0")
     assert code == 0 and "되읽은 값" in out, out

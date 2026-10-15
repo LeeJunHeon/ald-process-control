@@ -345,4 +345,5 @@ def test_d6_old_datalog_values_shown_in_english():
 # ===================== E2. 버전 =====================
 def test_version_051():
     from powderald import version
-    assert version.APP_VERSION.startswith("0.5.")       # v0.5.2: 버전이 오를 때마다 깨지지 않게
+    # v0.6.1: startswith("0.5.") 는 0.6.0 에서 깨졌다 — test_v053 처럼 숫자 비교
+    assert tuple(int(x) for x in version.APP_VERSION.split(".")) >= (0, 5, 1)

@@ -2,19 +2,28 @@
 
 실기 시운전 때 상태를 한 화면에 보고, 주소 하나씩 읽고 쓰고, 가짜 PLC 에는 고장을 넣는 명령줄 도구다.
 ★ 제어 프로그램과 같은 PLC 에 동시에 쓰지 않는다 — 프로그램이 돌고 있으면 status · read 만 쓴다.
-★ 쓰기는 대상 주소 · 장비 ID · 장비 상태를 먼저 보이고 확인을 받는다. 공정 중(준비 · 공정 중 · 일시정지 ·
-  사이클 후 정지 중)이면 거절한다. 하트비트 · 명령 영역(D01000~D01003)은 'WRITE' 를 그대로 쳐야 쓴다.
-  --yes(확인 생략)는 가짜 PLC 에만 듣는다(제어 포트가 답하면 가짜 PLC).
+★ 읽기 · 진단 위주다. 실기에서 밸브 · 히터 · MFC 를 하나씩 확인할 때는 프로그램의 조작 창(faceplate)을 쓴다 —
+  명령 12/13/14 의 검사와 프로그램의 수동 잠금을 거친다.
+★ 쓰기(v0.6.1 C1)는 허용 목록 안에서만:
+    명령 데이터 D01004~D01042 — 그 워드의 뜻을 보이고 'y' 확인. 요청만 놓는다(명령 12/13/14 를 보내야 반영)
+    레시피 영역 D02000~D03119 — 'y' 확인
+    하트비트 · 명령 D01000~D01003 · PRM D01100~D01124 — 옛 값 → 새 값을 보이고 'WRITE' 를 그대로 쳐야
+    그 밖(D04xxx 작업 이미지 등) — 거절. --raw 를 주고 주소를 한 번 더 쳐야만(래더가 대기 중 D04012 · D04050 을
+    바로 요청으로 써서 다음 스캔에 밸브가 열리거나 RF 가 켜질 수 있다)
+  쓰기 전에 장비 ID(다르면 거절 — --force 일 때만) · 제어 프로그램이 붙어 있는지(D01000 하트비트가 0.7 s 사이에
+  바뀌면 거절) · 장비 상태(공정 중이면 거절 — 질문 전과 쓰기 바로 직전 두 번)를 본다.
+  --yes(y 확인 생략)는 가짜 PLC 에만 듣는다(제어 포트가 답하면 가짜 PLC). 'WRITE' · 주소 다시 치기는 생략하지 않는다.
+★ status 는 Modbus TCP 연결을 하나 잡는다 — 실제 PLC 의 동시 연결 수를 확인하고 쓴다.
 
 예:
     python test/plc_ctl.py --port 15301 status                  (1 s 마다, Ctrl+C 로 끝)
     python test/plc_ctl.py --host 192.168.10.12 status --count 1 (실제 PLC 한 번)
     python test/plc_ctl.py --port 15301 read D00000 20
-    python test/plc_ctl.py --port 15301 write D01010 1          (확인 질문)
+    python test/plc_ctl.py --port 15301 write D01010 1          (확인 질문 — 요청만 놓음, 명령 13 이 반영)
     python test/plc_ctl.py --port 15301 faults                  (가짜 PLC 전용 ↓)
     python test/plc_ctl.py --port 15301 fault emo on
-    python test/plc_ctl.py --port 15301 cut blackhole 2.0       (refuse 3 = 연결 거부 3 s)
-    python test/plc_ctl.py --port 15301 id 0x1234
+    python test/plc_ctl.py --port 15301 cut blackhole 2.0       (unplug 2 = 케이블 뽑힘 · refuse 3 = 연결 거부 3 s)
+    python test/plc_ctl.py --port 15301 id 1234                 (16 진 — 0x1234 · h1234 도)
 """
 import sys
 import json
@@ -28,10 +37,80 @@ import _pkg
 _pkg.utf8_console()
 A = _pkg.mod("addresses")
 DEV = _pkg.mod("device")
-paths = _pkg.mod("paths")
 
 RUNNING_STATES = (A.STATE_READY, A.STATE_RUN, A.STATE_PAUSE, A.STATE_STOPPING)
-GUARDED = range(A.D_PC_HB, A.D_CMD_ARG + 1)        # 하트비트 · 명령 영역
+GUARDED = range(A.D_PC_HB, A.D_CMD_ARG + 1)                       # 하트비트 · 명령 D01000~D01003
+CMD_DATA = range(A.D_MANUAL_VALVE, A.D_O3_SV + 1)                 # 명령 데이터 D01004~D01042
+PRM_AREA = range(A.D_PRM_PC_WDT_MS, A.D_PRM_O3_MAX + 1)           # PRM D01100~D01124
+RECIPE_AREA = range(A.D_RCP_STEP_COUNT, A.RCP_SUM_END + 1)        # 레시피 표 D02000~D03119
+HB_WATCH_S = 0.7                                                  # 제어 프로그램이 붙어 있나 — 하트비트를 두 번 읽는 간격
+
+PRM_NAMES = {
+    A.D_PRM_PC_WDT_MS: "PC 하트비트 끊김 판정 ms", A.D_PRM_BASE_PRESS: "베이스 압력(CVG 원시값)",
+    A.D_PRM_PUMP_TIMEOUT: "베이스 도달 제한 s", A.D_PRM_VENT_TIMEOUT: "대기압 도달 제한 s",
+    A.D_PRM_MFC_STABLE: "MFC 안정 판정 s", A.D_PRM_MFC_TOL: "MFC1 허용 편차(원시값)",
+    A.D_PRM_MFC_TIMEOUT: "MFC 안정 대기 제한 s", A.D_PRM_VALVE_MIN_MS: "펄스 밸브 최소 열림 ms",
+    A.D_PRM_RF_MAX: "RF 설정 상한(원시값)", A.D_PRM_RF_REF_MAX: "반사 전력 한계(원시값)",
+    A.D_PRM_RF_REF_MS: "반사 초과 허용 ms", A.D_PRM_RF_MAX_PRESS: "RF 허가 최대 압력(CVG 원시값)",
+    A.D_PRM_O3_MAX: "O3 설정 상한(원시값)",
+}
+
+
+def word_name(addr: int) -> str:
+    """쓰기 허용 목록 안 워드의 뜻(확인 질문에 보인다)."""
+    if addr == A.D_PC_HB:
+        return "PC 하트비트"
+    if addr == A.D_CMD_NO:
+        return "명령 번호(쓰면 PLC 가 명령을 실행한다)"
+    if addr == A.D_CMD_CODE:
+        return "명령 코드"
+    if addr == A.D_CMD_ARG:
+        return "명령 인자(예비)"
+    if A.D_MANUAL_VALVE <= addr < A.D_MANUAL_VALVE + 4:
+        k = addr - A.D_MANUAL_VALVE
+        return f"수동 밸브 요청 bit{16 * k}~{16 * k + 15} — 명령 12(수동 적용)가 반영"
+    if addr == A.D_MANUAL_AUX:
+        return "수동 보조 출력 요청 — 명령 12(수동 적용)가 반영"
+    if addr == A.D_HEATER_POWER:
+        return "히터 전원 요청 b0~b11 — 명령 13(히터 적용)이 반영"
+    if A.D_HEATER_SV <= addr < A.D_HEATER_SV + 12:
+        return f"CH{addr - A.D_HEATER_SV + 1:02d} 설정 온도(×0.1 ℃) — 명령 13(히터 적용)이 반영"
+    if A.D_MFC_SV <= addr < A.D_MFC_SV + 8:
+        return f"MFC{addr - A.D_MFC_SV + 1} 수동 설정(원시값) — 명령 14(MFC 수동 적용)가 반영"
+    if addr == A.D_PCV_SV:
+        return "PCV 목표 — 명령 12(수동 적용)가 반영" if DEV.HAS_PCV else "예비(이 장비는 PCV 없음)"
+    if addr == A.D_RF_SV:
+        return "RF 전력 — 명령 12(수동 적용)가 반영" if DEV.HAS_RF else "예비(이 장비는 RF 없음)"
+    if addr == A.D_O3_SV:
+        return "O3 설정 — 명령 12(수동 적용)가 반영" if DEV.HAS_O3 else "예비(이 장비는 O3 없음)"
+    if A.D_PRM_HEATER_MAX <= addr < A.D_PRM_HEATER_MAX + 12:
+        return f"PRM CH{addr - A.D_PRM_HEATER_MAX + 1:02d} 과온 한계(×0.1 ℃)"
+    if addr in PRM_NAMES:
+        return "PRM " + PRM_NAMES[addr]
+    if addr in RECIPE_AREA:
+        return "레시피 표"
+    return "예비"
+
+
+def area_of(addr: int) -> str:
+    """'guard' · 'cmd' · 'prm' · 'recipe' · 'other'(허용 목록 밖)."""
+    if addr in GUARDED:
+        return "guard"
+    if addr in CMD_DATA:
+        return "cmd"
+    if addr in PRM_AREA:
+        return "prm"
+    if addr in RECIPE_AREA:
+        return "recipe"
+    return "other"
+
+
+def program_attached(mb) -> bool:
+    """제어 프로그램이 이 PLC 에 붙어 있나 — PC 하트비트(D01000)가 HB_WATCH_S 사이에 바뀌면 그렇다."""
+    a = mb.read(A.D_PC_HB, 1)[0]
+    time.sleep(HB_WATCH_S)
+    b = mb.read(A.D_PC_HB, 1)[0]
+    return a != b
 
 
 class Modbus:
@@ -104,11 +183,9 @@ def _bits(word, defs, ok_key=None):
 
 
 def _conv(config_path: str):
-    import os
-    import tempfile
-    # 설정만 읽고 data/ 에는 쓰지 않는다 — 없는 폴더를 데이터 자리로(폴더를 만들지 않음)
-    paths.set_data_root(os.path.join(tempfile.gettempdir(), "ald_plc_ctl_no_data"))
-    cfg, _p, _s = _pkg.mod("config").load(config_path)
+    # 설정만 읽고 data/ 에는 쓰지 않는다. --config 가 없으면 프로그램과 같은 기본 설정(config.json, 없으면 예시)(C5)
+    cfg, used, what = _pkg.load_config(config_path)
+    print(f"설정: {what} {used}", flush=True)
     return _pkg.mod("convert").Converters(cfg)
 
 
@@ -155,27 +232,82 @@ def _heater(raw) -> float:
 
 
 def cmd_write(args, mb: Modbus, is_fake: bool) -> int:
-    addr = _pkg.parse_int(args.addr)
-    vals = [_pkg.parse_int(v) for v in args.values]
+    try:
+        addr = _pkg.parse_int(args.addr)
+        vals = [_pkg.parse_int(v) for v in args.values]
+    except ValueError:
+        print(f"주소 · 값을 읽지 못했습니다: {args.addr} {' '.join(args.values)}")
+        return 2
+    addrs = list(range(addr, addr + len(vals)))
     s = mb.read(0, 30)
     print(f"대상: {mb.host}:{mb.port} (unit {mb.unit}) — {'가짜 PLC' if is_fake else '실제 PLC'}")
     print(f"장비 ID 0x{s[A.D_DEVICE_ID]:04X} (이 프로그램 장비 {DEV.NAME} 0x{DEV.DEVICE_ID:04X})"
           f"{'' if s[A.D_DEVICE_ID] == DEV.DEVICE_ID else '  ← 다른 장비!'}")
     print(f"장비 상태 {A.STATE_NAMES.get(s[A.D_STATE], s[A.D_STATE])}")
-    print(f"쓰기: D{addr:05d}~D{addr + len(vals) - 1:05d} ← {vals}")
+    print(f"쓰기: D{addr:05d}~D{addrs[-1]:05d} ← {vals}")
+    if s[A.D_DEVICE_ID] != DEV.DEVICE_ID and not args.force:
+        print("거절: 이 장비의 PLC 가 아닙니다(장비 ID 다름) — 정말 쓰려면 --force")
+        return 3
     if s[A.D_STATE] in RUNNING_STATES:
         print("거절: 공정 중에는 쓰지 않습니다")
         return 3
-    guarded = any(a in GUARDED for a in range(addr, addr + len(vals)))
-    if guarded:
-        print("★ 하트비트 · 명령 영역입니다 — 제어 프로그램이 돌고 있으면 명령이 겹칩니다. 쓰려면 WRITE 를 치세요")
-        if input("> ").strip() != "WRITE":
+    if program_attached(mb):
+        print("거절: 제어 프로그램이 이 PLC 에 붙어 있습니다(PC 하트비트 D01000 이 바뀜) — 프로그램을 끄고 쓰거나, "
+              "프로그램의 조작 창으로 하세요")
+        return 3
+    kinds = {area_of(a) for a in addrs}
+    if "other" in kinds:
+        bad = [a for a in addrs if area_of(a) == "other"]
+        if not args.raw:
+            print(f"거절: D{bad[0]:05d} 는 쓰기 허용 목록 밖입니다(명령 데이터 D01004~D01042 · 레시피 D02000~D03119 · "
+                  "하트비트 · 명령 D01000~D01003 · PRM D01100~D01124 만). PLC 작업 이미지(D04xxx)는 래더가 바로 요청으로 "
+                  "써서 다음 스캔에 밸브가 열리거나 RF 가 켜질 수 있습니다 — 정말 써야 하면 --raw 를 주고 주소를 한 번 더 치세요")
+            return 3
+        print(f"★ 허용 목록 밖(--raw) — 명령 12 의 검사 · 프로그램의 수동 잠금을 건너뛰고 래더가 바로 씁니다")
+        ans = _pkg.ask(f"주소를 한 번 더 치세요(D{addr:05d}) > ")
+        if ans is None:
+            print("입력이 끝나 쓰지 않음")
+            return 1
+        try:
+            same = _pkg.parse_int(ans) == addr
+        except ValueError:
+            same = False
+        if not same:
             print("취소")
             return 1
-    elif not (args.yes and is_fake):
-        if input("쓸까요? [y/N] ").strip().lower() not in ("y", "yes"):
+    elif kinds & {"guard", "prm"}:
+        old = mb.read(addr, len(vals))
+        for a, o, n in zip(addrs, old, vals):
+            print(f"  D{a:05d} {word_name(a)}: {o} → {n & 0xFFFF}")
+        if "guard" in kinds:
+            print("★ 하트비트 · 명령 영역입니다 — 제어 프로그램이 돌고 있으면 명령이 겹칩니다.", end=" ")
+        if "prm" in kinds:
+            print("★ PRM(와치독 · 베이스 압력 · 과온 · RF 한계)입니다 — 프로그램이 연결할 때 설정값으로 다시 씁니다.", end=" ")
+        print("쓰려면 WRITE 를 치세요")
+        ans = _pkg.ask("> ")
+        if ans is None:
+            print("입력이 끝나 쓰지 않음")
+            return 1
+        if ans.strip() != "WRITE":
             print("취소")
             return 1
+    else:
+        for a in addrs:
+            print(f"  D{a:05d} {word_name(a)}")
+        if "cmd" in kinds:
+            print("★ 명령 데이터는 요청만 놓습니다 — 명령 12/13/14 를 보내야 반영됩니다(실기 확인은 프로그램의 조작 창으로)")
+        if not (args.yes and is_fake):
+            ans = _pkg.ask("쓸까요? [y/N] ")
+            if ans is None:
+                print("입력이 끝나 쓰지 않음")
+                return 1
+            if ans.strip().lower() not in ("y", "yes"):
+                print("취소")
+                return 1
+    # 쓰기 바로 직전에 한 번 더 — 질문하는 사이에 공정이 시작됐을 수 있다
+    if mb.read(A.D_STATE, 1)[0] in RUNNING_STATES:
+        print("거절: 공정 중이 되었습니다 — 쓰지 않음")
+        return 3
     mb.write(addr, vals)
     back = mb.read(addr, len(vals))
     print(f"썼습니다 — 되읽은 값 {back}")
@@ -188,8 +320,10 @@ def parse_args(argv=None):
     ap.add_argument("--port", type=int, default=502)
     ap.add_argument("--unit", type=int, default=1)
     ap.add_argument("--ctl-port", type=int, default=0, help="가짜 PLC 제어 포트(기본 --port + 1)")
-    ap.add_argument("--config", default="", help="환산에 쓸 설정 파일(기본 예시 설정)")
-    ap.add_argument("--yes", action="store_true", help="확인 생략 — 가짜 PLC 에만")
+    ap.add_argument("--config", default="", help="환산에 쓸 설정 파일(기본: 프로그램 config.json, 없으면 예시 설정)")
+    ap.add_argument("--yes", action="store_true", help="y 확인 생략 — 가짜 PLC 에만('WRITE' · 주소 다시 치기는 생략 안 함)")
+    ap.add_argument("--force", action="store_true", help="장비 ID 가 달라도 쓴다(쓰지 마세요 — 다른 장비 PLC 일 수 있다)")
+    ap.add_argument("--raw", action="store_true", help="허용 목록 밖 주소도 쓴다(주소를 한 번 더 쳐야 한다)")
     sub = ap.add_subparsers(dest="cmd", required=True)
     p = sub.add_parser("status")
     p.add_argument("--every", type=float, default=1.0)
@@ -206,10 +340,10 @@ def parse_args(argv=None):
     p.add_argument("key")
     p.add_argument("onoff", choices=("on", "off"))
     p = sub.add_parser("cut")
-    p.add_argument("mode", choices=("blackhole", "refuse"))
+    p.add_argument("mode", choices=("blackhole", "unplug", "refuse"))
     p.add_argument("seconds", type=float)
     p = sub.add_parser("id")
-    p.add_argument("value")
+    p.add_argument("value", help="장비 ID — 16 진(5045 · 0x5045 · h5045)")
     p = sub.add_parser("speed")
     p.add_argument("value", type=float)
     p = sub.add_parser("plant")
@@ -261,7 +395,11 @@ def main(argv=None) -> int:
                 time.sleep(max(0.2, args.every))
                 print()
         if args.cmd == "read":
-            addr, cnt = _pkg.parse_int(args.addr), _pkg.parse_int(args.count)
+            try:
+                addr, cnt = _pkg.parse_int(args.addr), _pkg.parse_int(args.count)
+            except ValueError:
+                print(f"주소 · 개수를 읽지 못했습니다: {args.addr} {args.count}")
+                return 2
             vals = mb.read(addr, cnt)
             for i, v in enumerate(vals):
                 print(f"D{addr + i:05d} = {v:6d}  0x{v:04X}")

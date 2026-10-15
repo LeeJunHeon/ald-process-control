@@ -69,20 +69,21 @@ AUX_CMD_MASK = 0x0F00
 
 # ===================== 입력 (D00008 / D00009) =====================
 # ok_when: 이 비트가 1이면 정상인가(True) / 1이면 이상인가(False)
+# short: 화면 상태 목록에 쓰는 이름(v0.6.1 B4) — 허가 · 정상 조건 입력은 상태가 들어가지 않은 이름, 점 색이 상태를 말한다
 INPUTS0 = [
-    {"bit": 0,  "tag": "EMO",     "name": "EMO OK",   "ok_when": True},
+    {"bit": 0,  "tag": "EMO",     "name": "EMO OK",   "ok_when": True, "short": "EMO"},
     {"bit": 1,  "tag": "RST-SW",  "name": "Panel Reset SW", "ok_when": True, "momentary": True},
-    {"bit": 2,  "tag": "AIR",     "name": "Air OK",       "ok_when": True},
-    {"bit": 3,  "tag": "N2",      "name": "N2 Pressure OK",    "ok_when": True},
-    {"bit": 4,  "tag": "CW",      "name": "Cooling Water OK",     "ok_when": True},
-    {"bit": 5,  "tag": "LID",     "name": "Lid Closed",       "ok_when": True},
+    {"bit": 2,  "tag": "AIR",     "name": "Air OK",       "ok_when": True, "short": "Air"},
+    {"bit": 3,  "tag": "N2",      "name": "N2 Pressure OK",    "ok_when": True, "short": "N2 Pressure"},
+    {"bit": 4,  "tag": "CW",      "name": "Cooling Water OK",     "ok_when": True, "short": "Cooling Water"},
+    {"bit": 5,  "tag": "LID",     "name": "Lid Closed",       "ok_when": True, "short": "Lid"},
     {"bit": 6,  "tag": "ATM",     "name": "Chamber ATM",     "ok_when": None},
     {"bit": 7,  "tag": "PMP-RUN", "name": "Pump Running",       "ok_when": None},
     {"bit": 8,  "tag": "PMP-ALM", "name": "Pump Alarm",       "ok_when": False},
     {"bit": 9,  "tag": "IVE-O",   "name": "IV-E Open Limit", "ok_when": None},
     {"bit": 10, "tag": "IVE-C",   "name": "IV-E Closed Limit", "ok_when": None},
     {"bit": 11, "tag": "LEAK",    "name": "Gas Leak",       "ok_when": False},
-    {"bit": 12, "tag": "SCRUB",   "name": "Scrubber OK", "ok_when": True, "unused": True},
+    {"bit": 12, "tag": "SCRUB",   "name": "Scrubber OK", "ok_when": True, "short": "Scrubber", "unused": True},
     {"bit": 13, "tag": "OT",      "name": "Heater Overtemp Trip",   "ok_when": False},
 ]
 INPUTS1 = [

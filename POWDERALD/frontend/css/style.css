@@ -759,7 +759,7 @@ header .chip.alarm { border-color: var(--stop-line); color: var(--stop); }
 /* A1: 인터락 목록 — 줄 높이를 글자에 맞춰 고정(눌려 겹치지 않게), 넘치면 상자 안 스크롤. 열은 3 열을 되찾는다.
    최소 4 줄은 보이게 — 장비 전용 칸(RF · O3)의 점 목록은 두 줄까지(넘치면 스크롤) */
 #view-main .ilks.stl { grid-template-columns: repeat(auto-fill, minmax(96px, 1fr)); grid-auto-rows: 18px;
-  min-height: 72px; overflow-y: auto; align-content: start; row-gap: 0; }
+  min-height: 18px; overflow-y: auto; align-content: start; row-gap: 0; }
 #view-main .ilks.stl .sti, #view-main [data-bind="devPanelBody"] .stl .sti { line-height: 18px; }
 #view-main [data-bind="devPanelBody"] .stl { grid-template-columns: repeat(auto-fill, minmax(96px, 1fr));
   grid-auto-rows: 18px; max-height: 36px; overflow-y: auto; row-gap: 0; }
@@ -775,3 +775,10 @@ header .chip.alarm { border-color: var(--stop-line); color: var(--stop); }
 /* v0.5.4: 정상 항목 묶음 '+N OK' — 회색, 누를 수 있음 */
 .sti.more { cursor: pointer; }
 .sti.more > i { background: var(--off); }
+/* v0.6.1(B2 · B3): '+N more' — 숨은 것 중 가장 나쁜 수준의 색. 문제 항목이 있으면 순서 그대로(dense 로 빈칸을 메우느라
+   1 칸짜리 경고가 2 칸짜리 알람보다 앞에 오지 않게) */
+.sti.more.warn { color: var(--warn); }
+.sti.more.warn > i { background: var(--warn); }
+.sti.more.stop { color: var(--stop); }
+.sti.more.stop > i { background: var(--stop); }
+.stl.ordered { grid-auto-flow: row; }

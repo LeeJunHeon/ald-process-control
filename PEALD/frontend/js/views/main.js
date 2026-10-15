@@ -317,8 +317,33 @@
     });
     // 입력 워드1(RF·O3 관련)은 아래 장비 전용 패널에서 이미 보여 준다 —
     // 같은 칩을 두 번 그리면 인터락 패널이 넘친다.
-    core.html(box, stiList(out));
-    snapIlks(box);
+    // ★ v0.6.1(B2): 들어가는 줄 수에 맞춰 그린다 — 지난번 잰 줄 · 열 수로 그리고, 재어 보아 달라졌으면 한 번 더
+    box.classList.toggle('ordered', out.some(function (i) { return T.stiRank(i.lvl) < 2; }));
+    core.html(box, stiList(out, ilkFit.rows, ilkFit.cols));
+    var rows = snapIlks(box), cols = stlCols(box);
+    if (rows && cols && (rows !== ilkFit.rows || cols !== ilkFit.cols)) {
+      ilkFit = { rows: rows, cols: cols };
+      core.html(box, stiList(out, rows, cols));
+    }
+  }
+  var ilkFit = { rows: 0, cols: 0 };
+
+  /** 상태 점 목록 상자의 열 수(grid-template-columns 가 계산된 값). 못 재면 0 */
+  function stlCols(box) {
+    if (!w.getComputedStyle) return 0;
+    return String(w.getComputedStyle(box).gridTemplateColumns || '').split(' ').filter(Boolean).length;
+  }
+
+  /** ★ v0.6.1(B1): 상자 위 ~ 칸(panel-body) 몸통 아래까지 실제로 남은 높이(CSS px, 창 배율 zoom 을 나눈 값).
+   *  Process 칸 목록이 길어지면 Pressure 칸 몸통이 줄어 칸이 상자를 자른다 — 상자 높이(clientHeight)만 보면
+   *  잘린 줄이 반만 보인다. 못 재면 0 */
+  function ilkRoom(box) {
+    var body = box.closest && box.closest('.panel-body');
+    if (!body || !box.offsetHeight) return 0;
+    var br = box.getBoundingClientRect(), pr = body.getBoundingClientRect();
+    var zoom = br.height / box.offsetHeight || 1;
+    var pad = w.getComputedStyle ? parseFloat(w.getComputedStyle(body).paddingBottom) || 0 : 0;
+    return Math.max(0, (pr.bottom - br.top) / zoom - pad - 2);
   }
 
   /** 인터락 목록 칸 높이를 줄 높이의 배수로 — 줄이 반쯤 잘리지 않게(넘치는 줄은 스크롤로 본다).
@@ -326,8 +351,11 @@
   function snapIlks(box) {
     box.style.maxHeight = '';
     var h = box.clientHeight;
-    if (!h) return;
+    if (!h) return 0;
+    var room = ilkRoom(box);              // ★ v0.6.1(B1): 칸 몸통이 자르는 높이까지
+    if (room > 0 && room < h) h = room;
     box.style.maxHeight = snapRows(h) + 'px';
+    return snapRows(h) / STI_ROW;
   }
 
   function snapRows(h) { return Math.max(STI_ROW, Math.floor(h / STI_ROW) * STI_ROW); }
@@ -343,19 +371,28 @@
     if (k.ok_when === false) lvl = on ? 'stop' : '';
     else if (k.ok_when === true) lvl = on ? 'ok' : 'stop';
     else lvl = on ? 'ok' : '';
-    return { name: k.name, lvl: lvl, why: why };
+    // ★ v0.6.1(B4): 허가 · 정상 조건 입력은 상태가 들어가지 않은 이름(short — 'Air OK' → 'Air')으로, 점 색이 상태를 말한다
+    return { name: (k.ok_when === true && k.short) || k.name, lvl: lvl, why: why };
   }
 
   /** ★ v0.5.3: 상태 목록은 알람(빨강) → 경고(노랑) → 그 밖 순(T.stiOrder) — 문제 항목이 위로.
    *  ★ v0.5.4: 알람이나 경고가 있으면 문제 항목만 그리고, 정상 항목은 회색 '+N OK' 한 칸(올리면 툴팁 · 누르면 알림에
    *  전체 이름) — 칸이 좁아도 문제 항목이 스크롤 아래로 숨지 않게(T.stiCompact) */
-  function stiList(items) {
+  function stiList(items, rows, cols) {
     var c = T.stiCompact(items);
+    // ★ v0.6.1(B2): 줄 · 열 수를 알면 그 안에 맞춘다 — 넘치면 마지막 칸은 '+N more'(숨은 것 중 가장 나쁜 수준의 색)
+    if (rows && cols) c = T.stiFit(c, rows, cols);
     var h = c.items.map(function (i) { return sti(i.name, i.lvl, i.why); }).join('');
     if (c.ok.length) {
       var names = c.ok.map(function (i) { return i.name; }).join(' · ');
       h += '<span class="sti more" tabindex="0" role="button" data-okall="' + core.esc(names) + '" title="' +
         core.esc(names) + '"><i></i>+' + c.ok.length + ' OK</span>';
+    }
+    if (c.more && c.more.length) {
+      var lv = T.stiWorst(c.more);
+      var hid = c.more.map(function (i) { return i.name; }).join(' · ');
+      h += '<span class="sti more' + (lv ? ' ' + lv : '') + '" tabindex="0" role="button" data-more="1" title="' +
+        core.esc(hid) + '"><i></i>+' + c.more.length + ' more</span>';
     }
     return h;
   }
@@ -364,6 +401,7 @@
     d.addEventListener('click', function (ev) {
       var m = ev.target.closest && ev.target.closest('[data-okall]');
       if (m) core.toast('OK — ' + m.getAttribute('data-okall'), 'info');
+      if (ev.target.closest && ev.target.closest('[data-more]')) core.setTab('alarm');     // v0.6.1(B2): 숨은 항목은 Alarm/Log 탭에서
     });
   }
 

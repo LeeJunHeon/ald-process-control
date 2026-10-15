@@ -11,6 +11,21 @@ import asyncio
 
 import pytest
 
+# ★ v0.6.1(C2): websockets 15 이상은 proxy=True 가 기본이라, Windows 에 시스템 프록시가 있으면 127.0.0.1 연결도
+#   프록시로 간다 — 시험의 WebSocket 은 늘 프록시 없이(proxy 인자가 없는 옛 버전은 그대로)
+try:
+    import inspect as _inspect
+    import websockets as _websockets
+    if "proxy" in _inspect.signature(_websockets.connect).parameters:
+        _ws_connect = _websockets.connect
+
+        def _connect_no_proxy(*a, **kw):
+            kw.setdefault("proxy", None)
+            return _ws_connect(*a, **kw)
+        _websockets.connect = _connect_no_proxy
+except Exception:  # noqa: BLE001 — websockets 가 없거나 시그니처를 못 읽으면 그대로
+    pass
+
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, ROOT)
 
