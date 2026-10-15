@@ -53,7 +53,7 @@ def atomic_write_json(path: str, obj) -> None:
 
 def read_json(path: str):
     try:
-        with open(path, "r", encoding="utf-8") as f:
+        with open(path, "r", encoding="utf-8-sig") as f:      # ★ v0.6.2(C1): 손으로 고쳐 BOM 이 붙어도
             return json.load(f)
     except FileNotFoundError:
         return None

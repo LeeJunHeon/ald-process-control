@@ -28,7 +28,9 @@ def test_a1_interlock_rows_fit_text():
     col, row, minh = (int(x) for x in m.groups())
     fs = int(re.search(r"--fs-sm:\s*(\d+)px", _src("css", "tokens.css")).group(1))
     assert row >= fs * 1.4, (row, fs)                     # 줄 높이 ≥ 글자 줄 높이(눌려 겹치지 않게)
-    assert minh >= 4 * row, (minh, row)                   # 최소 4 줄은 보인다
+    # v0.6.2(A1): v0.6.1 B1 에서 최소 높이는 한 줄(18 px)로 — 줄 수는 snapIlks 가 칸 몸통에 맞춰 정한다.
+    #   알람이 숨지 않는 것은 test_v061 B2 · test_v062 B1 이 본다
+    assert minh % row == 0 and minh >= row, (minh, row)   # 최소 높이 = 줄 높이의 배수
     assert col <= 100                                     # 3 열을 되찾는다(오른쪽 칸 340 px 이상)
     out = _node("const T = require(%s); console.log(JSON.stringify({ col: T.STI_COL, r: %s.map(n => [n, T.textPx(n, %d), T.stiSpan(n)]) }));" % (
         json.dumps(os.path.join(JS, "terms.js")),

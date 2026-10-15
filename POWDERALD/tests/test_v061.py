@@ -48,7 +48,7 @@ def test_a2_tall_canvas_behaviour():
 
 def test_a1_version_compare_is_numeric():
     from powderald import version
-    assert version.APP_VERSION == "0.6.1"
+    assert tuple(int(x) for x in version.APP_VERSION.split(".")) >= (0, 6, 1)   # v0.6.2: 버전이 오를 때 깨지지 않게
     src = open(os.path.join(ROOT, "tests", "test_v051.py"), encoding="utf-8").read()
     assert 'APP_VERSION.startswith("0.5.")' not in src
 
@@ -113,7 +113,7 @@ def test_b2_fit_list_to_rows_with_more_cell():
         const c = T.stiCompact(items);
         const f = T.stiFit(c, rows, cols);
         out[rows + 'x' + cols] = { items: f.items.map(i => i.name), ok: f.ok.map(i => i.name),
-          more: f.more.map(i => i.name), worst: T.stiWorst(f.more),
+          more: f.more.map(i => i.name), okHid: f.okHid.map(i => i.name), worst: T.stiWorst(f.more),
           compact: c.items.map(i => i.name), okAll: c.ok.map(i => i.name),
           spans: c.items.map(i => Math.min(cols, T.stiSpan(i.name))) };
       }
@@ -129,7 +129,8 @@ def test_b2_fit_list_to_rows_with_more_cell():
         rows, cols = (int(x) for x in key.split("x"))
         k = len(r["items"])
         assert r["items"] == r["compact"][:k], r                      # 앞에서부터(알람 먼저)
-        assert r["more"] == r["compact"][k:] + r["okAll"] and r["ok"] == [], r
+        # v0.6.2(B1): '+N more' 는 숨은 문제 항목만 센다 — 정상 묶음은 okHid(툴팁 'OK n 개')
+        assert r["more"] == r["compact"][k:] and r["okHid"] == r["okAll"] and r["ok"] == [], r
         assert _used(r["spans"][:k] + [1], cols) <= rows, r            # 마지막 칸 '+N more' 까지 들어간다
         assert _used(r["spans"][:k + 1] + [1], cols) > rows, r         # 하나 더 넣으면 넘친다(들어가는 만큼은 다 보인다)
         assert r["worst"] == "stop", r                                 # 숨은 것 중 가장 나쁜 수준(알람)
@@ -155,10 +156,11 @@ def test_b2_render_more_cell_and_opens_alarm_tab():
     h = out["html"]
     assert h.count('<span class="sti') >= 3 and h.rstrip().endswith("more</span>"), h
     last = h[h.rindex('<span class="sti'):]
-    assert 'class="sti more stop"' in last and 'data-more="1"' in last and "title=" in last, last
+    # v0.6.2(B2): data-more 는 수준별 알림 글(누르면 알림 — 탭을 옮기지 않는다)
+    assert 'class="sti more stop"' in last and 'data-more="Alarm: ' in last and "title=" in last, last
     assert "Basic" in last.split('title="')[1]                       # 툴팁에 숨은 이름
     assert "more" not in out["full"].replace("sti more", "")         # 줄 수를 모르면 예전처럼('+N OK')
-    assert "core.setTab('alarm')" in main and "closest('[data-more]')" in main
+    assert "closest('[data-more]')" in main and "core.toast(mm.getAttribute('data-more')" in main   # v0.6.2(B2)
     css = _src("css", "style.css")
     assert ".sti.more.stop > i { background: var(--stop); }" in css and ".sti.more.warn > i { background: var(--warn); }" in css
     # 인터락 목록은 잰 줄 · 열 수로 다시 그린다
@@ -225,8 +227,11 @@ def test_c1_write_allow_list(fake_plc):
     code, out = _write(port, "--yes", "--raw", "write", "D04012", "0", inp="04012\n")
     assert code == 0 and "되읽은 값" in out, out
     # 명령 데이터 — 뜻을 보이고 '명령 13 을 보내야 반영'
-    code, out = _write(port, "--yes", "write", "D01012", "600")
-    assert code == 0 and "CH01 설정 온도" in out and "명령 12/13/14" in out and "되읽은 값 [600]" in out, out
+    # v0.6.2(D2): 히터 워드(D01010~D01023)는 프로그램의 다음 명령 13 이 그대로 반영 — PRM 처럼 WRITE
+    code, out = _write(port, "--yes", "write", "D01012", "600", inp="WRITE\n")
+    assert code == 0 and "CH01 설정 온도" in out and "명령 13" in out and "되읽은 값 [600]" in out, out
+    code, out = _write(port, "--yes", "write", "D01040", "0")
+    assert code == 0 and "명령 12/13/14" in out and "되읽은 값 [0]" in out, out
     # PRM — 옛 값 → 새 값, WRITE 를 쳐야(--yes 로 건너뛰지 않음)
     old = _read(port, A.D_PRM_PC_WDT_MS)
     code, out = _write(port, "--yes", "write", "D01100", "5000", inp="y\n")

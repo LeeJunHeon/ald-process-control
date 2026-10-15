@@ -139,7 +139,8 @@ async def test_command_number_continues_after_reconnect(sim):
 async def test_plc_hb_stall_is_detected(link, monkeypatch):
     """통신은 되는데 PLC 가 스캔을 안 돌리는 경우(STOP)를 잡는다."""
     lk, s, _cfg = link
-    assert lk.plc_hb_ok
+    # v0.6.2(A3): 바쁜 PC 에서는 연결 직후 첫 PLC 하트비트 변화 전일 수 있다 — 바로 보지 않고 기다린다
+    assert await wait_until(lambda: lk.plc_hb_ok, 3)
     monkeypatch.setattr("powderald.plclink.PLC_HB_STALL_S", 0.3)
     # 시뮬레이터의 하트비트를 멈춘다
     monkeypatch.setattr(s, "_plc_heartbeat", lambda now: None)

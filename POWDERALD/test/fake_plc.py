@@ -21,7 +21,9 @@ PLC 가 준비되기 전에 '실제 공정처럼' 시험하려고 실제 PLC 자
 설정: --config 가 없으면 프로그램과 같은 기본 설정(config.json, 없으면 예시 설정)을 읽고, 시작할 때 어느 것인지 찍는다.
 제어 파일(--ctl-file)을 주면 그 파일에 한 줄씩 JSON 명령을 덧붙여도 된다(결과는 같은 이름 + .out).
     {"op": "fault", "key": "emo", "on": true}
-  UTF-8(BOM 있어도) · UTF-16(PowerShell 5 의 >> 기본)을 모두 읽는다.
+  덧붙이기(>> · Add-Content)만 쓴다 — 켤 때 이미 있던 줄은 실행하지 않고, 파일이 줄어들면(> 로 덮어씀) 처음부터 다시
+  읽는다. 명령은 ASCII JSON 이라 NUL · BOM 바이트를 지우고 줄을 나눈다 — UTF-8(BOM 있어도) · UTF-16 LE/BE · 섞인 파일 모두.
+  통신 끊기는 {"op": "cut", "mode": "blackhole", "s": 2, "on": "cmd"} 처럼 '다음 명령 번호(D01001) 쓰기에서' 도 된다.
 """
 import os
 import sys
@@ -58,7 +60,7 @@ class PlantSim(SIM.PlcSim):
 
     def __init__(self, cfg, plant: dict, speed: float = 1.0, seed=None):
         super().__init__(cfg, speed)
-        self.speed = max(0.1, float(speed or 1.0))      # 1.0 = 실제 시간(PlcSim 은 1 아래를 막는다 — 여기서는 느리게도)
+        self.speed = _pkg.clamp_speed(speed or 1.0)      # 1.0 = 실제 시간(PlcSim 은 1 아래를 막는다 — 여기서는 느리게도)
         self.plant = plant
         self.rng = random.Random(seed)
         self.true_pressure = self.base_pressure
@@ -69,8 +71,9 @@ class PlantSim(SIM.PlcSim):
         self.rf_fwd_w = 0.0
         self.pcv_pos = 0.0
         self.o3_conc = 0.0
-        # 대기압 입력(압력 스위치)이 켜지는 압력 — 장비 물리라 fake_plant.json 에서(래더는 SIM.ATM_INPUT_TORR 를 본다)
-        SIM.ATM_INPUT_TORR = float(plant["pressure"].get("atm_input_torr", SIM.ATM_INPUT_TORR))
+        # 대기압 입력(압력 스위치)이 켜지는 압력 — 장비 물리라 fake_plant.json 에서.
+        # ★ v0.6.2(D8): 모듈 값(SIM.ATM_INPUT_TORR)을 바꾸지 않고 이 인스턴스만 — pytest 안에서 만들어도 뒤 시험에 남지 않게
+        self.atm_input_torr = float(plant["pressure"].get("atm_input_torr", SIM.ATM_INPUT_TORR))
 
     # ---------- 시작 상태 ----------
     def set_state(self, spec):
@@ -235,6 +238,7 @@ class FakeServer(SIM.SimServer):
         super().__init__(sim, host, port)
         self.blackhole_until = 0.0
         self.unplug_until = 0.0
+        self.armed = None                   # (mode, s) — 다음 명령 번호(D01001) 쓰기에서 끊는다(v0.6.2 D6)
         self.refusing = False
         self.logf = logf
         self.hb_gap_ms = float(hb_gap_ms)
@@ -248,8 +252,18 @@ class FakeServer(SIM.SimServer):
             self.logf.flush()
 
     # ---------- 끊기 ----------
-    def cut(self, mode: str, seconds: float):
+    def cut(self, mode: str, seconds: float, on: str = ""):
         seconds = max(0.0, float(seconds))
+        if on == "cmd":
+            # ★ v0.6.2(D6): 다음 명령 번호(D01001) 쓰기가 오는 바로 그 요청부터 끊는다 — 블랙홀이면 PLC 는 명령을 받고
+            #   답만 안 하고(결과 모름), 케이블 뽑힘이면 명령이 PLC 에 닿지 않는다
+            if mode not in ("blackhole", "unplug"):
+                raise ValueError("on=cmd 는 blackhole · unplug 만")
+            self.armed = (mode, seconds)
+            self.log(f"통신 끊기 대기: 다음 명령 번호 쓰기에서 {mode} {seconds:g} s")
+            return
+        if on not in ("", "now"):
+            raise ValueError("on 은 now · cmd")
         if mode == "blackhole":
             self.blackhole_until = time.monotonic() + seconds
             self.log(f"통신 끊기: 블랙홀 {seconds:g} s (요청은 받고 답하지 않음)")
@@ -292,6 +306,10 @@ class FakeServer(SIM.SimServer):
                 head = await reader.readexactly(7)
                 tid, _proto, length, unit = SIM.struct.unpack(">HHHB", head)
                 body = await reader.readexactly(max(0, length - 1))
+                if self.armed and _writes(body, A.D_CMD_NO):
+                    mode, sec = self.armed
+                    self.armed = None
+                    self.cut(mode, sec)
                 if time.monotonic() < self.unplug_until:
                     continue                    # 케이블 뽑힘 — 요청이 PLC 에 닿지 않는다(쓰기도 반영 안 됨)
                 resp = self._handle(body)
@@ -335,12 +353,28 @@ class FakeServer(SIM.SimServer):
         return resp
 
     async def _loop(self):
+        last, n, since = "", 0, 0.0
         while True:
             try:
                 self.sim.tick()
                 self._watch()
+                if n > 1:
+                    self.log(f"tick 오류 끝 — 같은 오류 {n} 번")
+                last, n = "", 0
             except Exception as e:  # noqa: BLE001
-                self.log(f"tick 오류(계속): {type(e).__name__}: {e}")
+                # ★ v0.6.2(D8): 같은 오류는 묶는다(전에는 초당 약 50 줄) — 처음 한 번 + 10 s 마다 횟수
+                msg = f"{type(e).__name__}: {e}"
+                now = time.monotonic()
+                if msg != last:
+                    if n > 1:
+                        self.log(f"tick 오류 — 앞 오류 {n} 번")
+                    self.log(f"tick 오류(계속): {msg}")
+                    last, n, since = msg, 1, now
+                else:
+                    n += 1
+                    if now - since >= 10.0:
+                        self.log(f"tick 오류(계속) — 같은 오류 {n} 번: {msg}")
+                        since = now
             await asyncio.sleep(SIM.TICK_S)
 
     def _watch(self):
@@ -384,16 +418,19 @@ class Control:
             srv.log(f"고장 {key} {'켬' if req.get('on', True) else '끔'}")
             return {"ok": True}
         if op == "cut":
-            srv.cut(req.get("mode", "blackhole"), float(req.get("s", 1.0)))
+            srv.cut(req.get("mode", "blackhole"), float(req.get("s", 1.0)), req.get("on") or "")
             return {"ok": True}
         if op == "id":
             sim.device_id = _pkg.parse_id(req.get("value"))          # 늘 16 진(h5045 표기와 같게)
             srv.log(f"장비 ID → 0x{sim.device_id:04X}")
             return {"ok": True, "device_id": sim.device_id}
         if op == "speed":
-            sim.speed = max(0.1, float(req.get("value", 1.0)))
+            try:
+                sim.speed = _pkg.clamp_speed(req.get("value", 1.0))     # ★ v0.6.2(D8): inf · nan 거절, 0.1~1000
+            except (TypeError, ValueError) as e:
+                return {"ok": False, "why": str(e)}
             srv.log(f"배속 → {sim.speed:g}")
-            return {"ok": True}
+            return {"ok": True, "speed": sim.speed}
         if op == "state":
             sim.set_state(req.get("name", "atm"))
             srv.log(f"물리 상태 → {req.get('name')}")
@@ -402,6 +439,7 @@ class Control:
             now = time.monotonic()
             return {"ok": True, **sim.summary(), "cut": {"blackhole": max(0.0, srv.blackhole_until - now),
                                                          "unplug": max(0.0, srv.unplug_until - now),
+                                                         "armed": list(srv.armed) if srv.armed else None,
                                                          "refusing": srv.refusing}}
         if op == "quit":
             self.stop_event.set()
@@ -426,53 +464,75 @@ class Control:
             writer.close()
 
     async def watch_file(self, path: str):
-        pos = 0
+        # ★ v0.6.2(D7): 켤 때는 파일 끝부터 — 지난번에 남은 줄(남은 'quit' 등)을 다시 실행하지 않는다
+        pos = ctl_start(path)
         while True:
             try:
-                if os.path.isfile(path):
-                    with open(path, "rb") as f:
-                        f.seek(pos)
-                        data = f.read()
-                    # 줄이 다 써진 데까지만(덧붙이는 중인 줄은 다음 번에)
-                    cut = _utf16_cut(data) if _utf16(path) else data.rfind(b"\n") + 1
-                    pos += cut
-                    for line in _lines(data[:cut], path):
-                        try:
-                            out = self.run(json.loads(line))
-                        except Exception as e:  # noqa: BLE001
-                            out = {"ok": False, "why": f"{type(e).__name__}: {e}"}
-                        with open(path + ".out", "a", encoding="utf-8") as o:
-                            o.write(json.dumps({"req": line, **out}, ensure_ascii=False) + "\n")
+                lines, pos = ctl_read(path, pos)
+                for line in lines:
+                    try:
+                        out = self.run(json.loads(line))
+                    except Exception as e:  # noqa: BLE001
+                        out = {"ok": False, "why": f"{type(e).__name__}: {e}"}
+                    with open(path + ".out", "a", encoding="utf-8") as o:
+                        o.write(json.dumps({"req": line, **out}, ensure_ascii=False) + "\n")
             except OSError:
                 pass
             await asyncio.sleep(0.2)
 
 
-def _utf16(path: str) -> bool:
-    """제어 파일이 UTF-16 인가(PowerShell 5 의 >> · Out-File 기본) — 첫 두 바이트(BOM)로."""
+def _writes(pdu: bytes, addr: int) -> bool:
+    """Modbus 요청(PDU)이 addr 워드를 쓰나(기능 6 · 16)."""
     try:
-        with open(path, "rb") as f:
-            return f.read(2) in (b"\xff\xfe", b"\xfe\xff")
+        if pdu and pdu[0] in (6, 16):
+            a = SIM.struct.unpack(">H", pdu[1:3])[0]
+            n = 1 if pdu[0] == 6 else SIM.struct.unpack(">H", pdu[3:5])[0]
+            return a <= addr <= a + n - 1
+    except Exception:  # noqa: BLE001
+        pass
+    return False
+
+
+def ctl_start(path: str) -> int:
+    """제어 파일을 읽기 시작할 위치 — 켤 때 있던 내용은 건너뛴다(파일 끝)."""
+    try:
+        return os.path.getsize(path)
     except OSError:
-        return False
+        return 0
 
 
-def _utf16_cut(data: bytes) -> int:
-    """UTF-16 LE 조각에서 마지막 줄바꿈(0A 00) 바로 뒤 위치(짝수 자리만)."""
-    for i in range(len(data) - 2 - (len(data) % 2), -1, -2):
-        if data[i] == 0x0A and data[i + 1] == 0:
-            return i + 2
-    return 0
+def ctl_read(path: str, pos: int):
+    """(새 줄들, 새 위치). 줄이 다 써진 데(마지막 \\n)까지만 읽는다(덧붙이는 중인 줄은 다음 번에).
+    ★ v0.6.2(D7): 파일이 위치보다 작아지면('>' 로 덮어씀 · 지움) 처음부터 다시 읽는다."""
+    try:
+        size = os.path.getsize(path)
+    except OSError:
+        return [], 0                        # 없어지면 처음부터(다시 만들어지면 그 내용 전부)
+    if size < pos:
+        pos = 0
+    with open(path, "rb") as f:
+        f.seek(pos)
+        data = f.read()
+    cut = data.rfind(b"\n") + 1
+    return _lines(data[:cut]), pos + cut
 
 
-def _lines(chunk: bytes, path: str) -> list:
-    """제어 파일 조각 → 빈 줄을 뺀 줄들. UTF-8(BOM 있어도) · UTF-16 LE 를 읽는다(C12)."""
+_BOMS = (b"\xef\xbb\xbf", b"\xff\xfe", b"\xfe\xff")
+
+
+def _lines(chunk: bytes, path: str = "") -> list:
+    """제어 파일 조각 → 빈 줄을 뺀 줄들.
+    ★ v0.6.2(D7): 명령은 ASCII JSON 이다 — 인코딩을 고르지 않고 NUL · BOM 바이트를 지우고 \\n 으로 나눈다. 그래서 UTF-8
+      (BOM 있어도) · UTF-16 LE · BE · 그리고 섞인 파일(cmd echo 로 만든 UTF-8 에 PowerShell 5 의 >> 로 UTF-16 을 덧붙인 것)을
+      모두 읽는다. path 는 예전 호출과 맞추려고 남긴 인자(쓰지 않음)."""
     if not chunk:
         return []
-    text = chunk.decode("utf-16-le" if _utf16(path) else "utf-8", "replace")
+    b = chunk.replace(b"\x00", b"")
+    for bom in _BOMS:
+        b = b.replace(bom, b"")
     out = []
-    for ln in text.splitlines():
-        ln = ln.strip().lstrip("﻿").strip()
+    for ln in b.split(b"\n"):
+        ln = ln.decode("utf-8", "replace").strip()
         if ln:
             out.append(ln)
     return out
@@ -483,14 +543,15 @@ def parse_args(argv=None):
     ap.add_argument("--host", default="127.0.0.1")
     ap.add_argument("--port", type=int, required=True, help="Modbus TCP 포트(프로그램 plc.port)")
     ap.add_argument("--ctl-port", type=int, default=0, help="제어 포트(기본 --port + 1)")
-    ap.add_argument("--speed", type=float, default=1.0, help="물리 배속(1 = 실제 시간, 빨리 볼 때 2~20)")
+    ap.add_argument("--speed", type=_pkg.parse_speed, default=1.0, help="물리 배속(1 = 실제 시간, 빨리 볼 때 2~20 · 0.1~1000)")
     ap.add_argument("--device-id", default="", help=f"장비 ID — 16 진(기본 {DEV.DEVICE_ID:04X} — 틀린 ID 시험용)")
     ap.add_argument("--state", default="atm", help="시작 상태: atm · vac · hot 또는 JSON 파일")
     ap.add_argument("--config", default="", help="프로그램과 같은 설정 파일(아날로그 환산이 같아야 한다 — "
                                                  "없으면 프로그램 기본 config.json, 그것도 없으면 예시 설정)")
     ap.add_argument("--plant", default="", help="물리 값 파일(기본 test/fake_plant.json)")
     ap.add_argument("--log", default="", help="PLC 쪽 기록 파일(하트비트 공백 · 받은 명령 · 상태 변화)")
-    ap.add_argument("--ctl-file", default="", help="제어 파일 — 한 줄씩 JSON 명령을 덧붙이면 실행")
+    ap.add_argument("--ctl-file", default="", help="제어 파일 — 한 줄씩 JSON 명령을 덧붙이면(>> · Add-Content) 실행. "
+                                                   "켤 때 이미 있던 줄은 실행하지 않는다")
     ap.add_argument("--seed", type=int, default=None, help="잡음 씨앗(같은 값이면 같은 잡음)")
     ap.add_argument("--exit-on-eof", action="store_true",
                     help="stdin 이 닫히면(EOF) 끝낸다 — 시험 틀이 stdin=PIPE 로 띄울 때(틀이 강제로 꺼져도 남지 않게)")
@@ -551,6 +612,8 @@ async def amain(args) -> int:
 
 def main(argv=None) -> int:
     args = parse_args(argv)
+    if args.config:
+        _pkg.check_config(args.config)        # ★ v0.6.2(D8): 직접 준 --config 를 못 읽으면 종료 코드 2(예시로 넘어가지 않음)
     try:
         return asyncio.run(amain(args))
     except KeyboardInterrupt:

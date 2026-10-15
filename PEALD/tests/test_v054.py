@@ -100,8 +100,10 @@ def test_2_main_renders_plus_ok_and_snaps_rows():
     assert "<i></i>+' + c.ok.length + ' OK</span>'" in sl and 'data-okall="' in sl and 'title="' in sl
     assert "class=\"sti more\"" in sl                                     # 회색(정상 묶음)
     assert "core.toast('OK — ' + m.getAttribute('data-okall'), 'info')" in main        # 누르면 전체 이름
-    # 인터락 · RF · O3 목록 모두 같은 stiList
-    assert main.count("stiList(out)") == 2
+    # 인터락 · RF · O3 목록 모두 같은 stiList — v0.6.2(A2): 인터락 목록은 v0.6.1 B2 부터 잰 줄 · 열 수를 넘긴다
+    vac = _fn(main, "updateVac")
+    assert "core.html(box, stiList(out, rows, cols));" in vac and "var rows = snapIlks(box), cols = stlCols(box);" in vac
+    assert "core.html(chips, stiList(out));" in _fn(main, "updateDev")
     # 상자의 실제 높이를 18 의 배수로 내려 맞춘다(넘칠 때만이 아니라 늘)
     out = _node("var STI_ROW = 18;\n%s\nconsole.log(JSON.stringify([10, 18, 45, 72, 100, 191].map(snapRows)));" % _fn(main, "snapRows"))
     assert out == [18, 18, 36, 72, 90, 180]

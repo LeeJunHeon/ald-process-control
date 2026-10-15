@@ -1019,6 +1019,9 @@ async def _need_admin(d, ws) -> bool:
 
 # ===================== 설정 편집 =====================
 def _save_blocked() -> str:
+    blk = settings.save_block(state.cfg)        # ★ v0.6.2(C1): 읽지 못한 config.json 을 덮어쓰지 않게
+    if blk:
+        return blk
     if _running():
         return "시퀀서 동작 중(공정 준비·실행·일시정지·사이클 후 정지 예약)에는 설정을 저장할 수 없습니다"
     if state.runner and state.runner.busy:

@@ -161,6 +161,7 @@ class PlcSim:
         self.cfg = cfg
         self._clock = clock or time.monotonic       # 시험은 가짜 시계를 넣는다
         self.speed = max(1.0, float(speed or 1.0))
+        self.atm_input_torr = ATM_INPUT_TORR    # 대기압 입력이 켜지는 압력(가짜 PLC 는 인스턴스마다 바꾼다)
         self.device_id = DEV.DEVICE_ID      # D00019 — 시험에서 다른 장비·0 을 흉내 낼 때 바꾼다
         self.conv = Converters(cfg)
         self.reg = _Regs([0] * REG_COUNT)
@@ -1131,7 +1132,7 @@ class PlcSim:
             w |= 1 << A.IN0_CW
         if not f["lid"]:
             w |= 1 << A.IN0_LID
-        if self.pressure >= ATM_INPUT_TORR:
+        if self.pressure >= self.atm_input_torr:
             w |= 1 << A.IN0_ATM
         pump_run = self.pump_on and self.pump_run_at is not None and (now - self.pump_run_at) >= 1.0
         if pump_run and not f["pump_alm"] and not f["pump_nofb"]:

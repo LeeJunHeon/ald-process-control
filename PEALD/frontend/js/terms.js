@@ -136,9 +136,13 @@
     if (!probs.length) return { items: ord, ok: [] };
     return { items: probs, ok: ord.slice(probs.length) };
   };
-  /** ★ v0.6.1(B2): 목록을 rows 줄 × cols 열 안에 맞춘다(stiCompact 결과를 받아). 넘치면 앞에서부터(알람 먼저) 들어가는 만큼만
-   *  두고 마지막 칸은 '+N more' — { items, ok, more: 숨은 항목(정상 묶음 포함) }. 배치는 순서 그대로(dense 아님 — B3):
-   *  두 열짜리가 줄 끝에 안 들어가면 다음 줄에서 시작한다(style.css 의 .stl.ordered 와 같은 규칙) */
+  /** ★ v0.6.1(B2): 목록을 rows 줄 × cols 열 안에 맞춘다(stiCompact 결과를 받아). 배치는 순서 그대로(dense 아님 — B3):
+   *  두 열짜리가 줄 끝에 안 들어가면 다음 줄에서 시작한다(style.css 의 .stl.ordered 와 같은 규칙).
+   *  ★ v0.6.2(B1): 정상 묶음 칸 때문에 문제 항목을 숨기지 않는다 —
+   *    ① 문제 항목 + '+N OK' 가 다 들어가면 그대로
+   *    ② 문제 항목만 다 들어가면 문제 항목을 모두 보이고 OK 칸은 뺀다(okHid — 상자 title 에 개수 · 이름)
+   *    ③ 문제 항목도 다 안 들어가면 앞에서부터(알람 먼저) 들어가는 만큼 + '+N more' — more 는 숨은 문제 항목만
+   *  { items, ok: '+N OK' 칸에 묶은 정상 항목, more: '+N more' 로 숨은 항목, okHid: 칸 없이 숨은 정상 항목 } */
   T.stiFit = function (c, rows, cols) {
     rows = Math.max(1, rows | 0);
     cols = Math.max(1, cols | 0);
@@ -152,10 +156,27 @@
       return r;
     }
     var spans = c.items.map(function (i) { return Math.min(cols, T.stiSpan(i.name)); });
-    if (used(spans.concat(c.ok.length ? [1] : [])) <= rows) return { items: c.items, ok: c.ok, more: [] };
+    if (used(spans.concat(c.ok.length ? [1] : [])) <= rows) return { items: c.items, ok: c.ok, more: [], okHid: [] };
+    if (used(spans) <= rows) return { items: c.items, ok: [], more: [], okHid: c.ok };
     var k = c.items.length;
     while (k > 0 && used(spans.slice(0, k).concat([1])) > rows) k--;
-    return { items: c.items.slice(0, k), ok: [], more: c.items.slice(k).concat(c.ok) };
+    return { items: c.items.slice(0, k), ok: [], more: c.items.slice(k), okHid: c.ok };
+  };
+  /** ★ v0.6.2(B2): 숨은 항목을 수준별 글로 — 'Alarm: a · b / Warning: c / OK n'(알림 · 툴팁). 알람 · 경고가 아닌
+   *  숨은 항목(문제가 없는 목록이 넘친 경우)과 정상 묶음은 'OK n' 으로 센다 */
+  T.stiMoreText = function (more, okHid) {
+    var by = { stop: [], warn: [] }, okn = (okHid || []).length;
+    (more || []).forEach(function (i) {
+      var r = T.stiRank(i.lvl);
+      if (r === 0) by.stop.push(i.name);
+      else if (r === 1) by.warn.push(i.name);
+      else okn++;
+    });
+    var out = [];
+    if (by.stop.length) out.push('Alarm: ' + by.stop.join(' · '));
+    if (by.warn.length) out.push('Warning: ' + by.warn.join(' · '));
+    if (okn) out.push('OK ' + okn);
+    return out.join(' / ');
   };
   /** 항목 중 가장 나쁜 수준('stop' · 'warn' · '') */
   T.stiWorst = function (items) {

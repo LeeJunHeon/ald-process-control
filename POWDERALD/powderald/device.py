@@ -97,7 +97,8 @@ INPUTS1 = [
 INTERLOCKS = [
     {"bit": 0, "tag": "Basic",        "why": "비상정지·공압·N2·챔버 닫힘·냉각수 정상"},
     {"bit": 1, "tag": "Pump",        "why": "펌프 운전 중이고 펌프 알람 없음"},
-    {"bit": 2, "tag": "Vacuum OK",        "why": "베이스 압력 설정이 0보다 크고, 현재 압력이 그 이하"},
+    {"bit": 2, "tag": "Vacuum OK",        "short": "Vacuum",
+     "why": "베이스 압력 설정이 0보다 크고, 현재 압력이 그 이하"},
     {"bit": 3, "tag": "Start Permit", "why": "공정 밸브 허가 + 진공 + PC 링크 정상 + 레시피 표 통과 + O3 허가"},
     {"bit": 4, "tag": "Valve Permit", "why": "기본 + 펌프 + IV-E 열림 + 안전 정지 요구 없음 + 대기압 아님"},
     {"bit": 5, "tag": "Vent Permit",    "why": "시퀀서 동작 아님(공정 준비 포함) + IV-E 닫힘 입력 + IV-E 출력 꺼짐 + 비상정지 정상"},

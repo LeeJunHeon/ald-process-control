@@ -32,9 +32,15 @@ def test_2_status_list_problems_first():
 def test_2_all_status_lists_use_order_and_keep_problems():
     main = _src("js", "views", "main.js")
     # 인터락 목록 · RF(PEALD) / O3(Powder) 목록 모두 같은 규칙
-    assert main.count("stiList(out)") == 2, main.count("stiList(out)")
+    # v0.6.2(A2): v0.6.1 B2 부터 인터락 목록은 잰 줄 · 열 수를 넘긴다(stiList(out, rows, cols)) — 글자 수 대신
+    #   두 목록 모두 stiList 를 쓰는지와 인터락 목록이 snapIlks · stlCols 로 잰 값을 넘기는지를 본다
+    from test_v054 import _fn
+    vac, dev = _fn(main, "updateVac"), _fn(main, "updateDev")
+    assert "stiList(out, ilkFit.rows, ilkFit.cols)" in vac and "stiList(out, rows, cols)" in vac
+    assert "var rows = snapIlks(box), cols = stlCols(box);" in vac
+    assert "core.html(chips, stiList(out));" in dev
     # v0.5.4: 인터락 목록은 높이 고정 칸이라 keepProblems 로 늘 수 없다 — 문제 항목만 + '+N OK'(stiList) 와 snapIlks 로
-    assert "core.html(box, stiList(out));\n    snapIlks(box);\n  }" in main
+    assert "keepProblems" not in vac
     assert "chips.style.maxHeight = '';\n    core.html(chips, stiList(out));\n    keepProblems(chips);" in main
     # v0.5.4: 순서는 T.stiCompact 안의 T.stiOrder 가 정한다(알람 → 경고 → 그 밖)
     assert "var c = T.stiCompact(items);" in main
@@ -49,7 +55,7 @@ def test_3_interlock_box_height_is_row_multiple():
     m = re.search(r"#view-main \.ilks\.stl \{[^}]*grid-auto-rows: (\d+)px;\s*min-height: (\d+)px;[^}]*row-gap: 0;", css)
     assert m, "인터락 목록 규칙"
     row, minh = int(m.group(1)), int(m.group(2))
-    assert minh % row == 0 and minh // row >= 4, (row, minh)
+    assert minh % row == 0 and minh // row >= 1, (row, minh)    # v0.6.2(A1): v0.6.1 B1 — 최소 한 줄, 줄 수는 snapIlks
     m = re.search(r"\[data-bind=\"devPanelBody\"\] \.stl \{[^}]*grid-auto-rows: (\d+)px; max-height: (\d+)px;[^}]*row-gap: 0;", css)
     assert m and int(m.group(2)) % int(m.group(1)) == 0, m and m.groups()
     main = _src("js", "views", "main.js")

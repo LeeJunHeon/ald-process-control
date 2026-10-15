@@ -98,6 +98,10 @@ class Report:
         return "\n".join(out)
 
 
+MFC_TIMEOUT_S = 15             # 시험용 설정의 MFC 준비 제한(params.mfc_timeout_s) — 블록 준비 중 막힘을 기다리는 시간
+SEQ_BLOCK_PREP, SEQ_STEP_RUN = 3, 4    # 시퀀서 상태(A.SEQ_NAMES — Block Prep · Step Run)
+
+
 # ===================== 프로세스 =====================
 class Harness:
     """가짜 PLC · 프로그램 프로세스와 임시 폴더. 끝나면 close() 로 모두 정리한다."""
@@ -149,6 +153,8 @@ class Harness:
             if isinstance(cfg.get(k), dict):
                 cfg[k]["confirmed"] = True
         cfg.setdefault("params", {})["valve_min_ms"] = 20
+        # ★ v0.6.2(D4): 블록 준비 중 MFC 막힘이 'MFC Fault' 로 끝나기까지 기다릴 수 있게 짧게(예시 설정 60 s)
+        cfg["params"]["mfc_timeout_s"] = MFC_TIMEOUT_S
         cfg.setdefault("process", {})["base_stable_s"] = 1
         with open(self.cfg_path, "w", encoding="utf-8") as f:
             json.dump(cfg, f, ensure_ascii=False, indent=2)
@@ -198,7 +204,8 @@ class Harness:
 
     # ---------- 프로그램 ----------
     def start_app(self):
-        args = [PY, os.path.abspath(__file__), "--serve-app", self.cfg_path, os.path.join(self.tmp, "app")]
+        args = [PY, os.path.abspath(__file__), "--serve-app", self.cfg_path, os.path.join(self.tmp, "app"),
+                "--exit-on-eof"]
         self._app_out = open(os.path.join(self.tmp, "app.out"), "a", encoding="utf-8")
         self.app = subprocess.Popen(args, stdin=subprocess.PIPE, stdout=self._app_out, stderr=subprocess.STDOUT,
                                     cwd=_pkg.ROOT)
@@ -275,8 +282,10 @@ def _close_child(p):
             pass
 
 
-def serve_app(cfg_path: str, data_root: str):
-    """--serve-app — 프로그램을 headless 로(임시 데이터 폴더 · 뮤텍스 없이). e2e 가 띄우는 자식 프로세스."""
+def serve_app(cfg_path: str, data_root: str, exit_on_eof: bool = False):
+    """--serve-app — 프로그램을 headless 로(임시 데이터 폴더 · 뮤텍스 없이). e2e 가 띄우는 자식 프로세스.
+    ★ v0.6.2(D8): stdin EOF 감시는 시험 틀이 주는 --exit-on-eof 일 때만 — isatty() 로 고르면 stdin 이 /dev/null
+      (nohup · 배경 실행)일 때 뜨자마자 끝난다."""
     paths = _pkg.mod("paths")
     os.makedirs(data_root, exist_ok=True)
     paths.set_data_root(data_root)
@@ -292,7 +301,7 @@ def serve_app(cfg_path: str, data_root: str):
         us.should_exit = True
         import threading
         threading.Timer(15.0, lambda: os._exit(0)).start()
-    if not sys.stdin.isatty():
+    if exit_on_eof:
         _pkg.exit_on_stdin_eof(on_eof)
     us.run()
 
@@ -738,10 +747,13 @@ class Run:
 
     # ---------- 5) 공정 중 고장 ----------
     FAULT_CASES = [("emo", "EMO"), ("pump_alm", "펌프 알람"), ("leak", "가스 누출"), ("ot", "히터 과온")] + (
-        [("rf_ref", "RF 반사")] if DEV.HAS_RF else [("o3_room", "실내 O3 감지")]) + [("mfc1_stuck", "MFC 막힘")]
+        [("rf_ref", "RF 반사")] if DEV.HAS_RF else [("o3_room", "실내 O3 감지")]) + [
+        ("mfc1_stuck", "MFC 막힘"), ("mfc1_stuck_prep", "블록 준비 중 MFC 막힘")]
+    # 시험 경우 → 가짜 PLC 고장 키(같은 고장을 다른 때에 넣는 경우)
+    FAULT_KEY = {"mfc1_stuck_prep": "mfc1_stuck"}
     # ★ v0.6.1(C11): 고장마다 기대 알람(워드, 비트) — 이름은 장비 정의(DEV.ALARMS0/1)에서
     FAULT_ALARM = {"emo": (0, A.ALM0_EMO), "pump_alm": (0, A.ALM0_PUMP), "leak": (0, A.ALM0_LEAK),
-                   "ot": (0, A.ALM0_OT), "mfc1_stuck": (0, A.ALM0_MFC),
+                   "ot": (0, A.ALM0_OT), "mfc1_stuck": (0, A.ALM0_MFC), "mfc1_stuck_prep": (0, A.ALM0_MFC),
                    "rf_ref": (1, A.ALM1_RF_REF), "o3_room": (1, A.ALM1_O3_ROOM)}
     RECIPE_VALVES = ("PV-1", "PV-R", "PV-R2", "PV-R3")      # 시험 레시피가 여는 밸브(정지 뒤 출력 0 이어야)
 
@@ -772,15 +784,29 @@ class Run:
             started, _ = await self.run_recipe(name, rec, wait_end=False)
             if not started:
                 continue
-            await asyncio.sleep(3 if key != "rf_ref" else 2)
-            self.h.ctl({"op": "fault", "key": key, "on": True})
-            timeout = 40 if key in ("mfc1_stuck", "rf_ref") else 15
+            fkey = self.FAULT_KEY.get(key, key)
+            mfc = fkey == "mfc1_stuck"
+            if key == "mfc1_stuck_prep":
+                # 블록 준비 중에 막힘 — 래더는 MFC 준비 제한(mfc_timeout_s)까지 기다린 뒤 'MFC Fault' 로 끝낸다
+                at = await op.wait(lambda: self.seq_code() == SEQ_BLOCK_PREP, 20)
+                timeout = MFC_TIMEOUT_S + 25
+            else:
+                # ★ v0.6.2(D4): 고장은 장비 상태가 Running(스텝 실행)이 된 뒤에 — MFC 응답이 실제 시간(v0.6.1 C4)이라
+                #   블록 준비가 약 4.4 s 걸려, 시작 3 s 뒤에 넣으면 블록 준비 중 막힘이 된다
+                at = await op.wait(lambda: self.state_code() == A.STATE_RUN and self.seq_code() == SEQ_STEP_RUN, 30)
+                await asyncio.sleep(1.0 if key != "rf_ref" else 0.5)
+                timeout = 40 if key in ("mfc1_stuck", "rf_ref") else 15
+            if not at:
+                self.check(f"{label} → 고장 넣을 때", False,
+                           "블록 준비" if key == "mfc1_stuck_prep" else "Running · 스텝 실행",
+                           f"{(op.live.get('state') or {}).get('name')} · {(op.live.get('seq') or {}).get('name')}")
+            self.h.ctl({"op": "fault", "key": fkey, "on": True})
             ok = await op.wait(lambda: not op.proc.get("running") and op.proc.get("last_result"), timeout)
             res = op.proc.get("last_result") or ""
-            want = "중단" if key == "mfc1_stuck" else "안전 정지"
+            want = "중단" if mfc else "안전 정지"
             self.check(f"{label} → 공정 멈춤 · 끝 결과", ok and want in res and not res.startswith("정상"),
                        f"'{want}' 이 든 끝 결과", res or op.live.get("state", {}).get("name"))
-            if key != "mfc1_stuck":
+            if not mfc:
                 st = (op.live.get("state") or {}).get("code")
                 self.check(f"{label} → 안전 정지 상태", st == A.STATE_SAFE_STOP, "Safe Stop",
                            (op.live.get("state") or {}).get("name"))
@@ -796,8 +822,14 @@ class Run:
             names = [h["name"] for h in hist] + [a.get("name") for a in op.live.get("alarms") or []]
             self.check(f"{label} → 알람 '{want_alarm}'", len(hist) >= 1 and want_alarm in names,
                        f"새 알람 줄 ≥ 1 · '{want_alarm}'", " · ".join(h["name"] for h in hist[:4]) or "(없음)")
-            self.h.ctl({"op": "fault", "key": key, "on": False})
+            self.h.ctl({"op": "fault", "key": fkey, "on": False})
             await self.clear_alarms()
+
+    def state_code(self):
+        return (self.op.live.get("state") or {}).get("code")
+
+    def seq_code(self):
+        return (self.op.live.get("seq") or {}).get("code")
 
     async def _hist_len(self):
         m = await self.op.reply("alarm_history", "alarm_history")
@@ -831,13 +863,14 @@ class Run:
                 names = " · ".join(a["name"] for a in op.live.get("alarms") or [])
                 self.check(f"블랙홀 {secs} s → PC 통신 끊김 트립", ok and "안전 정지" in res, "중단 (안전 정지 — …)",
                            f"{res} / 알람 {names}")
-        # 통신이 끊긴 사이 보낸 명령 — 블랙홀(요청은 받고 답 없음) · 케이블 뽑힘(요청도 버림). 프로그램은 오류로 알리고
-        # 다시 보내지 않는다(PLC 가 받은 횟수 ≤ 1), 끊김이 끝나면 링크가 돌아온다(C12)
+        # 통신이 끊긴 사이 보낸 명령(C12) — ★ v0.6.2(D6): 끊김을 '다음 명령 번호(D01001) 쓰기' 에서 시작한다. 전에는 끊은 뒤
+        # 0.05 s 에 보내 앞 요청이 시간 초과로 끊겨 '연결되어 있지 않습니다' 로만 끝났다(PLC 받음 늘 0 — 결과 모름 길을 못 봄).
+        #   블랙홀: PLC 는 명령을 받고(1 번) 답만 없다 → '받았을 수 있습니다' 알림 · 다시 보내지 않음
+        #   케이블 뽑힘: 명령이 PLC 에 닿지 않는다(0 번) → 오류 알림
         for mode in ("blackhole", "unplug"):
             await self.ready()
             n0 = len(self.h.plc_log_text())
-            self.h.ctl({"op": "cut", "mode": mode, "s": 2.0})
-            await asyncio.sleep(0.05)
+            armed = self.h.ctl({"op": "cut", "mode": mode, "s": 2.0, "on": "cmd"})
             t0 = time.monotonic()
             await op.send("alarm_ack")
             await asyncio.sleep(2.0 + 3)
@@ -845,11 +878,20 @@ class Run:
             ns = [n for n in op.notices_since(t0) if "알람 확인" in n[2]]
             bad = [n for n in ns if n[1] in ("warn", "err")]
             done = [n for n in ns if "처리되었습니다" in n[2]]
+            maybe = [n for n in bad if "받았을 수 있습니다" in n[2]]
             got = len(re.findall(r"명령 받음: 번호 \d+ · 코드 %d " % A.CMD_ALARM_ACK, self.h.plc_log_text()[n0:]))
-            self.check(f"{'블랙홀' if mode == 'blackhole' else '케이블 뽑힘'} 2 s 중 보낸 명령 → 오류 알림 · 다시 보내지 않음",
-                       bool(bad) and not done and got <= 1 and back,
-                       "경고/오류 알림 · '처리되었습니다' 없음 · PLC 받은 횟수 ≤ 1 · 링크 회복",
-                       f"{(bad or done or [(0, '', '(알림 없음)')])[-1][2]} · PLC 받음 {got} 회 · 회복 {back}")
+            cut_log = "명령 번호 쓰기에서 끊음" if "통신 끊기 대기" in self.h.plc_log_text()[n0:] else "끊기 대기 기록 없음"
+            last = (bad or done or [(0, '', '(알림 없음)')])[-1][2]
+            if mode == "blackhole":
+                self.check("블랙홀 — 명령 번호 쓰기에서 끊김 → 결과 모름 알림 · 다시 보내지 않음",
+                           bool(armed and armed.get("ok")) and bool(maybe) and not done and got == 1 and back,
+                           "'받았을 수 있습니다' 알림 · '처리되었습니다' 없음 · PLC 받은 횟수 1 · 링크 회복",
+                           f"{last} · PLC 받음 {got} 회 · 회복 {back} · {cut_log}")
+            else:
+                self.check("케이블 뽑힘 — 명령 번호 쓰기에서 끊김 → 오류 알림 · 명령 닿지 않음",
+                           bool(armed and armed.get("ok")) and bool(bad) and not done and got == 0 and back,
+                           "경고/오류 알림 · '처리되었습니다' 없음 · PLC 받은 횟수 0 · 링크 회복",
+                           f"{last} · PLC 받음 {got} 회 · 회복 {back} · {cut_log}")
         # PLC STOP → 하트비트 멈춤 → RUN(P00 첫 스캔) → PLC 재시작
         await self.ready()
         started, _ = await self.run_recipe("E2E Comm", long_recipe("E2E Comm", 400, 100), wait_end=False)
@@ -991,9 +1033,11 @@ class Run:
             try:
                 await self.long(cycles=150)
                 await asyncio.to_thread(p.wait, 900)
-            except Exception:  # noqa: BLE001
-                p.kill()
-                p.wait(10)
+            finally:
+                # ★ v0.6.2(D8): finally — Ctrl+C · 취소(CancelledError)에도 다른 프로그램의 시험 틀을 남기지 않는다
+                if p.poll() is None:
+                    p.kill()
+                    p.wait(10)
         with open(log_path, encoding="utf-8", errors="replace") as f:
             tail = f.read().strip().splitlines()[-6:]
         self.check(f"두 프로그램 동시 실행 — {OTHER} e2e", p.returncode == 0, "종료 코드 0", f"{p.returncode} {' | '.join(tail)}")
@@ -1064,7 +1108,7 @@ def parse_args(argv=None):
 def main(argv=None) -> int:
     argv = sys.argv[1:] if argv is None else argv
     if argv[:1] == ["--serve-app"]:
-        serve_app(argv[1], argv[2])
+        serve_app(argv[1], argv[2], "--exit-on-eof" in argv[3:])
         return 0
     args = parse_args(argv)
     if args.list:

@@ -143,11 +143,13 @@
     var conn = !!(t.plc && t.plc.connected);
 
     updateSeq(t, conn);
-    updateVac(s, t, conn);
+    // ★ v0.6.2(B3): 인터락 목록(updateVac)은 칸 몸통을 재어 줄 수를 정한다 — 같은 줄의 칸 높이를 바꾸는 것
+    //   (RF/O3 목록 — updateDev)을 먼저 그린 뒤 맨 끝에 잰다. 거꾸로면 새 알람이 뜬 2 프레임 동안 마지막 줄이 반만 보인다
     updateHeaters(s, t, conn);
     updateMfc(s, t, conn);
     updateDev(s, t, conn);
     updateLocks(s, t, conn);
+    updateVac(s, t, conn);
   }
 
   function updateSeq(t, conn) {
@@ -306,7 +308,8 @@
       // bad:true 인 비트는 '켜져 있으면 이상'이다(동시 요청·안전 정지 요구).
       var lvl = k.bad ? (on ? 'stop' : '') : (on ? 'ok' : 'warn');
       if (k.bad && !on) return;      // 이상이 없으면 굳이 보여 주지 않는다
-      out.push({ name: k.tag, lvl: lvl, why: k.why });
+      // ★ v0.6.2(B4): 상태가 이름에 든 것('Vacuum OK')은 짧은 이름(short — 점 색이 상태). 툴팁 · 기록 이름은 그대로
+      out.push({ name: k.short || k.tag, lvl: lvl, why: k.why });
     });
     // 위 kv 줄에서 이미 보여 준 입력은 칩으로 또 내지 않는다(패널이 넘친다).
     var SHOWN = { 'IVE-O': 1, 'IVE-C': 1, 'PMP-RUN': 1, 'ATM': 1 };
@@ -324,6 +327,8 @@
       ilkFit = { rows: rows, cols: cols };
       core.html(box, stiList(out, rows, cols));
     }
+    var tt = okHidTitle(out, ilkFit.rows, ilkFit.cols);
+    if (box.title !== tt) box.title = tt;
   }
   var ilkFit = { rows: 0, cols: 0 };
 
@@ -379,7 +384,7 @@
    *  전체 이름) — 칸이 좁아도 문제 항목이 스크롤 아래로 숨지 않게(T.stiCompact) */
   function stiList(items, rows, cols) {
     var c = T.stiCompact(items);
-    // ★ v0.6.1(B2): 줄 · 열 수를 알면 그 안에 맞춘다 — 넘치면 마지막 칸은 '+N more'(숨은 것 중 가장 나쁜 수준의 색)
+    // ★ v0.6.1(B2): 줄 · 열 수를 알면 그 안에 맞춘다 — 넘치면 마지막 칸은 '+N more'(숨은 문제 중 가장 나쁜 수준의 색)
     if (rows && cols) c = T.stiFit(c, rows, cols);
     var h = c.items.map(function (i) { return sti(i.name, i.lvl, i.why); }).join('');
     if (c.ok.length) {
@@ -388,19 +393,32 @@
         core.esc(names) + '"><i></i>+' + c.ok.length + ' OK</span>';
     }
     if (c.more && c.more.length) {
+      // ★ v0.6.2(B1 · B2): N 은 숨은 문제 항목 수만 — 툴팁은 숨은 문제 이름 + 'OK n 개', 누르면(Enter 도) 수준별 알림
       var lv = T.stiWorst(c.more);
       var hid = c.more.map(function (i) { return i.name; }).join(' · ');
-      h += '<span class="sti more' + (lv ? ' ' + lv : '') + '" tabindex="0" role="button" data-more="1" title="' +
-        core.esc(hid) + '"><i></i>+' + c.more.length + ' more</span>';
+      var okn = (c.okHid || []).length;
+      h += '<span class="sti more' + (lv ? ' ' + lv : '') + '" tabindex="0" role="button" data-more="' +
+        core.esc(T.stiMoreText(c.more, c.okHid)) + '" data-lvl="' + (lv === 'stop' ? 'err' : lv === 'warn' ? 'warn' : 'info') +
+        '" title="' + core.esc(hid + (okn ? ' · OK ' + okn + ' 개' : '')) + '"><i></i>+' + c.more.length + ' more</span>';
     }
     return h;
+  }
+
+  /** ★ v0.6.2(B1): 문제 항목만 겨우 들어가 '+N OK' 칸을 뺐으면 상자 title 에 정상 항목 개수 · 이름(아니면 '') */
+  function okHidTitle(items, rows, cols) {
+    if (!rows || !cols) return '';
+    var oh = T.stiFit(T.stiCompact(items), rows, cols).okHid.map(function (i) { return i.name; });
+    return oh.length ? 'OK ' + oh.length + ' — ' + oh.join(' · ') : '';
   }
 
   if (d && d.addEventListener) {
     d.addEventListener('click', function (ev) {
       var m = ev.target.closest && ev.target.closest('[data-okall]');
       if (m) core.toast('OK — ' + m.getAttribute('data-okall'), 'info');
-      if (ev.target.closest && ev.target.closest('[data-more]')) core.setTab('alarm');     // v0.6.1(B2): 숨은 항목은 Alarm/Log 탭에서
+      // ★ v0.6.2(B2): '+N more' 는 숨은 항목을 수준별 알림으로 — 탭은 옮기지 않는다(허가 · 조건 항목은 Alarm/Log 탭에 없다).
+      //   Enter · Space 는 core.js 의 tabindex="0" 처리가 click 으로 바꾼다
+      var mm = ev.target.closest && ev.target.closest('[data-more]');
+      if (mm) core.toast(mm.getAttribute('data-more'), mm.getAttribute('data-lvl') || 'info');
     });
   }
 

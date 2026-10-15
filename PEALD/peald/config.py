@@ -70,6 +70,7 @@ def load(path: str = ""):
 
     raw, problems_read = _read(target)
     problems.extend(problems_read)
+    unreadable = raw is None and os.path.isfile(target)
     if raw is not None:
         source = "file"
     else:
@@ -78,8 +79,14 @@ def load(path: str = ""):
         ex, _ = _read(paths.EXAMPLE_CONFIG)
         if ex is not None:
             raw, source = ex, "example"
-            problems.append(("warn", "config.json 이 없어 예시 설정으로 실행 중입니다 — "
-                                     "현장 값을 넣은 config.json 을 exe 옆에 두세요"))
+            if unreadable:
+                # ★ v0.6.2(C1): 있는데 못 읽은 것은 '없어' 가 아니다 — 이유(줄 · 칸)는 _read 의 문구에
+                problems.append(("err", f"{os.path.basename(target)} 을(를) 읽지 못해 예시 설정으로 실행 중입니다 — "
+                                        f"{os.path.basename(target)} 을 고친 뒤 프로그램을 다시 시작하세요"
+                                        "(그때까지 설정 저장은 막습니다)"))
+            else:
+                problems.append(("warn", "config.json 이 없어 예시 설정으로 실행 중입니다 — "
+                                         "현장 값을 넣은 config.json 을 exe 옆에 두세요"))
         else:
             problems.append(("err", "설정 파일과 예시 설정을 모두 읽지 못했습니다 — 기본값으로 기동합니다"))
             raw = {}
@@ -87,22 +94,34 @@ def load(path: str = ""):
     cfg = _deep_merge(DEFAULTS, raw)
     cfg["_source"] = source
     cfg["_path"] = target if source == "file" else paths.EXAMPLE_CONFIG
+    if unreadable:
+        cfg["_unreadable"] = target          # settings 가 이 파일을 예시 바탕으로 덮어쓰지 않게
     _fill_devices(cfg)
     problems.extend(validate(cfg))
     return cfg, problems, source
+
+
+def read_reason(e: Exception) -> str:
+    """JSON 읽기 실패 이유 — 문법 오류면 줄 · 칸 · 이유."""
+    if isinstance(e, json.JSONDecodeError):
+        return f"{e.lineno} 줄 {e.colno} 칸: {e.msg}"
+    if isinstance(e, UnicodeDecodeError):
+        return f"UTF-8 이 아닙니다({e.start} 바이트째) — UTF-8 로 저장하세요"
+    return f"{type(e).__name__}: {e}"
 
 
 def _read(p: str):
     if not p or not os.path.isfile(p):
         return None, []
     try:
-        with open(p, "r", encoding="utf-8") as f:
+        # ★ v0.6.2(C1): utf-8-sig — 메모장 'UTF-8(BOM)' · PowerShell 5 의 -Encoding utf8 로 저장해도 읽는다
+        with open(p, "r", encoding="utf-8-sig") as f:
             data = json.load(f)
         if not isinstance(data, dict):
             return None, [("err", f"{os.path.basename(p)}: 최상위가 객체가 아닙니다")]
         return data, []
     except Exception as e:  # noqa: BLE001
-        return None, [("err", f"{os.path.basename(p)} 을(를) 읽지 못했습니다 ({type(e).__name__})")]
+        return None, [("err", f"{os.path.basename(p)} 을(를) 읽지 못했습니다 — {read_reason(e)}")]
 
 
 def _fill_devices(cfg: dict):

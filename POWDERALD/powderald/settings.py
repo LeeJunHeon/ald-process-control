@@ -208,11 +208,31 @@ def target_path(cfg: dict) -> str:
     return paths.DEFAULT_CONFIG_PATH
 
 
+def save_block(cfg: dict) -> str:
+    """★ v0.6.2(C1): 저장을 막는 이유('' = 저장 가능). config.json 이 있는데 읽지 못하면(기동 때든 지금이든) 막는다 —
+    읽지 못한 현장 설정을 예시 바탕 + 고친 항목으로 덮어쓰지 않게."""
+    p = cfg.get("_unreadable") or target_path(cfg)
+    why = ""
+    if cfg.get("_unreadable"):
+        why = "읽지 못해 예시 설정으로 실행 중"
+    if os.path.isfile(p):
+        try:
+            with open(p, encoding="utf-8-sig") as f:
+                if not isinstance(json.load(f), dict):
+                    why = "최상위가 객체가 아님"
+        except Exception as e:  # noqa: BLE001
+            why = C.read_reason(e)
+    if not why:
+        return ""
+    name = os.path.basename(p)
+    return f"{name} 을(를) 읽지 못했습니다({why}) — 저장하지 않습니다. {name} 을 고친 뒤 프로그램을 다시 시작하세요"
+
+
 def _raw_base(cfg: dict) -> dict:
-    """편집을 얹을 원본 — 파일에 있던 그대로(설명 키 포함)."""
+    """편집을 얹을 원본 — 파일에 있던 그대로(설명 키 포함). 파일이 있는데 못 읽으면 save_block 이 저장을 막는다."""
     for p in (target_path(cfg), paths.EXAMPLE_CONFIG):
         try:
-            with open(p, encoding="utf-8") as f:
+            with open(p, encoding="utf-8-sig") as f:        # ★ v0.6.2(C1): BOM 이 있어도
                 data = json.load(f)
             if isinstance(data, dict):
                 return data
@@ -234,6 +254,9 @@ def prepare(cfg: dict, edits: dict) -> dict:
     """편집값을 검증하고 바뀌는 항목을 만든다. 파일은 건드리지 않는다.
     반환 {ok, errors, warnings, diff, restart, sim_to_real, raw, new_cfg}"""
     errors, diff = [], []
+    blk = save_block(cfg)
+    if blk:
+        errors.append(blk)
     raw = copy.deepcopy(_raw_base(cfg))
     for path, v in (edits or {}).items():
         f = FIELDS.get(path)

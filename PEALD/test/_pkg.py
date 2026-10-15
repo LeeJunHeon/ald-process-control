@@ -66,10 +66,46 @@ def config_path(path: str = "") -> str:
     return paths.DEFAULT_CONFIG_PATH if os.path.isfile(paths.DEFAULT_CONFIG_PATH) else paths.EXAMPLE_CONFIG
 
 
+def check_config(path: str):
+    """★ v0.6.2(D8): 직접 준 --config 를 못 읽으면(경로 오타 · 읽기 오류) 예시 설정으로 넘어가지 않고 이유를 찍고 종료 코드 2."""
+    p = os.path.abspath(path)
+    if not os.path.isfile(p):
+        print(f"[error] --config 파일이 없습니다: {p}", flush=True)
+        raise SystemExit(2)
+    data, problems = mod("config")._read(p)
+    if data is None:
+        why = "; ".join(m for _lv, m in problems) or "읽지 못했습니다"
+        print(f"[error] --config 를 읽지 못했습니다: {why}", flush=True)
+        raise SystemExit(2)
+
+
+SPEED_MIN, SPEED_MAX = 0.1, 1000.0
+
+
+def clamp_speed(value) -> float:
+    """★ v0.6.2(D8): 배속 — 유한한 수만(inf · nan 은 ValueError), 0.1~1000 으로 묶는다."""
+    import math
+    v = float(value)
+    if not math.isfinite(v):
+        raise ValueError(f"배속은 유한한 수여야 합니다: {value!r}")
+    return min(SPEED_MAX, max(SPEED_MIN, v))
+
+
+def parse_speed(text) -> float:
+    """argparse 용 clamp_speed."""
+    import argparse
+    try:
+        return clamp_speed(text)
+    except (TypeError, ValueError) as e:
+        raise argparse.ArgumentTypeError(str(e))
+
+
 def load_config(path: str = ""):
     """(cfg, 읽은 파일, 설명). 설정만 읽고 data/ 에는 쓰지 않는다 — 데이터 자리는 없는 폴더로(폴더를 만들지 않음)."""
     import tempfile
     paths = mod("paths")
+    if path:
+        check_config(path)
     target = config_path(path)
     example = os.path.abspath(paths.EXAMPLE_CONFIG)
     paths.set_data_root(os.path.join(tempfile.gettempdir(), "ald_test_tools_no_data"))
