@@ -54,7 +54,7 @@
     var txt = ((core.bind('dlText') || {}).value || '').trim().toLowerCase();
     var list = items.filter(function (it) {
       if (day && (it.started || '').slice(0, 10) !== day) return false;
-      if (txt && String(it.recipe || '').toLowerCase().indexOf(txt) < 0) return false;
+      if (txt && [it.recipe, it.operator, it.sample].join(' ').toLowerCase().indexOf(txt) < 0) return false;
       return true;
     });
     box.innerHTML = list.map(function (it) {
@@ -67,6 +67,9 @@
         core.chip(res || '진행 중?', lvl, res || '진행 중?') + '</div>' +
         '<div class="b">' + core.esc(it.recipe || '') +
         (it.number != null ? ' <span class="dim">#' + core.esc(it.number) + '</span>' : '') +
+        // v0.7.0(A2): 작업자 · 시료
+        ((it.operator || it.sample) ? ' <span class="dim">· ' + core.esc([it.operator, it.sample].filter(Boolean).join(' · ')) +
+          '</span>' : '') +
         '<span class="dim right">' + (it.took_s != null ? fmt.hms(it.took_s) : fmt.DASH) +
         (it.rows != null ? ' · ' + core.esc(it.rows) + ' rows' : '') + (it.guessed ? ' (추정)' : '') + '</span></div></div>';
     }).join('') || '<div class="empty">데이터 로그가 없습니다</div>';
@@ -89,7 +92,12 @@
         box.innerHTML = core.chip(m.result || '—', m.level || (/정상/.test(m.result || '') ? 'ok' : 'warn')) + ' ' +
           '<span class="dim">' + core.esc(m.recipe || '') + (m.number != null ? ' #' + core.esc(m.number) : '') +
           ' · ' + (m.took_s != null ? fmt.hms(m.took_s) : fmt.DASH) + ' · ' + (m.rows != null ? core.esc(m.rows) + ' rows' : '') +
-          (m.guessed ? ' · 메타 없음(CSV 로 추정)' : '') + '</span>';
+          (m.guessed ? ' · 메타 없음(CSV 로 추정)' : '') + '</span>' +
+          ((m.operator || m.sample || m.memo)
+            ? '<div class="dim dl-run">' + (m.operator ? 'Operator ' + core.esc(m.operator) : '') +
+              (m.sample ? (m.operator ? ' · ' : '') + 'Sample ' + core.esc(m.sample) : '') +
+              (m.memo ? '<div class="dl-memo">' + core.esc(m.memo) + '</div>' : '') + '</div>'
+            : '');
       }
       buildPicker();
       var rb = core.bind('dlRecipeBox');

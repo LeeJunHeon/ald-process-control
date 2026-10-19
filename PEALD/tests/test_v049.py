@@ -417,7 +417,7 @@ def test_datalog_one_file_across_disconnect_and_closes_after_limit(cfg, monkeypa
         assert len(down) == 3
         assert all(c == "" for r in down for c in r[3:])          # 0x0000 · 0 을 지어내지 않는다
         assert len([n for n in os.listdir(paths.DATALOG_DIR) if n.endswith(".csv")]) == 1
-        # 끊김이 한도를 넘으면 닫는다
+        # 끊김이 한도를 넘어도 공정 구간이면 닫지 않는다(v0.7.0 P4 — PLC 는 받은 레시피를 끝까지 돌린다)
         monkeypatch.setattr(DL, "DOWN_CLOSE_S", 0.05)
         link.connected = False
         state.datalog._next = 0
@@ -425,6 +425,12 @@ def test_datalog_one_file_across_disconnect_and_closes_after_limit(cfg, monkeypa
         time.sleep(0.1)
         state.datalog._next = 0
         loops._datalog_tick()
+        assert state.datalog.fp is not None and state.datalog.path == first
+        # 공정 구간이 아니면(끝난 뒤 꼬리) 지금처럼 닫는다
+        runner.active_run = False
+        state.datalog.stop_at = 0.0
+        state.datalog._next = 0
+        state.datalog.tick(1)
         assert state.datalog.fp is None and state.datalog.end_result == "기록 중단(PLC 끊김)"
     finally:
         if state.datalog:

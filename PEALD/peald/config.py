@@ -42,7 +42,15 @@ DEFAULTS = {
         "base_wait_timeout_s": 1800,     # 베이스 압력 대기 제한
         "base_stable_s": 3,              # 이만큼 계속 도달해 있어야 시작한다
         "heater_ready": {"enabled": False, "band_c": 2.0, "stable_s": 60},
+        # v0.7.0(A5): 공정 중 압력 상한 · 히터 이탈 경고 — PC 감시(PC 가 없으면 동작하지 않는다). 0 = 끔
+        "press_high_torr": 10, "press_high_s": 5, "press_high_abort": False,
+        "heater_dev_c": 15, "heater_dev_s": 120,
     },
+    # v0.7.0(A3): 누설률(압력 상승률) 점검
+    "leakcheck": {"settle_s": 10, "measure_s": 120, "limit_mtorr_min": 10, "max_torr": 1.0},
+    # v0.7.0(A4): 정비 카운터 한계 — 0 = 끔
+    "maintenance": {"valve_opens_warn": 0, "pump_hours_warn": 0,
+                    ("rf_hours_warn" if DEV.HAS_RF else "o3_hours_warn"): 0},
     "log": {"level": "info", "keep_days": 90,
             "datalog_interval_s": 1, "datalog_keep_days": 180, "trend_keep_days": 90},
     "access": {"local_only": True},
@@ -219,6 +227,14 @@ def prm_problems(cfg: dict) -> list:
     return out
 
 
+def _in_range(v, lo, hi) -> bool:
+    try:
+        f = float(v)
+    except (TypeError, ValueError, OverflowError):
+        return False
+    return not isinstance(v, bool) and f == f and lo <= f <= hi
+
+
 def host_valid(host) -> bool:
     """server.host 형식 — 빈 값(= 기본 127.0.0.1) · localhost(대소문자 상관없음) · IPv4/IPv6 주소만. 이름은 받지
     않는다(Host 검사와 같은 규칙). 모든 주소에서 받으려면 0.0.0.0(IPv4) 또는 ::(IPv6)."""
@@ -270,16 +286,18 @@ def validate(cfg: dict) -> list:
     try:
         wdt = int((cfg.get("params") or {}).get("pc_wdt_ms") or A.PRM_DEFAULTS["pc_wdt_ms"])
         # ★ 응답 하나를 잃었을 때의 최악 공백 = 응답 제한 + 하트비트 주기 + 재연결 여유(500 ms).
-        #   이것이 PC 하트비트 판정보다 짧지 않으면 PLC 가 PC 끊김으로 공정을 세울 수 있다.
+        #   이것이 PC 하트비트 판정보다 짧지 않으면 PLC 가 PC 끊김 트립을 건다(v0.7.0: 공정 중이면 끝난 뒤 · 대기 중이면 바로 안전 정지).
         worst = int(plc.get("timeout_ms")) + int(plc.get("heartbeat_ms")) + 500
         if worst >= wdt:
             p.append(("err", f"응답 하나를 잃었을 때의 최악 하트비트 공백({worst} ms = plc.timeout_ms "
                              f"{plc.get('timeout_ms')} + plc.heartbeat_ms {plc.get('heartbeat_ms')} + 500)이 "
-                             f"params.pc_wdt_ms({wdt}) 이상입니다 — PLC 가 PC 끊김으로 공정을 세울 수 있습니다"))
+                             f"params.pc_wdt_ms({wdt}) 이상입니다 — PLC 가 PC 끊김 트립을 걸 수 있습니다"
+                             f"(공정 중이면 공정은 끝까지 가고, 트립이 남으면 끝난 뒤 안전 정지 · 대기 중이면 바로 "
+                             f"안전 정지)"))
         if int(plc.get("heartbeat_ms")) > wdt / 3:
             p.append(("err", f"plc.heartbeat_ms({plc.get('heartbeat_ms')})가 "
                              f"PC 하트비트 판정(params.pc_wdt_ms={wdt})의 1/3 보다 깁니다 — "
-                             f"PLC 가 PC 끊김으로 보고 안전 정지할 수 있습니다"))
+                             f"PLC 가 PC 끊김 트립을 걸 수 있습니다(공정 중이면 끝난 뒤 · 대기 중이면 바로 안전 정지)"))
     except (TypeError, ValueError):
         pass
     if int(plc.get("sim_port") or 0) == int(srv.get("port") or 0):
@@ -352,6 +370,24 @@ def validate(cfg: dict) -> list:
                 raise ValueError
         except (TypeError, ValueError):
             p.append(("err", "process.heater_ready.band_c 값이 올바르지 않습니다"))
+
+    # v0.7.0(A5): 공정 중 압력 상한 · 히터 이탈 경고(PC 감시) — 0 = 끔
+    for key, lo, hi in (("press_high_torr", 0, 1000), ("press_high_s", 0, 3600),
+                        ("heater_dev_c", 0, 1000), ("heater_dev_s", 0, 86400)):
+        if not _in_range(pr.get(key), lo, hi):
+            p.append(("err", f"process.{key} 는 {lo}~{hi} 여야 합니다: {pr.get(key)!r} (0 = 끔)"))
+    if not isinstance(pr.get("press_high_abort", False), bool):
+        p.append(("err", "process.press_high_abort 는 true 또는 false 여야 합니다"))
+    # v0.7.0(A3): 누설률 점검
+    lc = cfg.get("leakcheck") or {}
+    for key, lo, hi in (("settle_s", 0, 600), ("measure_s", 10, 3600), ("limit_mtorr_min", 0.001, 100000),
+                        ("max_torr", 0.001, 760)):
+        if not _in_range(lc.get(key), lo, hi):
+            p.append(("err", f"leakcheck.{key} 는 {lo:g}~{hi:g} 여야 합니다: {lc.get(key)!r}"))
+    # v0.7.0(A4): 정비 카운터 한계
+    for key, v in ((cfg.get("maintenance") or {}).items()):
+        if not str(key).startswith("_") and not _in_range(v, 0, 1e9):
+            p.append(("err", f"maintenance.{key} 는 0 이상이어야 합니다(0 = 끔): {v!r}"))
 
     lg = cfg.get("log") or {}
     try:

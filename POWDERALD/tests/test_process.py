@@ -818,22 +818,19 @@ def _meta_and_list(name):
 
 
 @pytest.mark.parametrize("how,want", [
-    ("pc_hb", "PC Link Lost"),                      # v0.5.0: 알람 이름은 영문 용어(device.py)
+    # v0.7.0(P): PC 하트비트 끊김은 공정을 세우지 않는다(알람0 b6 경고 · 래더 SEQ_RUN b접점) — 아래
+    #   test_pc_hb_loss_runs_to_end_then_safe_stop 으로 옮겼다
     ("emo", "EMO"),
     ("mfc", "MFC Fault"),
 ])
 async def test_aborted_process_is_never_normal(wired, how, want):
-    """PC 하트비트 끊김·비상정지·MFC 편차 중단 → 모두 '중단 (안전 정지 — 알람)'.
+    """비상정지·MFC 편차 중단 → 모두 '중단 (안전 정지 — 알람)'.
     이벤트 로그·데이터 로그 메타·목록이 같은 결과를 쓴다."""
     lk, sim, cfg = wired
     await _start(lk, sim, cfg, f"중단{how}")
     await asyncio.sleep(0.3)
     assert await _seen_running()
-    if how == "pc_hb":
-        lk.prm_autofix = False                     # 일부러 바꾼 PRM 을 링크가 되돌리지 않게
-        sim.write(A.D_PRM_PC_WDT_MS, [300])
-        sim.set_fault("pc_hb_stop", True)
-    elif how == "emo":
+    if how == "emo":
         sim.set_fault("emo", True)
     else:
         sim._latch0(A.ALM0_MFC)
@@ -846,6 +843,31 @@ async def test_aborted_process_is_never_normal(wired, how, want):
     assert meta_res == list_res == state.runner.last_result
     for k in ("pc_hb_stop", "emo"):
         sim.set_fault(k, False)
+
+
+async def test_pc_hb_loss_runs_to_end_then_safe_stop(wired):
+    """v0.7.0(P): 공정 중 PC 하트비트 끊김 → 공정은 끝까지(정상 완료) · 트립이 남아 끝난 뒤 안전 정지.
+    이벤트 로그·데이터 로그 메타·목록이 같은 결과를 쓴다(예전 기대: '중단 (안전 정지 — PC Link Lost)')."""
+    lk, sim, cfg = wired
+    rec = short_recipe("끊김끝까지")
+    rec["blocks"][0]["repeat"] = 12
+    await _start(lk, sim, cfg, "끊김끝까지", rec)
+    await asyncio.sleep(0.3)
+    assert await _seen_running()
+    lk.prm_autofix = False                     # 일부러 바꾼 PRM 을 링크가 되돌리지 않게
+    sim.write(A.D_PRM_PC_WDT_MS, [300])
+    sim.set_fault("pc_hb_stop", True)
+    try:
+        assert await wait_until(lambda: (sim.reg[A.D_ALARM0] >> A.ALM0_PC_LINK) & 1, 3)
+        assert sim.running and not sim.safe_stop, "PC 끊김 트립이 공정을 세웠다"
+        seen, name = await _run_to_end()
+        msg = next(m for m in seen if m.startswith("공정 "))
+        assert state.runner.last_result == "정상 종료 (끝난 뒤 안전 정지: PC Link Lost (트립 남음))", msg
+        meta_res, list_res = _meta_and_list(name)
+        assert meta_res == list_res == state.runner.last_result
+        assert await wait_until(lambda: sim.reg[A.D_STATE] == A.STATE_SAFE_STOP, 2)
+    finally:
+        sim.set_fault("pc_hb_stop", False)
 
 
 async def test_operator_abort_result(wired):

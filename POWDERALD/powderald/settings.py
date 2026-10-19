@@ -103,6 +103,24 @@ _add("process.heater_ready.band_c", "num", "Heater Ready Band ±℃")
 _add("process.heater_ready.stable_s", "num", "Heater Ready Hold s")
 if DEV.HAS_O3:
     _add("process.o3_off_delay_s", "num", "O3 Off Bypass Delay s")
+# v0.7.0(A5): PC 감시 — 프로그램이 꺼져 있으면 동작하지 않는다(이름에 'PC Watch')
+_add("process.press_high_torr", "num", "PC Watch: Process Pressure High Torr (0 = off)")
+_add("process.press_high_s", "num", "PC Watch: Pressure High Hold s")
+_add("process.press_high_abort", "bool", "PC Watch: Abort on Pressure High")
+_add("process.heater_dev_c", "num", "PC Watch: Heater Deviation ±℃ (0 = off)")
+_add("process.heater_dev_s", "num", "PC Watch: Heater Deviation Hold s")
+
+# --- 정비 (v0.7.0 A3 · A4) ---
+_add("leakcheck.settle_s", "num", "Leak Check Settle s")
+_add("leakcheck.measure_s", "num", "Leak Check Measure s")
+_add("leakcheck.limit_mtorr_min", "num", "Leak Check Limit mTorr/min")
+_add("leakcheck.max_torr", "num", "Leak Check Stop Above Torr")
+_add("maintenance.valve_opens_warn", "num", "Valve Opens Warn (0 = off)")
+_add("maintenance.pump_hours_warn", "num", "Pump Hours Warn h (0 = off)")
+if DEV.HAS_RF:
+    _add("maintenance.rf_hours_warn", "num", "RF Hours Warn h (0 = off)")
+if DEV.HAS_O3:
+    _add("maintenance.o3_hours_warn", "num", "O3 Generator Hours Warn h (0 = off)")
 
 # --- 로그 ---
 _add("window.theme", "str", "Theme (light / dark)")

@@ -92,6 +92,10 @@ def create_app(config_path: str = "", single_instance: bool = True,
         state.alarms.load_recent()      # 다시 시작해도 알람 이력이 비지 않게(오늘 · 어제 파일)
     except Exception as e:  # noqa: BLE001
         logger.write("warn", f"알람 이력 불러오기 실패(빈 이력으로 시작): {type(e).__name__}: {e}")
+    from .maintenance import maint
+    from .leakcheck import leak
+    maint.load()                        # v0.7.0(A4) — data/maintenance.json
+    leak.recent = None                  # v0.7.0(A3) — 최근 기록은 처음 볼 때 CSV 에서
     trendlog_mod.cleanup((cfg.get("log") or {}).get("trend_keep_days", 90))
     low = trendlog_mod.disk_warning()
     if low:
@@ -156,6 +160,12 @@ def create_app(config_path: str = "", single_instance: bool = True,
             if state.runner:
                 with contextlib.suppress(Exception):
                     await state.runner.stop_task()
+            from .leakcheck import leak
+            from .maintenance import maint
+            with contextlib.suppress(Exception):
+                await leak.stop()               # 점검 중이면 IV-E 는 닫힌 채 남는다(README)
+            with contextlib.suppress(Exception):
+                maint.save(force=True)
             with contextlib.suppress(Exception):
                 await manager.close_all()
             if state.datalog:
@@ -200,6 +210,15 @@ async def _adopt_loop():
     while True:
         await asyncio.sleep(ADOPT_RETRY_S)
         r = state.runner
+        if r is not None and not getattr(r, "offline_checked", True):
+            # ★ v0.7.0(P6): 켜진 뒤 처음 PLC 와 붙었을 때 한 번 — PC 가 꺼진 동안 끝난 공정을 PLC 끝 상태로 판정
+            try:
+                await r.check_offline_end(push_log)
+            except asyncio.CancelledError:
+                raise
+            except Exception as e:  # noqa: BLE001
+                r.offline_checked = True
+                logger.write("warn", f"꺼진 동안 끝난 공정 판정 오류 — {type(e).__name__}: {logger.clean(e, 200)}")
         if r is None or not r.adopt_wanted():
             continue
         try:

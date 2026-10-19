@@ -104,37 +104,81 @@ INTERLOCKS = [
     {"bit": 5, "tag": "Vent Permit",    "why": "시퀀서 동작 아님(공정 준비 포함) + IV-E 닫힘 입력 + IV-E 출력 꺼짐 + 비상정지 정상"},
     {"bit": 6, "tag": "Precursor/Reactant Conflict", "why": "전구체 밸브와 O3 밸브가 함께 요청됨 (이상)",
      "bad": True},
-    {"bit": 7, "tag": "Safe Stop Request", "why": "비상정지 또는 PC 끊김 또는 중대 알람", "bad": True},
+    {"bit": 7, "tag": "Safe Stop Request", "why": "비상정지 또는 중대 알람 또는 PC 끊김 트립 — 공정 중이면 끝난 뒤", "bad": True},
     {"bit": 9, "tag": "O3 Permit",      "why": "기본 + IV-B 열림 + 바이패스 펌프 운전·알람 없음 + 그 뒤 5 s + "
                                             "O3 알람·실내 O3 없음 + O3 상한 > 0 + 안전 정지 요구 없음"},
 ]
 
 # ===================== 알람 =====================
+# crit: 중대(장비를 세우는 알람) / 아니면 경고(표시·기록만)
+# cause · check: 알람 · 로그 탭과 알람 창에 보이는 원인 · 확인 안내(v0.7.0 A1)
+# ★ v0.7.0(P): 'PC Link Lost'(b6)는 경고 — 공정 중 PC 가 끊겨도 PLC 는 받은 레시피를 끝까지 돌린다(래더 P30 행 5 마스크 hD23F ·
+#   행 7 PC 트립 항에 SEQ_RUN b접점). 트립이 공정 뒤에도 남아 있으면 그때 안전 정지(안전 정지 요구 항이 세운다)
 ALARMS0 = [
-    {"bit": 0,  "name": "EMO",                  "crit": True},
-    {"bit": 1,  "name": "Air Pressure Low",                 "crit": True},
-    {"bit": 2,  "name": "N2 Supply Low",              "crit": True},
-    {"bit": 3,  "name": "Cooling Water Fault",               "crit": True},
-    {"bit": 4,  "name": "Chamber Open in Process",          "crit": True},
-    {"bit": 5,  "name": "Pump Alarm / Stop",           "crit": True},
-    {"bit": 6,  "name": "PC Link Lost",              "crit": True},
-    {"bit": 7,  "name": "Base Pressure Timeout",  "crit": False},
-    {"bit": 8,  "name": "ATM Timeout",       "crit": False},
-    {"bit": 9,  "name": "Heater Overtemp",                 "crit": True},
-    {"bit": 10, "name": "TC Comm Lost",        "crit": False},
-    {"bit": 11, "name": "TC Alarm",        "crit": False},
-    {"bit": 12, "name": "MFC Fault",                  "crit": True},
-    {"bit": 13, "name": "Recipe Table Check Failed",        "crit": False},
-    {"bit": 14, "name": "Gas Leak",                 "crit": True},
-    {"bit": 15, "name": "Precursor/Reactant Open Conflict", "crit": True},
+    {"bit": 0, "name": "EMO", "crit": True,
+     "cause": "비상정지 버튼이 눌렸거나 비상정지 회로(배선 · 릴레이)가 끊김.",
+     "check": "버튼을 돌려 풀고 원인을 없앤 뒤 Alarm Reset. 버튼이 풀려 있는데 계속 뜨면 비상정지 회로 · 입력 배선."},
+    {"bit": 1, "name": "Air Pressure Low", "crit": True,
+     "cause": "공압이 1 s 넘게 낮음(공급 밸브 · 레귤레이터 · 압력 스위치).",
+     "check": "공압 공급 · 레귤레이터 압력 · 압력 스위치 설정과 배선."},
+    {"bit": 2, "name": "N2 Supply Low", "crit": True,
+     "cause": "N2 공급 압력이 1 s 넘게 낮음(실린더 잔량 · 공급 밸브 · 레귤레이터 · 압력 스위치).",
+     "check": "N2 잔량 · 공급 압력 · 압력 스위치."},
+    {"bit": 3, "name": "Cooling Water Fault", "crit": True,
+     "cause": "냉각수 정상 입력 꺼짐(칠러 정지 · 유량 부족 · 밸브 닫힘 · 유량 스위치).",
+     "check": "칠러 운전 · 유량 · 밸브 · 유량 스위치."},
+    {"bit": 4, "name": "Chamber Open in Process", "crit": True,
+     "cause": "공정 중(블록 준비 포함) 챔버 닫힘 입력이 꺼짐(뚜껑 · 클램프 · 리미트 스위치).",
+     "check": "뚜껑 닫힘 · 스위치 위치와 배선 — 공정 중에는 열지 않는다."},
+    {"bit": 5, "name": "Pump Alarm / Stop", "crit": True,
+     "cause": "펌프 알람 입력, 또는 운전 요청 뒤 10 s 동안 운전 피드백 없음.",
+     "check": "펌프 컨트롤러 알람 · 전원 · 피드백 배선(알람이 있는 동안 펌핑 시작은 거절된다)."},
+    {"bit": 6, "name": "PC Link Lost", "crit": False,
+     "cause": "PC 하트비트가 PC Heartbeat Timeout 넘게 멈춤(프로그램 꺼짐 · PC 절전/재부팅 · 네트워크). 공정 중이면 공정은 끝까지 가고, 트립이 남아 있으면 끝난 뒤 안전 정지.",
+     "check": "프로그램 · 네트워크를 살린 뒤 Alarm Reset(PC 가 붙어 있을 때만 풀린다)."},
+    {"bit": 7, "name": "Base Pressure Timeout", "crit": False,
+     "cause": "펌핑 시작 뒤 Pump-down Timeout 안에 베이스 압력에 닿지 못함(뚜껑 오링 · 피드스루 · 피팅 누설, 벤트 밸브 샘, 펌프 성능, 베이스 압력 설정이 너무 낮음).",
+     "check": "오링 이물 · Leak Check · 펌프 상태 · Base Pressure 설정."},
+    {"bit": 8, "name": "ATM Timeout", "crit": False,
+     "cause": "벤트 시작 뒤 Vent Timeout 안에 대기압 입력이 켜지지 않음(벤트 N2 · VV · 대기압 스위치).",
+     "check": "N2 공급 · VV 열림 · 대기압 스위치 설정과 배선."},
+    {"bit": 9, "name": "Heater Overtemp", "crit": True,
+     "cause": "과온 트립 입력 또는 채널 온도가 과온 한계를 넘음(SSR 붙음 · 설정 실수 · 열전대 위치/접촉).",
+     "check": "히터 표의 채널 · 한계 · 설정값, 열전대, SSR — 히터 전원이 꺼진다."},
+    {"bit": 10, "name": "TC Comm Lost", "crit": False,
+     "cause": "온도조절기와 PLC 통신 끊김(전원 · RS-485 배선 · 국번/속도 설정).",
+     "check": "온도조절기 전원 · 배선 · 국번 — 통신이 없는 채널은 전원 켜기가 막힌다."},
+    {"bit": 11, "name": "TC Alarm", "crit": False,
+     "cause": "온도조절기가 알람을 냄(센서 단선 · 범위 밖 · 자체 알람).",
+     "check": "히터 표의 알람 채널 · 온도조절기 화면 · 열전대."},
+    {"bit": 12, "name": "MFC Fault", "crit": True,
+     "cause": "블록 준비에서 MFC1 이 MFC Stable Timeout 안에 안정되지 않음, 또는 공정 중 MFC1 편차가 MFC1 Tolerance 를 10 s 넘게 벗어남(가스 공급 압력 · 밸브 · MFC 이상 · 설정값).",
+     "check": "가스 공급 · 레시피 MFC1 값 · MFC 전원/신호."},
+    {"bit": 13, "name": "Recipe Table Check Failed", "crit": False,
+     "cause": "PLC 가 레시피 표를 거절함(합계 · 범위 · 블록/그룹 적재).",
+     "check": "레시피 검사 오류 · Upload to PLC 다시."},
+    {"bit": 14, "name": "Gas Leak", "crit": True,
+     "cause": "가스 누출 감지기 입력.",
+     "check": "감지기 표시 · 실린더 밸브 잠금 · 환기 · 안전 담당자에게 알림 — 원인을 찾기 전에 다시 시작하지 않는다."},
+    {"bit": 15, "name": "Precursor/Reactant Open Conflict", "crit": True,
+     "cause": "전구체 밸브(PV-1~3)와 반응물 밸브(PV-R)가 함께 요청됨.",
+     "check": "레시피 스텝 · 수동 밸브(동시에 열지 않는다)."},
 ]
 ALARMS1 = [
-    {"bit": 0, "name": "IV-E Feedback Fault",     "crit": True},
-    {"bit": 3, "name": "O3 Generator Alarm / O3 Permit Lost",  "crit": True},
-    {"bit": 4, "name": "Room O3 Detected",                          "crit": True},
-    {"bit": 5, "name": "Bypass Pump Alarm / No Feedback",   "crit": True},
+    {"bit": 0, "name": "IV-E Feedback Fault", "crit": True,
+     "cause": "IV-E 출력과 열림/닫힘 리미트 입력이 5 s 넘게 맞지 않음(공압 · 밸브 고착 · 리미트 스위치).",
+     "check": "공압 · IV-E 동작 · 리미트 스위치 위치와 배선."},
+    {"bit": 3, "name": "O3 Generator Alarm / O3 Permit Lost", "crit": True,
+     "cause": "O3 발생기 알람 입력, 또는 공정 중 O3 허가가 빠짐(바이패스 펌프 · IV-B · 실내 O3 · O3 상한).",
+     "check": "발생기 화면 · O2 공급 · 냉각 · 바이패스 펌프와 IV-B."},
+    {"bit": 4, "name": "Room O3 Detected", "crit": True,
+     "cause": "실내 O3 감지기 입력.",
+     "check": "감지기 · 환기 · O3 배관 누설 — 출입을 막고 안전 담당자에게 알린다."},
+    {"bit": 5, "name": "Bypass Pump Alarm / No Feedback", "crit": True,
+     "cause": "바이패스 펌프 알람 입력, 또는 운전 요청 뒤 10 s 동안 운전 피드백 없음.",
+     "check": "바이패스 펌프 전원 · 알람 · 피드백 배선."},
 ]
-CRITICAL_MASK0 = 0xD27F
+CRITICAL_MASK0 = 0xD23F             # v0.7.0: b6 PC Link Lost 를 뺐다(0xD27F → 0xD23F)
 
 # ===================== 히터 =====================
 HEATER_COUNT = 12
@@ -196,3 +240,13 @@ def aux_by_bit(bit):
         if a["bit"] == bit:
             return a
     return None
+
+
+# ===================== 정비 카운터 (v0.7.0 A4) =====================
+# 켜진 시간을 세는 보조 출력 — PLC 링크가 붙어 있는 동안(멈춤 제외)만 센다.
+# warn: 한계 설정 키(maintenance.<warn>, 0 = 끔). 없으면 한계 없이 세기만 한다.
+MAINT_HOURS = [
+    {"key": "pump",        "name": "Main Pump (PMP)",    "aux": 3,  "warn": "pump_hours_warn"},
+    {"key": "o3",          "name": "O3 Generator",       "aux": 9,  "warn": "o3_hours_warn"},
+    {"key": "bypass_pump", "name": "Bypass Pump (BPMP)", "aux": 11, "warn": ""},
+]

@@ -20,7 +20,7 @@ from .state import state
 from .trend_buffer import trend
 from .trendlog import trendlog
 from .admin import admin
-from .connection import manager, push_live, push_log
+from .connection import manager, push_live, push_log, push_notice
 
 SAMPLE_HZ = 10
 LIVE_HZ = 5
@@ -82,6 +82,8 @@ def sample_once():
     if state.runner:
         state.runner.tick(_log_sync)
     _datalog_tick()
+    from .maintenance import maint
+    maint.tick(state.link)                  # v0.7.0(A4): 켜진 시간(링크가 붙어 있는 동안만)
     live = state.live()
     # ★ PLC 하트비트 멈춤(STOP 등) 동안 live 에 남은 값은 굳은 옛 값이다 — 트렌드 버퍼 ·
     #   트렌드 기록에 넣지 않는다(실제 값처럼 남지 않게). 끊김과 같다
@@ -138,6 +140,11 @@ async def event_loop():
             while _pending_events:
                 level, msg = _pending_events.pop(0)
                 await push_log(msg, level)
+            # v0.7.0(P7 · A5): 러너가 모아 둔 토스트(PC 연결 돌아옴 · 압력 상한 · 히터 이탈)를 모든 화면에
+            toasts = getattr(state.runner, "pending_toasts", None) if state.runner else None
+            while toasts:
+                level, msg = toasts.pop(0)
+                await push_notice(msg, level)
             # 잠긴 연결(공정 시작·시간 만료)에 상태를 알린다
             locked = _admin_lock_pending[:] + admin.expired()
             del _admin_lock_pending[:]
@@ -168,7 +175,8 @@ def _datalog_tick():
     #   progress() 가 비어 '공정 아님'이 되고, 다시 붙으면 새 파일이 열려 두 파일로 갈라진다
     dl.follow(bool(runner.active_run),
               lambda: dl.start(runner.active_name, runner.active_recipe, runner.active_table,
-                               _total_ms(runner.active_recipe)),
+                               _total_ms(runner.active_recipe),
+                               adopted=bool(getattr(runner, "_adopted", False))),     # v0.7.0(P5)
               lambda: runner.last_result)
     dl.tick((state.cfg.get("log") or {}).get("datalog_interval_s", 1))
 

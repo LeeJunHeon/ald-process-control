@@ -77,6 +77,23 @@ class ProcessRunner:
         self._rf_warned = set()
         # 히터 안정 — 채널마다 ±band 안에 들어온 시각(monotonic)
         self._hr_since = {}
+        # ★ v0.7.0(P3 · P7): PC ↔ PLC 링크가 공정 구간 중 끊긴 시각(time.time · monotonic). 다시 붙은 첫 상태가 공정
+        #   아님이면 '끊긴 동안 끝남', 공정 중이면 '돌아왔습니다' 알림
+        self._lost_at = None
+        self._lost_mono = 0.0
+        self._ended_while_lost = False
+        self.pending_toasts = []        # (수준, 글) — event_loop 가 모든 화면에 토스트로 보낸다
+        # ★ v0.7.0(A2): 실행 정보(작업자 · 시료 · 메모) — 시작 확인 창에서 받은 것(다음 시작까지 남는다)
+        self.run_info = {}
+        # ★ v0.7.0(A5): 공정 중 압력 상한 · 히터 이탈 경고(PC 감시)
+        self._press_since = None
+        self._press_warned = False
+        self._press_abort_sent = False
+        self._abort_why = ""            # 즉시 중단 이유(압력 상한 — PC 가 즉시 중단) — 끝 결과 문구
+        self._hdev_since = {}
+        self._hdev_warned = set()
+        self.watch_notices = []         # 지금 이어지는 경고(Program Notices)
+        self.offline_checked = False    # v0.7.0(P6): 켜진 뒤 꺼진 동안 끝난 공정을 판정해 봤나(실행마다 한 번)
 
     # ===================== 시작 조건 =====================
     def start_checks(self) -> list:
@@ -215,7 +232,10 @@ class ProcessRunner:
         if A.bit(i0, A.IN0_ATM):
             miss.append("대기압 아님")
         if A.bit(s[A.D_INTERLOCK], A.ILK_SAFE_STOP_REQ):
-            miss.append("안전 정지 요구 해제")
+            # ★ v0.7.0(P3): 안전 정지 요구가 공정 뒤 남은 PC 끊김 트립 때문이면(비상정지 · 중대 알람 없음) 할 일을 적는다
+            trip_only = (A.bit(s[A.D_ALARM0], A.ALM0_PC_LINK) and A.bit(s[A.D_INPUT0], A.IN0_EMO)
+                         and not ((s[A.D_ALARM0] & DEV.CRITICAL_MASK0) or s[A.D_ALARM1]))
+            miss.append("PC 끊김 트립 — Alarm Reset" if trip_only else "안전 정지 요구 해제")
         if not A.bit(s[A.D_INTERLOCK], A.ILK_BASIC):
             miss.append("기본 인터락")
         return "필요: " + " · ".join(miss) if miss else "허가됨"
@@ -269,7 +289,11 @@ class ProcessRunner:
         return self.phase != IDLE or bool(self._task and not self._task.done())
 
     # ===================== 시작 흐름 =====================
-    def begin(self, push_log, push_notice, notify=None):
+    def set_run_info(self, info):
+        """v0.7.0(A2): 작업자 · 시료 · 메모(정리한 것) — 다음 시작까지 남는다."""
+        self.run_info = clean_run_info(info)
+
+    def begin(self, push_log, push_notice, notify=None, info=None):
         """시작 흐름을 러너가 쥐는 백그라운드 태스크로 띄우고 바로 돌아온다.
         ★ 명령 통로를 붙잡지 않는다 — 베이스 압력 대기(최대 30 분) 동안에도 대기 취소·알람 확인·
           벤트·펌핑 정지·전체 닫기가 바로 처리돼야 한다. (성공, 메시지)"""
@@ -277,6 +301,8 @@ class ProcessRunner:
             return False, "이미 시작 절차가 진행 중입니다"
         if not self.recipe:
             return False, "레시피를 고르세요"
+        if info is not None:
+            self.set_run_info(info)
 
         async def run():
             ok, msg = await self.start(push_log, push_notice)
@@ -452,7 +478,7 @@ class ProcessRunner:
             #   PLC 상태는 100 ms 주기로 읽어 오므로, 명령이 처리된 직후에도 아직 '대기'로
             #   읽힌다. 그 한 번을 종료로 오해해 '정상 종료' 로그가 먼저 찍힌다.
             await push_log(f"공정 시작 — {snap['name']} (번호 {tbl['number']}, "
-                           f"예상 {_hms(R.total_ms(st.cfg, rec))})", "ok")
+                           f"예상 {_hms(R.total_ms(st.cfg, rec))}){run_info_text(self.run_info)}", "ok")
             return True, "공정을 시작했습니다"
         if result is None:
             if "응답 없음" in text or "받았을 수" in text:
@@ -552,10 +578,15 @@ class ProcessRunner:
                 _d, (s0, at, pl) = self._b13_wait
                 self._b13_wait = None
                 self._finish(s0, at, pl)
+            if (self.active_run or self._was_running) and self._lost_at is None:
+                self._lost_at, self._lost_mono = time.time(), time.monotonic()     # v0.7.0(P3 · P7)
+            self._reset_watch()
             return
         s = link.status
         self._track_heaters(s)
         running = s[A.D_STATE] in RUNNING_STATES
+        if self._lost_at is not None:
+            self._link_back(s, running)
         if not self.active_run and self._b13_wait is None and self._id_blocked():
             # ★ v0.4.15: 장비 ID 가 막힌 연결(다른 장비의 PLC)이고 이 PC 가 맡은 공정이 없다 — 그 공정의 끝을 이 장비
             #   이벤트 로그에 적거나(골라 둔 레시피 이름으로) RF 감시를 하지 않는다. '공정 중을 봤다'도 세우지 않는다
@@ -579,6 +610,8 @@ class ProcessRunner:
                 self._abort_unknown = False
                 push_log_sync("warn", "중단 명령이 PLC 에 닿지 않았습니다 — 공정 계속")
             self._watch_rf(s, push_log_sync)
+            if self.active_run:
+                self._watch_limits(s, push_log_sync)
             self._was_running = True
             if s[A.D_STATE] == A.STATE_STOPPING and (self.active_run or self._was_running):
                 self._stopping_seen = True
@@ -590,6 +623,7 @@ class ProcessRunner:
                 self._last_pos = (s[A.D_SEQ_BLOCK], s[A.D_SEQ_STEP],
                                   A.dword(s[A.D_SEQ_BLOCK_PASS], s[A.D_SEQ_BLOCK_PASS + 1]))
             return
+        self._reset_watch()
         # ★ 시작 직후 '공정 중'을 한 번도 못 보고 끝난 경우(아주 짧은 공정 · 바로 중단)도 끝을 기록한다
         #   — 명령 1 직후의 '대기' 읽기(상태 영역은 최대 한 주기 늦다)는 1.5 s 동안 끝으로 보지 않는다.
         if (not self._was_running and self.active_run
@@ -609,6 +643,118 @@ class ProcessRunner:
                 self._b13_wait = (self._end_seen_mono + B13_WAIT_S, end)
                 return
             self._finish(*end)
+
+    # ---- v0.7.0(P3 · P7): 공정 구간 중 끊겼던 링크가 다시 붙었다 ----
+    def _link_back(self, s, running: bool):
+        """다시 붙은 첫 상태. 공정 아님(끊긴 동안 끝남)이면 끝 결과에 ' · PC 끊긴 동안 끝남'(걸린 시간은 다시 연결된
+        때까지), 공정 중이고 끊긴 시간이 PC Heartbeat Timeout 이상이었거나 알람0 b6 이 서 있으면 토스트 한 번.
+        ★ PC 가 스스로 알람 리셋을 보내지 않는다 — 트립을 풀지는 운전자가 정한다(Alarm Reset)."""
+        lost_s = time.monotonic() - self._lost_mono
+        self._lost_at = None
+        if self._id_blocked():
+            return
+        if self.active_run and not running:
+            self._ended_while_lost = True
+            return
+        if running and self.active_run:
+            link = self.state.link
+            wdt = link._wdt_s() if hasattr(link, "_wdt_s") else A.PRM_DEFAULTS["pc_wdt_ms"] / 1000.0
+            if lost_s >= wdt or A.bit(s[A.D_ALARM0], A.ALM0_PC_LINK):
+                self.pending_toasts.append(("warn", f"PC 연결이 돌아왔습니다 — 끊긴 {lost_s:.0f} s 동안 공정은 "
+                                                    "계속되었습니다"))
+
+    # ---- v0.7.0(A5): 공정 중 압력 상한 · 히터 이탈 경고(PC 감시) ----
+    def _reset_watch(self):
+        self._press_since = None
+        self._press_warned = False
+        self._hdev_since = {}
+        if self._hdev_warned:
+            self._hdev_warned = set()
+        self.watch_notices = []
+
+    def _watch_limits(self, s, push_log_sync):
+        """공정 중(일시정지 제외) CVG 가 process.press_high_torr 를 넘은 채 press_high_s 이어지면 경고(이벤트 로그 ·
+        토스트 한 번, 이어지는 동안 Program Notices). press_high_abort 면 즉시 중단을 한 번 보낸다.
+        사용 채널(통신 정상)의 |PV − SV| 가 heater_dev_c 를 넘은 채 heater_dev_s 이어지면 채널별 경고 한 번,
+        돌아오면 해제 로그. ★ PC 감시다 — PC 가 꺼져 있으면 동작하지 않는다(PLC 래더 감시가 아니다)."""
+        pr = self.state.cfg.get("process") or {}
+        now = time.monotonic()
+        notes = []
+        paused = s[A.D_STATE] == A.STATE_PAUSE
+        lim = _num(pr.get("press_high_torr"), 10.0)
+        hold = _num(pr.get("press_high_s"), 5.0)
+        cvg = self.state.conv.cvg.to_torr(s[A.D_CVG_RAW]) if self.state.conv else None
+        if lim > 0 and not paused and cvg is not None and cvg > lim:
+            if self._press_since is None:
+                self._press_since = now
+            if now - self._press_since >= hold:
+                msg = f"공정 중 압력 상한 — CVG {_torr(cvg)} Torr > {lim:g} Torr ({hold:g} s 넘게)"
+                notes.append(("warn", msg + " · PC 감시(process.press_high_torr)"))
+                if not self._press_warned:
+                    self._press_warned = True
+                    push_log_sync("warn", msg)
+                    self.pending_toasts.append(("warn", msg))
+                    if pr.get("press_high_abort") and not self._press_abort_sent:
+                        self._press_abort_sent = True
+                        self._abort_why = "압력 상한 — PC 가 즉시 중단"
+                        push_log_sync("warn", "압력 상한 — PC 가 즉시 중단을 보냅니다(process.press_high_abort)")
+                        self._spawn(self._press_abort())
+        else:
+            if self._press_warned:
+                push_log_sync("info", "공정 중 압력 상한 해제")
+            self._press_since = None
+            self._press_warned = False
+        dev = _num(pr.get("heater_dev_c"), 15.0)
+        dhold = _num(pr.get("heater_dev_s"), 120.0)
+        link = self.state.link
+        for h in (self.state.cfg.get("heaters") or []) if dev > 0 else []:
+            if not h.get("enabled"):
+                continue
+            ch = h["ch"]
+            sv_raw = link.cmd_reg(A.D_HEATER_SV + ch - 1) if hasattr(link, "cmd_reg") else None
+            if not _tc_ok(s, h) or sv_raw is None:
+                self._hdev_since.pop(ch, None)
+                continue
+            pv, sv = _temp(s[A.D_HEATER_PV + ch - 1]), _temp(sv_raw)
+            if abs(pv - sv) > dev:
+                self._hdev_since.setdefault(ch, now)
+                if now - self._hdev_since[ch] >= dhold and ch not in self._hdev_warned:
+                    self._hdev_warned.add(ch)
+                    msg = (f"히터 이탈 — CH{ch} {h.get('name', '')} 현재 {pv:.1f} ℃ / 설정 {sv:.1f} ℃ "
+                           f"(±{dev:g} ℃ 밖 {dhold:g} s 넘게)")
+                    push_log_sync("warn", msg)
+                    self.pending_toasts.append(("warn", msg))
+            else:
+                self._hdev_since.pop(ch, None)
+                if ch in self._hdev_warned:
+                    self._hdev_warned.discard(ch)
+                    push_log_sync("info", f"히터 이탈 해제 — CH{ch} {h.get('name', '')} {pv:.1f} ℃")
+        for ch in sorted(self._hdev_warned):
+            notes.append(("warn", f"히터 이탈 CH{ch} — PC 감시(process.heater_dev_c)"))
+        self.watch_notices = notes
+
+    def _spawn(self, coro):
+        try:
+            asyncio.get_running_loop().create_task(coro)
+        except RuntimeError:
+            coro.close()            # 루프 밖(시험의 동기 호출) — 보낼 수 없다
+
+    async def _press_abort(self):
+        """압력 상한 — 즉시 중단을 한 번 보낸다(운전자 즉시 중단과 같은 결과 처리, 이유만 다르다)."""
+        link = self.state.link
+        if not (link and link.connected) or link.status[A.D_STATE] not in RUNNING_STATES:
+            return
+        self.abort_begin()
+        done = unknown = False
+        try:
+            result, text = await link.send_command(A.CMD_ABORT)
+            done = result == A.RESULT_OK
+            unknown = result is None and ("응답 없음" in text or "받았을 수" in text)
+            logger.command("즉시 중단(압력 상한)", link._cmd_no, text, "local")
+        except Exception as e:  # noqa: BLE001
+            logger.write("warn", f"압력 상한 즉시 중단 실패: {type(e).__name__}: {e}")
+        finally:
+            self.abort_result(done, unknown)
 
     def _needs_b13_wait(self, s) -> bool:
         """시퀀서 8 · 안전 정지 아님 · 이번 공정의 b13 이 아직 안 보임 — 1 s 기다린다."""
@@ -657,17 +803,39 @@ class ProcessRunner:
     def _finish(self, s, ended_at, push_log_sync):
         took = ended_at - (self.started_at or ended_at)
         self.last_result = self.end_result(s)
+        lost = self._ended_while_lost
+        if lost:
+            self.last_result += LOST_TAIL           # v0.7.0(P3): 링크가 끊긴 동안 끝났다(다시 붙은 첫 상태가 공정 아님)
         # ★ v0.4.14: 이어받은 공정은 시작 시각을 모른다 — 걸린 시간은 이어받은 뒤부터라고 적는다
-        took_txt = ("이어받은 뒤 " if self._adopted else "걸린 시간 ") + _hms(int(took * 1000))
+        took_txt = (("이어받은 뒤 " if self._adopted else "걸린 시간 ") + _hms(int(took * 1000))
+                    + (" (다시 연결된 때까지)" if lost else ""))
         push_log_sync("ok" if result_level(self.last_result) == "ok" else "warn",
                       f"공정 {self.last_result} — {self.active_name or ''} · "
                       f"{took_txt} · 마지막 위치 {self.where_text()}")
+        self._count_maint(s, push_log_sync)
+        self._ended_while_lost = False
+        self._abort_why = ""
+        self._press_abort_sent = False
         self.started_at = 0.0
         self._abort_sent = False
         self._stop_reserved = False
         self._end_deferred = None
         self._abort_unknown = False
         self.active_run = False                 # 데이터 로그 구간 끝(끝 판정과 같은 순간)
+
+    def _count_maint(self, s, push_log_sync):
+        """v0.7.0(A4): 끝 판정 때 레시피 밸브 열림 횟수 · 열린 시간을 정비 카운터에 더한다(두 번 세지 않게 데이터 로그
+        이름을 기억한다). 표 없이 이어받은 공정은 세지 않는다."""
+        try:
+            from . import maintenance
+            dl = self.state.datalog
+            key = (dl.name if (dl is not None and dl.fp) else "") or f"run-{int(self.started_at or time.time())}"
+            msg = maintenance.count_run(self.state.cfg, key, self.active_recipe, s, self._last_pos,
+                                        self.last_result.startswith("정상 종료"))
+            if msg:
+                push_log_sync("info", msg)
+        except Exception as e:  # noqa: BLE001
+            logger.write("warn", f"정비 카운터 세기 실패(계속 진행): {type(e).__name__}: {e}")
 
     def _watch_rf(self, s, push_log_sync):
         """공정 중 RF 스텝(500 ms 이상)이 끝날 때까지 RF 출력(보조 b8)이 한 번도 안 켜지면 경고 한 줄.
@@ -711,86 +879,18 @@ class ProcessRunner:
         return f"블록 {b} · 스텝 {st} · 사이클 {c}"
 
     def _plan(self) -> dict:
-        """끝 판정이 쓰는 블록 수 · 블록 반복 · 그룹 — {"nb", "repeats": [블록별 반복], "groups": [(시작, 끝, 반복)]}.
-        ★ v0.4.14: 되읽은 표(words)가 있으면 그 표에서(R.from_plc_words) — '(PLC 번호 N)' 으로 이어받아 로컬
-          레시피가 없어도 사이클 후 정지를 가른다. 표가 없으면 레시피, 둘 다 없으면 nb = 0."""
-        tbl = self.active_table or {}
-        if tbl.get("words"):
-            info = R.from_plc_words(tbl["words"])
-            return {"nb": int(info["block_count"]),
-                    "repeats": [int(b["repeat"] or 0) for b in info["blocks"]],
-                    "groups": [(g["from_block"], g["to_block"], g["repeat"] or 1) for g in info["groups"]]}
-        rec = self.active_recipe or {}
-        blocks = rec.get("blocks") or []
-        groups = []
-        for g in rec.get("groups") or []:
-            try:
-                groups.append((int(g.get("from_block")), int(g.get("to_block")), int(g.get("repeat") or 1)))
-            except (TypeError, ValueError, AttributeError):
-                continue
-        nb = int(tbl["block_count"]) if tbl.get("block_count") else len(blocks)
-        return {"nb": nb, "repeats": [int(b.get("repeat") or 1) for b in blocks], "groups": groups}
+        """끝 판정이 쓰는 블록 수 · 블록 반복 · 그룹 — plan_of(지금 공정의 표, 레시피)."""
+        return plan_of(self.active_table, self.active_recipe)
 
     def _block_count(self) -> int:
         return self._plan()["nb"]
 
     def end_result(self, s) -> str:
-        """끝났을 때의 결과(이벤트 로그·데이터 로그 메타·목록이 이 값을 쓴다). 래더 동작 기준, 앞이 우선:
-
-        1. 정상 완료 — 시퀀서 6 이고 D00021 > 블록 수(래더는 SEQ_BLOCK 을 블록 수 + 1 로 올린 뒤 끝낸다).
-           장비 상태 6 이어도 완료를 먼저 본다(끝을 보기 전 끊김으로 PC 트립 등) → '정상 종료 (끝난 뒤 안전 정지: …)'
-        2. 안전 정지(장비 상태 6) — 운전자 중단보다 앞선다(중단을 누른 순간 비상정지가 났다면 원인은 비상정지)
-        3. 사이클 후 정지 — 시퀀서 6 이고 D00021 ≤ 블록 수. 마지막 블록의 마지막 사이클(그 블록이 그룹 안이면
-           마지막 그룹 회차)이면 다 끝난 것 → '정상 종료 (사이클 후 정지와 겹침)'
-        4. 레시피 표 오류 — 시퀀서 8 AND 이번 공정 중 선 알람0 b13(중대 아님 — 장비 상태 1). 시작 때부터 서 있던
-           b13 이면 스냅샷 표로 그 블록 · 스텝 · 그룹이 정말 적재에서 걸리는지 보고 정한다. 운전자 중단보다 앞선다
-        5. 운전자 중단 — 명령 5 결과 0. 결과를 못 받았으면 '결과 확인 안 됨'
-        6. PLC 재시작 — 끝 스냅샷이 시퀀서 0 · 블록 0(P00 첫 스캔이 지웠다). 원인이 남은 알람(장비 상태 6)은 뒤따름.
-           (공정 중 하트비트 멈춤은 보조 근거 — 그것만으로는 재시작이라 하지 않는다)
-        7. 시퀀서 8 — PLC 중단 / 그 밖 — 끝 확인 안 됨"""
-        seq, st = s[A.D_SEQ_STATE], s[A.D_STATE]
-        plan = self._plan()
-        nb = plan["nb"]
-        blk = s[A.D_SEQ_BLOCK]
-        if seq == 6 and not nb and (self._stop_reserved or self._stopping_seen) and st != A.STATE_SAFE_STOP:
-            # ★ v0.4.14: 표 없이 이어받은 공정 — 블록 수를 모른다. 공정 중 '사이클 후 정지 예약'을 봤으면 사이클 후
-            #   정지(마지막 사이클과 겹쳤는지는 알 수 없다). 예전에는 '정상 종료'로 적혔다
-            cyc = A.dword(s[A.D_SEQ_BLOCK_PASS], s[A.D_SEQ_BLOCK_PASS + 1])
-            return f"사이클 후 정지 (블록 {blk} · 사이클 {cyc} · 표 모름)"
-        if seq == 6 and (not nb or blk > nb):
-            if st == A.STATE_SAFE_STOP:
-                return f"정상 종료 (끝난 뒤 안전 정지: {self._crit_text(s)})"
-            return "정상 종료"
-        if seq == 0 and blk == 0:
-            follow = f" · 뒤따름: {self._crit_text(s)}" if st == A.STATE_SAFE_STOP else ""
-            return f"중단 (PLC 재시작 — 시퀀서 · 출력 초기화{follow})"
-        if st == A.STATE_SAFE_STOP:
-            return f"중단 (안전 정지 — {self._crit_text(s)})"
-        if seq == 6:
-            # ★ 끝 스냅샷의 D00024 — 래더는 끝에서 사이클을 올리지 않는다(P40 행 55~56 · 66)
-            cyc = A.dword(s[A.D_SEQ_BLOCK_PASS], s[A.D_SEQ_BLOCK_PASS + 1])
-            repeats = plan["repeats"]
-            reps = int(repeats[blk - 1] or 0) if 1 <= blk <= len(repeats) else 0
-            if self._last_cycle_of_all(blk, cyc, reps, s):
-                return "정상 종료 (사이클 후 정지와 겹침)"
-            rep = f"/{reps}" if reps else ""
-            return f"사이클 후 정지 (블록 {blk} · 사이클 {cyc}{rep})"
-        if seq == 8 and A.bit(s[A.D_ALARM0], A.ALM0_RECIPE):
-            if not (self.active_table or {}).get("words"):
-                # 표 없이 이어받았다 — 남은 b13 인지 가릴 표가 없으니 이번 공정 중 선 것만 표 오류로
-                if self._b13_rose(s):
-                    return f"중단 (레시피 표 오류 — 블록 {blk} · 표 모름)"
-            else:
-                why = self._table_fault(blk, s[A.D_SEQ_STEP])
-                if self._b13_rose(s) or why:
-                    return f"중단 (레시피 표 오류 — {why or f'블록 {blk} 적재 거절'})"
-        if self._abort_sent:
-            return "중단 (운전자 중단)"
-        if self._abort_unknown:
-            return "중단 (운전자 중단 — 결과 확인 안 됨)"
-        if seq == 8:
-            return "중단 (PLC 중단)"
-        return "중단 (끝 확인 안 됨)"
+        """끝났을 때의 결과(이벤트 로그·데이터 로그 메타·목록이 이 값을 쓴다) — 규칙은 judge_end(순수 함수)."""
+        return judge_end(s, self.active_table, self.active_recipe, crit_text=self._crit_text(s),
+                         stop_reserved=self._stop_reserved, stopping_seen=self._stopping_seen,
+                         b13_rose=self._b13_rose(s), abort_sent=self._abort_sent,
+                         abort_unknown=self._abort_unknown, abort_why=self._abort_why)
 
     def _crit_text(self, s) -> str:
         """켜진 중대 알람 이름. ★ Powder: 래더는 공정 중 안전 정지면 O3 허가 알람(알람1 b3)도 함께 세운다
@@ -798,7 +898,7 @@ class ProcessRunner:
         아니라 '뒤따름'으로 적는다."""
         crit = [a for a in self.state.alarms.list() if a["crit"]]
         if not crit:
-            return "중대 알람 이름 없음"
+            return crit_text_of(s, [])          # ★ v0.7.0(P3): b6 만 서 있으면 'PC Link Lost (트립 남음)'
         if DEV.HAS_O3 and len(crit) > 1 and not A.bit(s[A.D_INPUT1], A.IN1_O3_ALM):
             b3 = f"A1-{A.ALM1_O3_GEN:02d}"
             follow = [a["name"] for a in crit if a["code"] == b3]
@@ -808,54 +908,10 @@ class ProcessRunner:
         return " · ".join(a["name"] for a in crit)
 
     def _last_cycle_of_all(self, blk, cyc, reps, s) -> bool:
-        """사이클 후 정지가 마지막 블록의 마지막 사이클(그 블록이 그룹 안이면 마지막 그룹 회차)에 겹쳤나."""
-        plan = self._plan()
-        nb = plan["nb"]
-        if not (nb and blk == nb and reps and cyc >= reps):
-            return False
-        for a, z, r in plan["groups"]:
-            if a <= blk <= z and s[A.D_SEQ_GROUP_PASS] < r:
-                return False
-        return True
+        return last_cycle_of_all(self._plan(), blk, cyc, reps, s)
 
     def _table_fault(self, blk: int, step: int = 0) -> str:
-        """레시피 표 오류의 위치 · 이유 — 시작 스냅샷 표를 래더 적재 검사처럼 본다(부호 있는 16비트).
-        블록 항목 → 그 스텝 시간(P40 행 116~117, 20 ~ 3,276,700 ms) → 그룹 순. 걸리는 것이 없으면 "".
-        래더는 그룹 진입이 거절돼도 다음 블록을 적재한 뒤 끝내므로 D00021 은 그 다음 블록이다."""
-        words = (self.active_table or {}).get("words")
-        if not words:
-            return ""
-
-        def w(addr):
-            i = addr - A.RCP_SUM_BASE
-            return words[i] & 0xFFFF if 0 <= i < len(words) else 0
-
-        def ws(addr):
-            return A.to_signed16(w(addr))
-        ns, nb, ng = w(A.D_RCP_STEP_COUNT), w(A.D_RCP_BLOCK_COUNT), w(A.D_RCP_GROUP_COUNT)
-        if 1 <= blk <= nb:
-            base = A.D_RCP_BLOCK_BASE + (blk - 1) * A.RCP_BLOCK_STRIDE
-            first, last = ws(base + A.RCP_BLOCK_FIRST), ws(base + A.RCP_BLOCK_LAST)
-            rep = A.dword(w(base + A.RCP_BLOCK_REPEAT_LO), w(base + A.RCP_BLOCK_REPEAT_LO + 1))
-            why = ("첫 스텝이 1 보다 작음" if first < 1 else "끝 스텝 < 첫 스텝" if last < first
-                   else f"끝 스텝 {last} > 스텝 수 {ns}" if last > ns else "반복 < 1" if rep < 1 else "")
-            if why:
-                return f"블록 {blk} 적재 거절: {why}"
-            if first <= step <= last and 1 <= step <= ns:
-                sb = A.D_RCP_STEP_BASE + (step - 1) * A.RCP_STEP_STRIDE
-                t = A.dword(w(sb + A.RCP_STEP_TIME_LO), w(sb + A.RCP_STEP_TIME_LO + 1))
-                if t >= 1 << 31:
-                    t -= 1 << 32                # 부호 있는 32 비트(래더 비교와 같게)
-                if t < 20 or t > 3_276_700:
-                    return f"블록 {blk} · 스텝 {step} 적재 거절: 시간 {t} ms (20 ~ 3,276,700 ms 밖)"
-        for g in range(1, min(ng, A.RCP_GROUP_MAX) + 1):
-            b = A.D_RCP_GROUP_BASE + (g - 1) * A.RCP_GROUP_STRIDE
-            a, z, r = ws(b), ws(b + 1), ws(b + 2)
-            why = ("반복 < 1(부호 있는 16비트)" if r < 1 else "범위가 올바르지 않음" if a < 1 or z < a or z > nb
-                   else "")
-            if why:
-                return f"그룹 {g} 진입 거절: {why} — 블록 {blk} 적재 뒤 중단"
-        return ""
+        return table_fault((self.active_table or {}).get("words"), blk, step)
 
     # ---- 즉시 중단 · 사이클 후 정지 (명령 결과를 보고 표시한다) ----
     def abort_begin(self):
@@ -987,6 +1043,51 @@ class ProcessRunner:
         return not (self.active_run or self.busy or self._abort_pending
                     or self._b13_wait is not None or self._end_deferred is not None)
 
+    async def check_offline_end(self, push_log) -> str:
+        """v0.7.0(P6) — PC 가 꺼진 동안 끝난 공정. 프로그램이 켜진 뒤 처음으로 PLC 와 붙었을 때(ID 맞음 · 공정 중
+        아님 · PLC 표 되읽음) 한 번: 가장 최근 메타가 끝 판정이 없고 번호 · 합계가 PLC 표와 같고 시퀀서 끝 값이 6 또는
+        8 이면(시퀀서 0 · 블록 0 은 PLC 재시작이라 판정하지 않음) judge_end 로(계획은 메타의 레시피 사본과 표) 결과를
+        정해 메타에 쓴다. 판정했으면 결과 글, 아니면 ''."""
+        link = self.state.link
+        if not (link and link.connected) or getattr(link, "plc_hb_stalled", False):
+            return ""
+        if self._id_blocked() or getattr(link, "id_state", "") not in ("ok", "unset"):
+            return ""
+        self.offline_checked = True             # 첫 기회에 한 번(아래 조건이 안 맞아도 다시 보지 않는다)
+        if link.status[A.D_STATE] in RUNNING_STATES or self.active_run or self.busy:
+            return ""
+        from . import datalog as D
+        name, meta = D.latest_meta()
+        if not name or D.judged(meta):
+            return ""
+        words = await link.read_recipe_area()
+        if not words:
+            self.offline_checked = False        # 표를 못 읽었다 — 다음 기회에 다시
+            return ""
+        info = R.from_plc_words(words)
+        s = list(link.status)
+        if meta.get("number") != info["number"] or meta.get("checksum") != info["checksum"]:
+            return ""
+        if s[A.D_SEQ_STATE] not in (6, 8) or (s[A.D_SEQ_STATE] == 0 and s[A.D_SEQ_BLOCK] == 0):
+            return ""
+        res = judge_end(s, {"words": list(words)}, meta.get("recipe"),
+                        b13_rose=A.bit(s[A.D_ALARM0], A.ALM0_RECIPE)) + OFF_TAIL
+        new = dict(meta)
+        if meta.get("ended"):
+            new["log_closed"] = meta["ended"]   # 프로그램이 닫은 시각
+        new.update(result=res, ended="모름", judged_at=time.strftime("%Y-%m-%d %H:%M:%S"))
+        storage.atomic_write_json(D.os.path.join(D.paths.DATALOG_DIR, name + ".recipe.json"), new)
+        await push_log(f"PC 가 꺼진 동안 끝난 공정 — {name}: {res}",
+                       "ok" if result_level(res) == "ok" else "warn")
+        try:
+            from . import maintenance
+            msg = maintenance.count_run(self.state.cfg, name, meta.get("recipe"), s, None, res.startswith("정상 종료"))
+            if msg:
+                await push_log(msg, "info")
+        except Exception as e:  # noqa: BLE001
+            logger.write("warn", f"정비 카운터 세기 실패(계속 진행): {e}")
+        return res
+
     async def adopt_running(self, push_log) -> bool:
         """PC 를 다시 켰는데(또는 링크가 다시 붙었는데) PLC 가 이미 공정 중이면 레시피를 되찾아 이어 간다.
         server 의 이어받기 루프가 링크가 붙어 있는 동안 몇 초마다 부른다(adopt_wanted 일 때만 실제로 한다).
@@ -1061,6 +1162,174 @@ class ProcessRunner:
         return True
 
 
+# ===================== 끝 판정 (순수 함수 — 러너 · 꺼진 동안 끝난 공정 판정이 같이 쓴다) =====================
+TRIP_LEFT_TEXT = "PC Link Lost (트립 남음)"
+LOST_TAIL = " · PC 끊긴 동안 끝남"
+OFF_TAIL = " · PC 꺼진 동안 끝남(다시 켠 뒤 PLC 끝 상태로 판정)"
+
+
+def plan_of(table, recipe) -> dict:
+    """끝 판정이 쓰는 블록 수 · 블록 반복 · 그룹 — {"nb", "repeats": [블록별 반복], "groups": [(시작, 끝, 반복)]}.
+    ★ v0.4.14: 되읽은 표(words)가 있으면 그 표에서(R.from_plc_words) — '(PLC 번호 N)' 으로 이어받아 로컬
+      레시피가 없어도 사이클 후 정지를 가른다. 표가 없으면 레시피, 둘 다 없으면 nb = 0."""
+    tbl = table or {}
+    if tbl.get("words"):
+        info = R.from_plc_words(tbl["words"])
+        return {"nb": int(info["block_count"]),
+                "repeats": [int(b["repeat"] or 0) for b in info["blocks"]],
+                "groups": [(g["from_block"], g["to_block"], g["repeat"] or 1) for g in info["groups"]]}
+    rec = recipe or {}
+    blocks = rec.get("blocks") or []
+    groups = []
+    for g in rec.get("groups") or []:
+        try:
+            groups.append((int(g.get("from_block")), int(g.get("to_block")), int(g.get("repeat") or 1)))
+        except (TypeError, ValueError, AttributeError):
+            continue
+    nb = int(tbl["block_count"]) if tbl.get("block_count") else len(blocks)
+    return {"nb": nb, "repeats": [int(b.get("repeat") or 1) for b in blocks], "groups": groups}
+
+
+def crit_names_of(s) -> list:
+    """끝 스냅샷의 알람 워드에서 켜진 중대 알람 이름(알람 탭 순서 — 워드0 → 워드1, 비트 순)."""
+    out = []
+    for word, defs in ((s[A.D_ALARM0], DEV.ALARMS0), (s[A.D_ALARM1], DEV.ALARMS1)):
+        out += [d["name"] for d in defs if d["crit"] and (word >> d["bit"]) & 1]
+    return out
+
+
+def crit_text_of(s, names=None) -> str:
+    """안전 정지 원인 글. 중대 알람 이름(names — 없으면 끝 스냅샷에서). ★ v0.7.0(P3): 중대 알람이 없어도 알람0 b6
+    'PC Link Lost' 가 서 있으면 그것이 원인(공정 뒤 남은 PC 끊김 트립) — 'PC Link Lost (트립 남음)'."""
+    names = crit_names_of(s) if names is None else names
+    if names:
+        return " · ".join(names)
+    if A.bit(s[A.D_ALARM0], A.ALM0_PC_LINK):
+        return TRIP_LEFT_TEXT
+    return "중대 알람 이름 없음"
+
+
+def last_cycle_of_all(plan, blk, cyc, reps, s) -> bool:
+    """사이클 후 정지가 마지막 블록의 마지막 사이클(그 블록이 그룹 안이면 마지막 그룹 회차)에 겹쳤나."""
+    nb = plan["nb"]
+    if not (nb and blk == nb and reps and cyc >= reps):
+        return False
+    for a, z, r in plan["groups"]:
+        if a <= blk <= z and s[A.D_SEQ_GROUP_PASS] < r:
+            return False
+    return True
+
+
+def table_fault(words, blk: int, step: int = 0) -> str:
+    """레시피 표 오류의 위치 · 이유 — 시작 스냅샷 표를 래더 적재 검사처럼 본다(부호 있는 16비트).
+    블록 항목 → 그 스텝 시간(P40 행 116~117, 20 ~ 3,276,700 ms) → 그룹 순. 걸리는 것이 없으면 "".
+    래더는 그룹 진입이 거절돼도 다음 블록을 적재한 뒤 끝내므로 D00021 은 그 다음 블록이다."""
+    if not words:
+        return ""
+
+    def w(addr):
+        i = addr - A.RCP_SUM_BASE
+        return words[i] & 0xFFFF if 0 <= i < len(words) else 0
+
+    def ws(addr):
+        return A.to_signed16(w(addr))
+    ns, nb, ng = w(A.D_RCP_STEP_COUNT), w(A.D_RCP_BLOCK_COUNT), w(A.D_RCP_GROUP_COUNT)
+    if 1 <= blk <= nb:
+        base = A.D_RCP_BLOCK_BASE + (blk - 1) * A.RCP_BLOCK_STRIDE
+        first, last = ws(base + A.RCP_BLOCK_FIRST), ws(base + A.RCP_BLOCK_LAST)
+        rep = A.dword(w(base + A.RCP_BLOCK_REPEAT_LO), w(base + A.RCP_BLOCK_REPEAT_LO + 1))
+        why = ("첫 스텝이 1 보다 작음" if first < 1 else "끝 스텝 < 첫 스텝" if last < first
+               else f"끝 스텝 {last} > 스텝 수 {ns}" if last > ns else "반복 < 1" if rep < 1 else "")
+        if why:
+            return f"블록 {blk} 적재 거절: {why}"
+        if first <= step <= last and 1 <= step <= ns:
+            sb = A.D_RCP_STEP_BASE + (step - 1) * A.RCP_STEP_STRIDE
+            t = A.dword(w(sb + A.RCP_STEP_TIME_LO), w(sb + A.RCP_STEP_TIME_LO + 1))
+            if t >= 1 << 31:
+                t -= 1 << 32                # 부호 있는 32 비트(래더 비교와 같게)
+            if t < 20 or t > 3_276_700:
+                return f"블록 {blk} · 스텝 {step} 적재 거절: 시간 {t} ms (20 ~ 3,276,700 ms 밖)"
+    for g in range(1, min(ng, A.RCP_GROUP_MAX) + 1):
+        b = A.D_RCP_GROUP_BASE + (g - 1) * A.RCP_GROUP_STRIDE
+        a, z, r = ws(b), ws(b + 1), ws(b + 2)
+        why = ("반복 < 1(부호 있는 16비트)" if r < 1 else "범위가 올바르지 않음" if a < 1 or z < a or z > nb
+               else "")
+        if why:
+            return f"그룹 {g} 진입 거절: {why} — 블록 {blk} 적재 뒤 중단"
+    return ""
+
+
+def judge_end(s, table=None, recipe=None, *, crit_text=None, stop_reserved=False, stopping_seen=False,
+              b13_rose=False, abort_sent=False, abort_unknown=False, abort_why="") -> str:
+    """끝났을 때의 결과(이벤트 로그 · 데이터 로그 메타 · 목록이 이 값을 쓴다). 래더 동작 기준, 앞이 우선:
+
+    1. 정상 완료 — 시퀀서 6 이고 D00021 > 블록 수(래더는 SEQ_BLOCK 을 블록 수 + 1 로 올린 뒤 끝낸다).
+       장비 상태 6 이어도 완료를 먼저 본다 → '정상 종료 (끝난 뒤 안전 정지: …)'. ★ v0.7.0(P): 공정 중 남은 PC 끊김
+       트립(알람0 b6)은 공정이 끝난 다음 스캔에 안전 정지를 세운다 — 끝 스냅샷이 그 사이 한 스캔(장비 상태 1)이어도
+       b6 이 서 있으면 같은 글('… 끝난 뒤 안전 정지: PC Link Lost (트립 남음)')
+    2. 안전 정지(장비 상태 6) — 운전자 중단보다 앞선다(중단을 누른 순간 비상정지가 났다면 원인은 비상정지).
+       단 중대 알람 없이 트립만 남은 사이클 후 정지는 3 으로(끝난 뒤 안전 정지)
+    3. 사이클 후 정지 — 시퀀서 6 이고 D00021 ≤ 블록 수. 마지막 블록의 마지막 사이클(그 블록이 그룹 안이면
+       마지막 그룹 회차)이면 다 끝난 것 → '정상 종료 (사이클 후 정지와 겹침)'
+    4. 레시피 표 오류 — 시퀀서 8 AND 이번 공정 중 선 알람0 b13(중대 아님 — 장비 상태 1). 시작 때부터 서 있던
+       b13 이면 스냅샷 표로 그 블록 · 스텝 · 그룹이 정말 적재에서 걸리는지 보고 정한다. 운전자 중단보다 앞선다
+    5. 운전자 중단 — 명령 5 결과 0(abort_why 가 있으면 그 이유 — 예: 압력 상한). 결과를 못 받았으면 '결과 확인 안 됨'
+    6. PLC 재시작 — 끝 스냅샷이 시퀀서 0 · 블록 0(P00 첫 스캔이 지웠다). 원인이 남은 알람(장비 상태 6)은 뒤따름.
+    7. 시퀀서 8 — PLC 중단 / 그 밖 — 끝 확인 안 됨
+    table · recipe: 그 공정의 계획(표 words 가 있으면 표가 우선). crit_text: 안전 정지 원인 글(없으면 끝 스냅샷에서)."""
+    seq, st = s[A.D_SEQ_STATE], s[A.D_STATE]
+    plan = plan_of(table, recipe)
+    nb = plan["nb"]
+    blk = s[A.D_SEQ_BLOCK]
+    crit = crit_text if crit_text is not None else crit_text_of(s)
+    trip = A.bit(s[A.D_ALARM0], A.ALM0_PC_LINK)
+    crit_any = bool((s[A.D_ALARM0] & DEV.CRITICAL_MASK0) or s[A.D_ALARM1])
+    after_stop = st == A.STATE_SAFE_STOP or (seq == 6 and trip)      # 끝난 뒤 안전 정지(또는 다음 스캔에 선다)
+    if seq == 6 and not nb and (stop_reserved or stopping_seen) and st != A.STATE_SAFE_STOP:
+        # ★ v0.4.14: 표 없이 이어받은 공정 — 블록 수를 모른다. 공정 중 '사이클 후 정지 예약'을 봤으면 사이클 후
+        #   정지(마지막 사이클과 겹쳤는지는 알 수 없다). 예전에는 '정상 종료'로 적혔다
+        cyc = A.dword(s[A.D_SEQ_BLOCK_PASS], s[A.D_SEQ_BLOCK_PASS + 1])
+        return f"사이클 후 정지 (블록 {blk} · 사이클 {cyc} · 표 모름)"
+    if seq == 6 and (not nb or blk > nb):
+        if after_stop:
+            return f"정상 종료 (끝난 뒤 안전 정지: {crit})"
+        return "정상 종료"
+    if seq == 0 and blk == 0:
+        follow = f" · 뒤따름: {crit}" if st == A.STATE_SAFE_STOP else ""
+        return f"중단 (PLC 재시작 — 시퀀서 · 출력 초기화{follow})"
+    if st == A.STATE_SAFE_STOP and not (seq == 6 and trip and not crit_any):
+        return f"중단 (안전 정지 — {crit})"
+    if seq == 6:
+        # ★ 끝 스냅샷의 D00024 — 래더는 끝에서 사이클을 올리지 않는다(P40 행 55~56 · 66)
+        cyc = A.dword(s[A.D_SEQ_BLOCK_PASS], s[A.D_SEQ_BLOCK_PASS + 1])
+        repeats = plan["repeats"]
+        reps = int(repeats[blk - 1] or 0) if 1 <= blk <= len(repeats) else 0
+        if last_cycle_of_all(plan, blk, cyc, reps, s):
+            if after_stop:
+                return f"정상 종료 (끝난 뒤 안전 정지: {crit})"
+            return "정상 종료 (사이클 후 정지와 겹침)"
+        rep = f"/{reps}" if reps else ""
+        tail = f" · 끝난 뒤 안전 정지: {crit}" if after_stop else ""
+        return f"사이클 후 정지 (블록 {blk} · 사이클 {cyc}{rep}){tail}"
+    if seq == 8 and A.bit(s[A.D_ALARM0], A.ALM0_RECIPE):
+        words = (table or {}).get("words")
+        if not words:
+            # 표 없이 이어받았다 — 남은 b13 인지 가릴 표가 없으니 이번 공정 중 선 것만 표 오류로
+            if b13_rose:
+                return f"중단 (레시피 표 오류 — 블록 {blk} · 표 모름)"
+        else:
+            why = table_fault(words, blk, s[A.D_SEQ_STEP])
+            if b13_rose or why:
+                return f"중단 (레시피 표 오류 — {why or f'블록 {blk} 적재 거절'})"
+    if abort_sent:
+        return f"중단 ({abort_why or '운전자 중단'})"
+    if abort_unknown:
+        return f"중단 ({abort_why or '운전자 중단'} — 결과 확인 안 됨)"
+    if seq == 8:
+        return "중단 (PLC 중단)"
+    return "중단 (끝 확인 안 됨)"
+
+
 ADOPT_READ_TRIES = 3     # 이어받을 때 PLC 레시피 표 되읽기 시도 횟수
 ADOPT_READ_GAP_S = 0.5   # 그 사이 간격
 ADOPT_RETRY_S = 3.0      # PLC 가 공정 중인데 맡은 공정이 없으면 이만큼마다 이어받기를 다시 시도(server)
@@ -1130,6 +1399,38 @@ def _torr(v) -> str:
 def _temp(raw) -> float:
     v = int(raw) & 0xFFFF
     return (v - 0x10000 if v & 0x8000 else v) / 10.0
+
+
+def _num(v, default: float) -> float:
+    try:
+        return float(default if v is None or v == "" else v)
+    except (TypeError, ValueError):
+        return float(default)
+
+
+# ===================== 실행 정보 (v0.7.0 A2) =====================
+RUN_INFO_MAX = {"operator": 40, "sample": 80, "memo": 200}
+
+
+def clean_run_info(info) -> dict:
+    """작업자 · 시료 · 메모를 정리한다 — 문자열만, 제어 문자(줄바꿈 · 탭 포함)는 빈칸으로, 앞뒤 빈칸 정리, 길이 40 · 80 · 200."""
+    out = {}
+    info = info if isinstance(info, dict) else {}
+    for k, n in RUN_INFO_MAX.items():
+        v = info.get(k)
+        v = v if isinstance(v, str) else ""
+        v = "".join(" " if (ord(ch) < 32 or ord(ch) == 127 or 0x80 <= ord(ch) < 0xA0) else ch for ch in v)
+        out[k] = " ".join(v.split())[:n]
+    return out
+
+
+def run_info_text(info) -> str:
+    """이벤트 로그 시작 줄에 붙이는 ' · 작업자 … · 시료 …'(없으면 '')."""
+    info = info or {}
+    parts = [f"작업자 {info['operator']}" if info.get("operator") else "",
+             f"시료 {info['sample']}" if info.get("sample") else ""]
+    parts = [x for x in parts if x]
+    return (" · " + " · ".join(parts)) if parts else ""
 
 
 def _hms(ms) -> str:

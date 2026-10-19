@@ -782,3 +782,26 @@ header .chip.alarm { border-color: var(--stop-line); color: var(--stop); }
 .sti.more.stop { color: var(--stop); }
 .sti.more.stop > i { background: var(--stop); }
 .stl.ordered { grid-auto-flow: row; }
+
+/* ===================== v0.7.0 ===================== */
+/* B1 — 설정 탭 PLC Parameters 표: Match 칸이 'Ma' 로 잘리던 것. 이름 칸만 줄바꿈을 허용하고(주소 · 값 · 일치 칸은
+ *   그대로 한 줄), 그래도 넘치면 표만 가로 스크롤(.tblx) — 768 · 1280 · 1920 폭 모두 Match 칸이 다 보인다 */
+.prmtbl td.l, .prmtbl th.l { white-space: normal; overflow-wrap: anywhere; min-width: 7em; }
+.prmtbl td:last-child, .prmtbl th:last-child { white-space: nowrap; width: 1%; }
+.panel-body > .tblx, .panel-body .tblx { max-width: 100%; overflow-x: auto; }
+/* A1 — 현재 알람 행 펼침(원인 · 확인) · 알람 창 '확인:' 줄 */
+.tbl tbody tr.almrow { cursor: pointer; }
+.tbl tbody tr.almrow:focus-visible { outline: 2px solid var(--primary); outline-offset: -2px; }
+.tbl tbody tr.almhelp td { background: var(--panel-2); font-size: var(--fs-sm); white-space: normal; }
+.tbl tbody tr.almhelp td div + div { margin-top: 2px; }
+.am-check { font-size: var(--fs-sm); color: var(--ink-faint); white-space: normal; margin-top: 1px; }
+/* A2 — 시작 확인 창의 실행 정보 · 데이터 로그 머리 */
+.runinfo { margin-top: 10px; display: grid; gap: 4px; }
+.runinfo label { display: grid; grid-template-columns: 6em 1fr; align-items: center; gap: 6px; }
+.runinfo .inp { width: 100%; box-sizing: border-box; }
+.dl-run { margin-top: 2px; font-size: var(--fs-sm); }
+.dl-run .dl-memo { white-space: pre-wrap; overflow-wrap: anywhere; }
+/* A3 · A4 — Maintenance 패널 */
+.sub-h { font-weight: 700; margin: 2px 0 4px; }
+.lctbl td, .lctbl th, .mttbl td, .mttbl th { white-space: nowrap; }
+.mttbl td.l { white-space: normal; }

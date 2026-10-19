@@ -462,6 +462,94 @@ def _blocks_after(cfg: dict, recipe: dict, block_no: int, group_pass: int) -> in
     return int(total)
 
 
+# ===================== 밸브 사용량 (v0.7.0 A4 — 정비 카운터) =====================
+def _step_usage(block: dict, valve_min_ms: int):
+    """(첫 사이클 스텝별, 반복 사이클 스텝별) [{tag: (열림 횟수, 열린 ms)}].
+    PLC 규칙과 같게 — 앞 스텝에 없던 밸브가 열리면 1 회(블록 첫 사이클의 첫 스텝은 '모두 닫힘' 다음, 반복 사이클의
+    첫 스텝은 그 블록 마지막 스텝 다음), 열린 시간은 그 스텝의 effective_step_ms."""
+    steps = block.get("steps") or []
+    sets = [_valve_set(s) for s in steps]
+    first, rep = step_times(block, valve_min_ms)
+    out_f, out_r = [], []
+    for i in range(len(steps)):
+        prev_f = frozenset() if i == 0 else sets[i - 1]
+        prev_r = sets[-1] if i == 0 else sets[i - 1]
+        out_f.append({t: (1 if t not in prev_f else 0, first[i]) for t in sets[i]})
+        out_r.append({t: (1 if t not in prev_r else 0, rep[i]) for t in sets[i]})
+    return out_f, out_r
+
+
+def _acc(acc: dict, steps, k: int = 1):
+    for u in steps:
+        for t, (n, ms) in u.items():
+            a = acc.setdefault(t, [0, 0])
+            a[0] += n * k
+            a[1] += ms * k
+
+
+def _block_usage(acc: dict, block: dict, vmin: int, k: int = 1, cycle=None, idx=None):
+    """블록 한 번(k 번)의 사용량을 acc 에 더한다. cycle · idx 를 주면 그 사이클의 그 스텝(블록 안 인덱스)까지."""
+    first, rep = _step_usage(block, vmin)
+    if not first:
+        return
+    repeat = max(1, int(block.get("repeat") or 1))
+    if cycle is None:
+        _acc(acc, first, k)
+        _acc(acc, rep, k * (repeat - 1))
+        return
+    c = max(1, min(int(cycle), repeat))
+    i = max(0, min(int(idx if idx is not None else len(first) - 1), len(first) - 1))
+    if c == 1:
+        _acc(acc, first[:i + 1], k)
+    else:
+        _acc(acc, first, k)
+        _acc(acc, rep, k * (c - 2))
+        _acc(acc, rep[:i + 1], k)
+
+
+def valve_usage(cfg: dict, recipe: dict, upto=None) -> dict:
+    """레시피를 돌렸을 때 밸브별 {tag: [열림 횟수, 열린 ms]}. 그룹은 total_ms 와 같은 순서(번호 순 · 겹치지 않음).
+    upto 가 없으면 레시피 전체, 있으면 {"block", "step"(표 전체 기준 번호), "cycle", "group_pass"} 위치의 스텝까지
+    (그 스텝 포함). ★ 반복이 커도(블록 1,000,000 · 그룹 32,767) 하나씩 펼치지 않고 곱으로 센다."""
+    vmin, _prep = _prm(cfg)
+    blocks = (recipe or {}).get("blocks") or []
+    acc = {}
+    if not blocks:
+        return acc
+    ub = int(upto.get("block") or 0) if upto else 0
+    if upto and not (1 <= ub <= len(blocks)):
+        upto, ub = None, 0
+    cyc = idx = None
+    if upto:
+        base = sum(len(b.get("steps") or []) for b in blocks[:ub - 1])
+        idx = int(upto.get("step") or base + 1) - base - 1
+        cyc = int(upto.get("cycle") or 1)
+    n = 1
+    while n <= len(blocks):
+        g, _ = _group_of(recipe, n)
+        if g and int(g.get("from_block") or 0) == n:
+            a, b = int(g["from_block"]), min(int(g["to_block"]), len(blocks))
+            r = max(1, int(g.get("repeat") or 1))
+            if upto and a <= ub <= b:
+                gp = max(1, min(int(upto.get("group_pass") or 1), r))
+                for j in range(a, b + 1):
+                    _block_usage(acc, blocks[j - 1], vmin, gp - 1)
+                for j in range(a, ub):
+                    _block_usage(acc, blocks[j - 1], vmin)
+                _block_usage(acc, blocks[ub - 1], vmin, 1, cyc, idx)
+                return acc
+            for j in range(a, b + 1):
+                _block_usage(acc, blocks[j - 1], vmin, r)
+            n = b + 1
+        else:
+            if upto and n == ub:
+                _block_usage(acc, blocks[n - 1], vmin, 1, cyc, idx)
+                return acc
+            _block_usage(acc, blocks[n - 1], vmin)
+            n += 1
+    return acc
+
+
 def summarize(cfg: dict, recipe: dict) -> dict:
     """화면이 그대로 쓰는 요약. 형식이 틀린 레시피는 계산하지 않고 빈 요약."""
     vmin, prep = _prm(cfg)

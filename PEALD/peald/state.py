@@ -299,6 +299,11 @@ class State:
             "manual_valve_mask": DEV.MANUAL_VALVE_MASK,
             "state_names": A.STATE_NAMES,
             "seq_names": A.SEQ_NAMES,
+            # v0.7.0(A1): 알람 코드 → 이름 · 등급 · 원인 · 확인(알람 탭 펼침 · 이력 툴팁 · 알람 창)
+            "alarm_defs": {f"{tag}-{d['bit']:02d}": {"name": d["name"], "crit": d["crit"],
+                                                     "cause": d.get("cause", ""), "check": d.get("check", "")}
+                           for tag, defs in (("A0", DEV.ALARMS0), ("A1", DEV.ALARMS1)) for d in defs},
+            "maint_hours": DEV.MAINT_HOURS,
         }
 
     def live(self) -> dict:
@@ -327,7 +332,12 @@ class State:
                 "hb_gap_ms": getattr(link, "hb_gap_ms", 0) if conn else None,
                 "hb_gap_max_ms": getattr(link, "hb_gap_max_ms", 0) if conn else None,
                 "config_error": getattr(link, "config_error", "") if link else "",
+                # v0.7.0(P7): 남은 PC 끊김 트립(알람0 b6) — 공정 중이면 끝난 뒤 안전 정지
+                "pc_trip": bool(conn and A.bit(link.status[A.D_ALARM0], A.ALM0_PC_LINK)),
             },
+            "pc_notices": self.pc_notices(conn),
+            "leakcheck": self._leak_status(),
+            "maintenance": self._maint_rows(),
             "loop": _loop_lag(),
             "alarms": self.alarms.list(),
             "alarm_new": bool(conn and link.status[A.D_ALARM_NEW]),
@@ -442,6 +452,40 @@ class State:
         out["extra"] = extra
         return out
 
+    def pc_notices(self, conn: bool) -> list:
+        """v0.7.0 — 서버가 판단하는 Program Notices [[수준, 글]]: 남은 PC 끊김 트립(P7) · 정비 한계(A4) ·
+        공정 중 압력 상한 · 히터 이탈(A5)."""
+        out = []
+        link = self.link
+        try:
+            if conn and A.bit(link.status[A.D_ALARM0], A.ALM0_PC_LINK):
+                st = link.status[A.D_STATE]
+                if st in (A.STATE_READY, A.STATE_RUN, A.STATE_PAUSE, A.STATE_STOPPING):
+                    out.append(["warn", TRIP_RUN_TEXT])
+                elif st == A.STATE_SAFE_STOP:
+                    out.append(["err", TRIP_STOP_TEXT])
+            if self.runner is not None:
+                out += [list(x) for x in getattr(self.runner, "watch_notices", [])]
+            from .maintenance import maint
+            out += [list(x) for x in maint.notices(self.cfg)]
+        except Exception:  # noqa: BLE001
+            pass
+        return out
+
+    def _leak_status(self):
+        try:
+            from .leakcheck import leak
+            return leak.status(self.cfg)
+        except Exception:  # noqa: BLE001
+            return {}
+
+    def _maint_rows(self):
+        try:
+            from .maintenance import maint
+            return maint.rows(self.cfg)
+        except Exception:  # noqa: BLE001
+            return []
+
     def _display(self, d, key):
         for item in DEV.DISPLAY_SETPOINTS:
             if item["key"] == key:
@@ -545,6 +589,7 @@ class State:
             "config_fields": _config_fields(),
             "trend_cols": _trend_cols(),
             "access": {"local": bool(access_local)},
+            "last_operator": _last_operator(),
             "live": self.live(),
         }
 
@@ -565,6 +610,8 @@ class State:
             "o3": cfg.get("o3") or {},
             "log": cfg.get("log") or {},
             "process": cfg.get("process") or {},
+            "leakcheck": cfg.get("leakcheck") or {},
+            "maintenance": cfg.get("maintenance") or {},
             "mfc": cfg.get("mfc") or [],
             "heaters": cfg.get("heaters") or [],
             "access": cfg.get("access") or {},
@@ -577,6 +624,19 @@ class State:
         from .simulator import visible_faults
         return [{"key": f["key"], "name": f["name"], "on": bool(self.sim.faults.get(f["key"]))}
                 for f in visible_faults()]
+
+
+TRIP_RUN_TEXT = ("PC 연결이 끊겼던 기록(PC Link Lost)이 남아 있습니다 — 공정은 계속됩니다. 그대로 두면 공정이 끝날 때 "
+                 "PLC 가 안전 정지합니다(밸브 · 수동 요청 끔, 펌프 · 히터 유지). [Alarm Reset] 으로 풀립니다.")
+TRIP_STOP_TEXT = "PC 끊김 트립이 남아 PLC 가 안전 정지 상태입니다 — [Alarm Reset] 으로 풀립니다."
+
+
+def _last_operator():
+    try:
+        from .commands import last_operator
+        return last_operator()
+    except Exception:  # noqa: BLE001
+        return ""
 
 
 def _config_fields():

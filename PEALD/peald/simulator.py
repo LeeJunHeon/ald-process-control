@@ -46,6 +46,8 @@ ATM_TORR = 760.0
 ULTIMATE_TORR = 3.0e-3          # 이 장비가 도달할 수 있는 최저 압력
 PUMP_TAU_S = 8.0
 VENT_TAU_S = 5.0
+LEAK_TORR_PER_S = 2.0e-5        # 막혀 있을 때 새는 속도(실제 시간) — 1.2 mTorr/min
+LEAK_FAULT_X = 100.0            # 고장 'chamber_leak' 이면 이만큼 곱한다(120 mTorr/min)
 ATM_INPUT_TORR = 700.0          # 이 압력을 넘으면 '챔버 대기압' 입력이 1
 HEATER_TAU_S = 25.0
 MFC_TAU_S = 1.0
@@ -77,7 +79,8 @@ FAULTS = [
     {"key": "tc1_comm",  "name": "온도조절기 국번1 통신 끊김"},
     {"key": "tc2_comm",  "name": "온도조절기 국번2 통신 끊김"},
     {"key": "tc3_comm",  "name": "온도조절기 국번3 통신 끊김"},
-    {"key": "pc_hb_stop", "name": "PC 하트비트 멈춤 (시험)"},
+    {"key": "pc_hb_stop", "name": "PC 하트비트 멈춤 (시험 — 공정 중이면 끝까지, 공정 뒤 트립이 남으면 안전 정지)"},
+    {"key": "chamber_leak", "name": "챔버 누설 (막혀 있을 때 새는 속도 × 100)"},
     {"key": "plc_stop",  "name": "PLC STOP (시험 — 스캔 · PLC 하트비트 멈춤)"},
     {"key": "ive_stuck", "name": "IV-E 리미트 입력 안 따라옴 (5 s 뒤 알람1 b0)"},
     {"key": "pump_nofb", "name": "펌프 운전 피드백 없음 (10 s 뒤 알람0 b5)"},
@@ -162,6 +165,7 @@ class PlcSim:
         self._clock = clock or time.monotonic       # 시험은 가짜 시계를 넣는다
         self.speed = max(1.0, float(speed or 1.0))
         self.atm_input_torr = ATM_INPUT_TORR    # 대기압 입력이 켜지는 압력(가짜 PLC 는 인스턴스마다 바꾼다)
+        self.leak_torr_per_s = LEAK_TORR_PER_S  # 막혀 있을 때 새는 속도(가짜 PLC 는 fake_plant.json 에서)
         self.device_id = DEV.DEVICE_ID      # D00019 — 시험에서 다른 장비·0 을 흉내 낼 때 바꾼다
         self.conv = Converters(cfg)
         self.reg = _Regs([0] * REG_COUNT)
@@ -289,6 +293,10 @@ class PlcSim:
             raise IndexError
         for i, v in enumerate(values):
             self.reg.pc_set(addr + i, int(v) & 0xFFFF)
+
+    def leak_rate(self) -> float:
+        """막혀 있을 때 새는 속도 Torr/s(실제 시간). 고장 'chamber_leak' 이면 LEAK_FAULT_X 배."""
+        return self.leak_torr_per_s * (LEAK_FAULT_X if self.faults.get("chamber_leak") else 1.0)
 
     def set_fault(self, key: str, on: bool):
         if key in self.faults:
@@ -928,6 +936,10 @@ class PlcSim:
             self.base_pressure += (ATM_TORR - self.base_pressure) * (1 - pow(2.718281828, -sdt / VENT_TAU_S))
         elif pump_run and ive_open:
             self.base_pressure += (ULTIMATE_TORR - self.base_pressure) * (1 - pow(2.718281828, -sdt / PUMP_TAU_S))
+        else:
+            # ★ v0.7.0(A3): 막혀 있으면(IV-E 닫힘 · VV 닫힘) 조금씩 샌다 — 실제 시간(배속과 상관없이). 누설률 점검이
+            #   배속을 올려도 같은 mTorr/min 을 잰다
+            self.base_pressure += self.leak_rate() * (sdt / self.speed)
         self.base_pressure = max(1.0e-4, min(ATM_TORR, self.base_pressure))
         # 흐르는 가스가 있으면 공정 압력이 베이스보다 조금 높게 유지된다
         flow_slm = sum(self.mfc_pv[:DEV.MFC_COUNT]) / 1000.0
@@ -1264,14 +1276,17 @@ class PlcSim:
 
     # ---------- 인터락 ----------
     def _interlocks(self, now=None):
-        """P30. 안전 정지 요구(행 5~9) = 비상정지 입력 꺼짐 OR PC 통신 트립 OR (알람0 & 0xD27F) ≠ 0
-        OR 알람1 ≠ 0 — 비상정지를 누른 채 리셋해도 6 이 유지된다."""
+        """P30. 안전 정지 요구(행 5~9) = 비상정지 입력 꺼짐 OR (PC 통신 트립 AND NOT SEQ_RUN)
+        OR (알람0 & 0xD23F) ≠ 0 OR 알람1 ≠ 0 — 비상정지를 누른 채 리셋해도 6 이 유지된다.
+        ★ v0.7.0(P): PC 가 끊겨도 시퀀서 동작 중(블록 준비 · 실행 · 일시정지 · 사이클 후 정지 예약)에는 세우지 않는다 —
+          PLC 가 받은 레시피를 끝까지 돌린다. 트립은 래치로 남아(알람0 b6 경고) 공정이 끝난 뒤에도 서 있으면 그 스캔부터
+          안전 정지. SEQ_RUN 은 이 스캔 P40 앞의 값(공정이 끝난 스캔의 다음 스캔부터 세운다)."""
         now = self._clock() if now is None else now
         i0 = self.reg[A.D_INPUT0]
         i1 = self.reg[A.D_INPUT1]
         b = lambda w, n: bool((w >> n) & 1)  # noqa: E731
         w = 0
-        self.safe_stop = (not b(i0, A.IN0_EMO)) or self.pc_trip or self._critical()
+        self.safe_stop = (not b(i0, A.IN0_EMO)) or (self.pc_trip and not self.running) or self._critical()
         # 공압 · N2: 정상 입력이 꺼진 상태가 1 s 이어져야(100 ms 타이머 10) 빠진다 — 짧은 떨림은 무시
         self.air_bad = self.t_air.run(not b(i0, A.IN0_AIR), 1.0, now)
         self.n2_bad = self.t_n2.run(not b(i0, A.IN0_N2), 1.0, now)

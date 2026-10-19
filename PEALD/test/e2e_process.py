@@ -12,7 +12,7 @@ IV-E 출력과 리미트 · 대기압 입력 · 벤트 요청 · 인터락 워�
     python test/e2e_process.py startup recipe        (이름으로 골라서)
     python test/e2e_process.py faults --speed 20 --keep
     python test/e2e_process.py --list
-시나리오: startup · pumpdown · recipe · control · faults · comm · device_id · manual · long · dual
+시나리오: startup · pumpdown · recipe · control · faults · comm · device_id · manual · pcloss · maint · long · dual
 
 ★ 래더 타이머 · 스텝 시간은 실제 시간이다(--speed 는 펌핑 · 벤트 · 승온 · O3 만 빠르게 — 펄스 감쇠 · PCV · MFC ·
   RF 램프 같은 빠른 기기 반응도 실제 시간).
@@ -39,7 +39,8 @@ _pkg.utf8_console()
 A = _pkg.mod("addresses")
 DEV = _pkg.mod("device")
 
-SCENARIOS = ["startup", "pumpdown", "recipe", "control", "faults", "comm", "device_id", "manual", "long", "dual"]
+SCENARIOS = ["startup", "pumpdown", "recipe", "control", "faults", "comm", "device_id", "manual", "pcloss", "maint",
+             "long", "dual"]
 PY = sys.executable
 OTHER = {"peald": "POWDERALD", "powderald": "PEALD"}[_pkg.PKG]
 
@@ -192,9 +193,16 @@ class Harness:
         # ★ v0.6.2(D4): 블록 준비 중 MFC 막힘이 'MFC Fault' 로 끝나기까지 기다릴 수 있게 짧게(예시 설정 60 s)
         cfg["params"]["mfc_timeout_s"] = MFC_TIMEOUT_S
         cfg.setdefault("process", {})["base_stable_s"] = 1
+        # ★ v0.7.0(A3): 누설률 점검은 실제 시간 — 시험에서는 짧게(안정 2 s · 측정 20 s)
+        cfg["leakcheck"] = {"settle_s": 2, "measure_s": 20, "limit_mtorr_min": 10, "max_torr": 1.0}
         with open(self.cfg_path, "w", encoding="utf-8") as f:
             json.dump(cfg, f, ensure_ascii=False, indent=2)
         return cfg
+
+    def save_config(self):
+        """self.cfg 를 임시 설정 파일에 다시 쓴다(다음 start_app 부터 — maint 의 압력 상한 시험)."""
+        with open(self.cfg_path, "w", encoding="utf-8") as f:
+            json.dump(self.cfg, f, ensure_ascii=False, indent=2)
 
     # ---------- 가짜 PLC ----------
     def start_plc(self, state="atm", device_id=""):
@@ -619,8 +627,8 @@ class Run:
             self.saved.add(name)
         return ok
 
-    async def run_recipe(self, name, rec, label="", wait_end=True, end_timeout=None):
-        """저장 → 올리기 → 시작 → (끝까지). (시작됐나, 끝 결과)"""
+    async def run_recipe(self, name, rec, label="", wait_end=True, end_timeout=None, info=None):
+        """저장 → 올리기 → 시작 → (끝까지). (시작됐나, 끝 결과). info: 실행 정보(작업자 · 시료 · 메모 — v0.7.0 A2)"""
         m = await self.op.reply("recipe_check", "recipe_validate", recipe=rec)
         chk = (m or {}).get("check") or {}
         if chk.get("errors"):
@@ -633,7 +641,7 @@ class Run:
         await self.op.send("recipe_upload", name=name)
         await self.op.wait(lambda: (self.op.snap.get("plc_recipe") or {}).get("plc_ok"), 10)
         t0 = time.monotonic()
-        await self.op.send("process_start", name=name)
+        await self.op.send("process_start", name=name, **(info or {}))
         started = await self.op.wait(lambda: self.op.proc.get("running"), self.t(400, 40))
         if not started:
             why = [n[2] for n in self.op.notices_since(t0)][-3:]
@@ -889,7 +897,7 @@ class Run:
         for secs, survive in ((1.2, True), (2.0, True), (3.6, False)):
             await self.ready()
             name = "E2E Comm"
-            rec = long_recipe(name, 60 if survive else 400, 100)
+            rec = long_recipe(name, 60, 100)
             started, _ = await self.run_recipe(name, rec, wait_end=False)
             if not started:
                 continue
@@ -901,11 +909,14 @@ class Run:
                 res = op.proc.get("last_result") or ""
                 self.check(f"블랙홀 {secs} s → 공정 계속 · 정상 종료", ok and res.startswith("정상 종료"), "정상 종료", res)
             else:
-                ok = await op.wait(lambda: not op.proc.get("running") and op.proc.get("last_result"), 20)
+                # ★ v0.7.0(P): PC 끊김 트립(알람0 b6)은 경고 — 공정은 끝까지 가고, 트립이 남아 있으면 끝난 뒤 안전 정지
+                ok = await op.wait(lambda: not op.proc.get("running") and op.proc.get("last_result"), 120)
                 res = op.proc.get("last_result") or ""
                 names = " · ".join(a["name"] for a in op.live.get("alarms") or [])
-                self.check(f"블랙홀 {secs} s → PC 통신 끊김 트립", ok and "안전 정지" in res, "중단 (안전 정지 — …)",
-                           f"{res} / 알람 {names}")
+                b6 = any(a.get("code") == "A0-06" and not a.get("crit") for a in op.live.get("alarms") or [])
+                self.check(f"블랙홀 {secs} s → PC 끊김 트립(경고) · 공정 계속 · 끝난 뒤 안전 정지",
+                           ok and b6 and res.startswith("정상 종료 (끝난 뒤 안전 정지: PC Link Lost"),
+                           "알람 b6 경고 · '정상 종료 (끝난 뒤 안전 정지: PC Link Lost …)'", f"{res} / 알람 {names}")
         # 통신이 끊긴 사이 보낸 명령(C12) — ★ v0.6.2(D6): 끊김을 '다음 명령 번호(D01001) 쓰기' 에서 시작한다. 전에는 끊은 뒤
         # 0.05 s 에 보내 앞 요청이 시간 초과로 끊겨 '연결되어 있지 않습니다' 로만 끝났다(PLC 받음 늘 0 — 결과 모름 길을 못 봄).
         #   블랙홀: PLC 는 명령을 받고(1 번) 답만 없다 → '받았을 수 있습니다' 알림 · 다시 보내지 않음
@@ -965,6 +976,224 @@ class Run:
             ok = await op.wait(lambda: not op.proc.get("running") and op.proc.get("last_result"), 120)
             self.check("이어받은 공정 끝 결과", ok and (op.proc.get("last_result") or "").startswith("정상 종료"),
                        "정상 종료", f"{op.proc.get('last_result')} · {self._hb_gaps(n0)}")
+
+    # ---------- v0.7.0(P) PC 끊김 정책 — 공정 계속 · 끝난 뒤 안전 정지 ----------
+    def _meta(self, name) -> dict:
+        try:
+            with open(os.path.join(self.h.tmp, "app", "data", "datalog", name + ".recipe.json"), encoding="utf-8") as f:
+                return json.load(f)
+        except (OSError, ValueError):
+            return {}
+
+    def _csv_states(self, name) -> list:
+        try:
+            with open(os.path.join(self.h.tmp, "app", "data", "datalog", name + ".csv"), encoding="utf-8-sig") as f:
+                return [r.split(",")[2] for r in f.read().splitlines()[1:] if r.count(",") >= 2]
+        except OSError:
+            return []
+
+    def _trip(self) -> bool:
+        return bool((self.op.live.get("plc") or {}).get("pc_trip"))
+
+    async def pcloss(self):
+        op = self.op
+        # (1) 공정 중 블랙홀 4 s → 다시 붙은 뒤 Alarm Reset → 정상 종료 · 끝난 뒤 안전 정지 없음 · 데이터 로그 한 파일
+        await self.ready()
+        name = "E2E PC Loss"
+        before = self.datalog_names()
+        started, _ = await self.run_recipe(name, long_recipe(name, 60, 100), wait_end=False)
+        if started:
+            await asyncio.sleep(2)
+            t0 = time.monotonic()
+            self.h.ctl({"op": "cut", "mode": "blackhole", "s": 4.0})
+            await asyncio.sleep(4.5)
+            back = await self.plc_ready(15)
+            run = op.proc.get("running")
+            self.check("공정 중 블랙홀 4 s → 다시 붙음 · 공정 계속 · PC 끊김 트립(경고)", back and run and self._trip(),
+                       "링크 회복 · 공정 중 · pc_trip", f"회복 {back} · 공정 {run} · pc_trip {self._trip()}")
+            await op.wait(lambda: any("PC 연결이 돌아왔습니다" in n[2] for n in op.notices_since(t0)), 3)
+            toast = [n for n in op.notices_since(t0) if "PC 연결이 돌아왔습니다" in n[2]]
+            self.check("다시 붙은 순간 알림 'PC 연결이 돌아왔습니다'", len(toast) == 1, "토스트 한 번",
+                       toast[-1][2] if toast else "(없음)")
+            await op.send("alarm_reset")
+            await op.wait(lambda: not self._trip(), 5)
+            ok = await op.wait(lambda: not op.proc.get("running") and op.proc.get("last_result"), 120)
+            res = op.proc.get("last_result") or ""
+            await asyncio.sleep(1.0)
+            st = self.state_code()
+            self.check("리셋 뒤 끝 → 정상 종료 · 끝난 뒤 안전 정지 없음", ok and res == "정상 종료" and st != A.STATE_SAFE_STOP,
+                       "'정상 종료' · 장비 상태 안전 정지 아님", f"{res} · 상태 {st}")
+            dl = await self.new_datalog(before)
+            new = [n for n in self.datalog_names() if n not in before]
+            self.check("끊김 동안도 데이터 로그 한 파일", len(new) == 1 and "PLC Lost" in self._csv_states(new[0]),
+                       "새 파일 1 개 · 'PLC Lost' 줄", f"{len(new)} 개 · {(dl or {}).get('result')}")
+        # (2) 일시정지 중 블랙홀 4 s → 일시정지 유지 → 리셋 · 재개 → 정상 종료
+        await self.ready()
+        started, _ = await self.run_recipe(name, long_recipe(name, 60, 100), wait_end=False)
+        if started:
+            await asyncio.sleep(1.5)
+            await op.send("process_pause")
+            paused = await op.wait(lambda: self.state_code() == A.STATE_PAUSE, 10)
+            self.h.ctl({"op": "cut", "mode": "blackhole", "s": 4.0})
+            await asyncio.sleep(4.5)
+            back = await self.plc_ready(15)
+            await asyncio.sleep(0.5)
+            still = self.state_code() == A.STATE_PAUSE
+            self.check("일시정지 중 블랙홀 4 s → 일시정지 유지 · 트립 경고", paused and back and still and self._trip(),
+                       "일시정지 · pc_trip", f"일시정지 {paused}/{still} · 회복 {back} · pc_trip {self._trip()}")
+            await op.send("alarm_reset")
+            await op.wait(lambda: not self._trip(), 5)
+            await op.send("process_resume")
+            ok = await op.wait(lambda: not op.proc.get("running") and op.proc.get("last_result"), 120)
+            res = op.proc.get("last_result") or ""
+            self.check("리셋 · 재개 → 정상 종료", ok and res == "정상 종료", "'정상 종료'", res)
+        # (3) 프로그램을 끈 채 공정이 끝남 → 다시 켜면 메타 결과 'PC 꺼진 동안 끝남' · 안전 정지 · 남은 트립 알림 → 리셋
+        await self.ready()
+        name = "E2E PC Off"
+        before = self.datalog_names()
+        started, _ = await self.run_recipe(name, long_recipe(name, 25, 100), wait_end=False)
+        if started:
+            await asyncio.sleep(2)
+            await op.close()
+            self.h.stop_app()
+            st = {}
+            end_ok = False
+            for _ in range(120):
+                st = self.h.ctl({"op": "status"}, quiet=True) or {}
+                if st.get("seq") in (6, 8) and st.get("state") == A.STATE_SAFE_STOP:
+                    end_ok = True
+                    break
+                await asyncio.sleep(0.5)
+            self.check("프로그램을 끈 동안 공정이 끝남 → PLC 안전 정지(트립 남음)", end_ok, "시퀀서 6/8 · 장비 상태 6",
+                       f"시퀀서 {st.get('seq')} · 상태 {st.get('state_name')}")
+            self.h.start_app()
+            await op.connect()
+            items = []
+
+            def judged():
+                items[:] = [i for i in (self.h.get("/api/datalog/list").get("items") or []) if i.get("name") not in before]
+                return any("PC 꺼진 동안 끝남" in (i.get("result") or "") for i in items)
+            ok = await op.wait(judged, 20, step=0.5)
+            res = items[0].get("result") if items else ""
+            meta = self._meta(items[0]["name"]) if items else {}
+            self.check("다시 켜면 메타 결과 'PC 꺼진 동안 끝남'", ok and meta.get("ended") == "모름"
+                       and bool(meta.get("judged_at")) and str(res).startswith("정상 종료"),
+                       "'정상 종료 … · PC 꺼진 동안 끝남(…)' · ended 모름 · judged_at", f"{res} · ended {meta.get('ended')}")
+            await self.plc_ready(15)
+            notes = [n[1] for n in op.live.get("pc_notices") or []]
+            st = self.state_code()
+            self.check("안전 정지 상태 · 남은 트립 알림", st == A.STATE_SAFE_STOP and any("PC 끊김 트립" in n for n in notes),
+                       "장비 상태 6 · 'PC 끊김 트립이 남아 …' 알림", f"상태 {st} · 알림 {notes[:1]}")
+            await op.send("alarm_reset")
+            ok = await op.wait(lambda: self.state_code() == A.STATE_IDLE and not self._trip(), 10)
+            self.check("Alarm Reset → 대기", ok, "장비 상태 1(대기)", (op.live.get("state") or {}).get("name"))
+        # (4) 공정 중 프로그램 재시작 → 이어받기 → 같은 데이터 로그 파일 · 끝 결과가 그 메타에
+        await self.ready()
+        name = "E2E Resume"
+        before = self.datalog_names()
+        started, _ = await self.run_recipe(name, long_recipe(name, 60, 100), wait_end=False)
+        if started:
+            await asyncio.sleep(3)
+            await op.close()
+            self.h.stop_app()
+            self.h.start_app()
+            await op.connect()
+            ok = await op.wait(lambda: op.proc.get("running") and op.proc.get("adopted"), 20)
+            self.check("공정 중 프로그램 재시작 → 이어받기", ok, "공정 중 · 이어받음", op.proc.get("recipe"))
+            await op.send("alarm_reset")                # 재시작 공백으로 트립이 섰으면 운전자처럼 푼다
+            ok = await op.wait(lambda: not op.proc.get("running") and op.proc.get("last_result"), 120)
+            res = op.proc.get("last_result") or ""
+            await self.new_datalog(before)
+            new = [n for n in self.datalog_names() if n not in before]
+            meta = self._meta(new[0]) if len(new) == 1 else {}
+            self.check("같은 데이터 로그 파일에 이어 씀 · 끝 결과가 그 메타에",
+                       ok and len(new) == 1 and RESTART_ROW in self._csv_states(new[0]) and bool(meta.get("resumed"))
+                       and str(meta.get("result") or "").startswith("정상 종료"),
+                       "새 파일 1 개 · 'PC Restart' 줄 · resumed · 메타 결과 정상 종료",
+                       f"{len(new)} 개 · 메타 {meta.get('result')} · resumed {len(meta.get('resumed') or [])} · {res}")
+
+    # ---------- v0.7.0(A) 운영 기능 — 누설률 점검 · 정비 카운터 · 압력 상한 · 실행 정보 ----------
+    async def _leak(self, label, want, cancel=False):
+        op = self.op
+        t0 = time.monotonic()
+        await op.send("leak_check")
+        got = await op.wait(lambda: (op.live.get("leakcheck") or {}).get("running"), 5)
+        if cancel:
+            await op.wait(lambda: (op.live.get("leakcheck") or {}).get("phase") in ("settle", "measure"), 15)
+            await op.send("leak_cancel")
+        await op.wait(lambda: not (op.live.get("leakcheck") or {}).get("running"), 60)
+        rec = ((op.live.get("leakcheck") or {}).get("recent") or [{}])[0]
+        opened = await op.wait(lambda: op.aux_on("IV-E") and bool(((op.live.get("inputs0") or 0) >> A.IN0_IVE_OPEN) & 1),
+                               20)
+        why = [n[2] for n in op.notices_since(t0) if "누설률" in n[2]][-1:]
+        self.check(label, got and rec.get("Result") == want and opened, f"{want} · 끝난 뒤 IV-E 열림",
+                   f"{rec.get('Result')} {rec.get('mTorr/min')} mTorr/min · IV-E 열림 {opened} · {why}")
+        return rec
+
+    async def maint(self):
+        op = self.op
+        await self.ready()
+        if DEV.HAS_O3:
+            # 누설률 점검은 O3 라인이 켜져 있으면 거절한다(명령 11 이 수동 보조 출력을 끈다) — 끄고 바이패스까지 닫힘
+            await self.o3_line(False)
+            await op.wait(lambda: not any(op.aux_on(t) for t in ("O3GEN", "IV-B", "BPMP")), 40)
+        await self._leak("누설률 점검 PASS(새는 속도 1.2 mTorr/min · 한계 10)", "PASS")
+        self.h.ctl({"op": "fault", "key": "chamber_leak", "on": True})
+        await self._leak("누설률 점검 FAIL(chamber_leak — × 100)", "FAIL")
+        self.h.ctl({"op": "fault", "key": "chamber_leak", "on": False})
+        await self.pumped("누설 점검 뒤 베이스 압력")
+        await self._leak("누설률 점검 취소 → CANCEL · IV-E 다시 열림", "CANCEL", cancel=True)
+        # 정비 카운터 = 셈 함수 값 · 시작 정보가 메타에
+        await self.ready()
+        rec = recipes(2)
+        name = [k for k in sorted(rec) if "Group" not in k and "Plasma" not in k][0]     # TMA-H2O / TMA-O3
+        rows0 = {r["key"]: r["value"] for r in op.live.get("maintenance") or []}
+        before = self.datalog_names()
+        info = {"operator": "E2E 작업자", "sample": "Si\t(100)", "memo": "e2e 메모"}
+        started, res = await self.run_recipe(name, rec[name], info=info)
+        if started:
+            await op.wait(lambda: {r["key"]: r["value"] for r in op.live.get("maintenance") or []} != rows0, 10)
+            rows1 = {r["key"]: r["value"] for r in op.live.get("maintenance") or []}
+            want = R_usage(self.h.cfg, rec[name])
+            got = {k.split(":", 1)[1]: rows1.get(k, 0) - rows0.get(k, 0) for k in rows1 if k.startswith("valve:")}
+            got = {k: v for k, v in got.items() if v}
+            self.check("짧은 레시피 뒤 정비 카운터 = 셈 함수(recipe.valve_usage)", res.startswith("정상 종료") and got == want,
+                       want, got)
+            await self.new_datalog(before)
+            new = [n for n in self.datalog_names() if n not in before]
+            meta = self._meta(new[0]) if new else {}
+            ok = (meta.get("operator") == "E2E 작업자" and meta.get("sample") == "Si (100)" and meta.get("memo") == "e2e 메모"
+                  and bool(meta.get("app_version")) and (meta.get("device") or {}).get("key") == DEV.KEY
+                  and isinstance(meta.get("heater_sv"), dict) and bool(meta.get("prm")))
+            self.check("시작 정보가 메타에(작업자 · 시료 · 메모 · 버전 · 장비 · 히터 · PRM)", ok,
+                       "operator · sample(탭 → 빈칸) · memo · app_version · device · heater_sv · prm",
+                       {k: meta.get(k) for k in ("operator", "sample", "memo", "app_version")})
+        # 공정 중 압력 상한 — 낮춘 설정으로 다시 켜 경고 · 중단 옵션이면 끝 결과 문구
+        await op.close()
+        self.h.stop_app()
+        pr = self.h.cfg.setdefault("process", {})
+        saved = dict(pr)
+        pr.update({"press_high_torr": 0.0005, "press_high_s": 1, "press_high_abort": True})
+        self.h.save_config()
+        self.h.start_app()
+        await op.connect()
+        try:
+            await self.ready()
+            t0 = time.monotonic()
+            nm = "E2E Press High"
+            started, res = await self.run_recipe(nm, long_recipe(nm, 60, 100))
+            warn = [n[2] for n in op.notices_since(t0) if "압력 상한" in n[2]]
+            self.check("공정 중 압력 상한 → 경고 · 즉시 중단(press_high_abort)",
+                       started and bool(warn) and res == "중단 (압력 상한 — PC 가 즉시 중단)",
+                       "'공정 중 압력 상한' 알림 · '중단 (압력 상한 — PC 가 즉시 중단)'", f"{res} · {warn[:1]}")
+        finally:
+            await op.close()
+            self.h.stop_app()
+            pr.clear()
+            pr.update(saved)
+            self.h.save_config()
+            self.h.start_app()
+            await op.connect()
 
     def _hb_gaps(self, n0: int) -> str:
         """가짜 PLC 기록의 PC 하트비트 공백(재시작 동안) — 느린 PC 에서 3 s 를 넘으면 실제 장비처럼 트립한다(C6).
@@ -1084,6 +1313,14 @@ class Run:
         with open(log_path, encoding="utf-8", errors="replace") as f:
             tail = f.read().strip().splitlines()[-6:]
         self.check(f"두 프로그램 동시 실행 — {OTHER} e2e", p.returncode == 0, "종료 코드 0", f"{p.returncode} {' | '.join(tail)}")
+
+
+RESTART_ROW = "PC Restart"          # 이어받아 같은 데이터 로그를 다시 열 때의 표시 줄(datalog.RESTART_STATE)
+
+
+def R_usage(cfg, rec) -> dict:
+    """레시피 전체의 밸브별 열림 횟수(정비 카운터와 같은 셈 — recipe.valve_usage)."""
+    return {t: n for t, (n, _ms) in _pkg.mod("recipe").valve_usage(cfg, rec).items() if n}
 
 
 def R_est(rec) -> float:

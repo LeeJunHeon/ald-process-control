@@ -453,8 +453,9 @@ def test_end_plc_restart_complete_then_safe_stop_and_overlap(cfg):
     # E5: 'PLC 재시작'은 끝 스냅샷이 시퀀서 0 · 블록 0 일 때만 — 멈춤을 본 것만으로는 아니다
     assert r.end_result(_s(4, blk=2)) == "중단 (끝 확인 안 됨)"
     state.alarms.update(1 << A.ALM0_PC_LINK, 0)
-    out = r.end_result(_s(6, st=A.STATE_SAFE_STOP, blk=3))
-    assert out.startswith("정상 종료 (끝난 뒤 안전 정지: ") and "PC" in out, out
+    # v0.7.0(P3): b6 는 경고 — 끝 스냅샷의 b6 로 원인을 적는다('PC Link Lost (트립 남음)')
+    out = r.end_result(_s(6, st=A.STATE_SAFE_STOP, blk=3, a0=1 << A.ALM0_PC_LINK))
+    assert out == "정상 종료 (끝난 뒤 안전 정지: PC Link Lost (트립 남음))", out
     assert r.end_result(_s(6, st=A.STATE_SAFE_STOP, blk=2)).startswith("중단 (안전 정지 — ")
     state.alarms.clear_all()
     assert r.end_result(_s(6, blk=2, cyc=7)) == "정상 종료 (사이클 후 정지와 겹침)"

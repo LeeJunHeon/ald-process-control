@@ -90,6 +90,11 @@ async def handle_command(data: dict, ws=None):
     if code == A.CMD_ABORT and state.runner:
         await _abort(ws)
         return
+    if code in (A.CMD_PUMP_START, A.CMD_PUMP_STOP, A.CMD_VENT, A.CMD_ALL_CLOSE) and _leak().running:
+        # ★ v0.7.0(A3): 누설률 점검 중 운전자가 펌핑 · 벤트 · 전체 닫기를 누르면 점검을 먼저 취소하고 그 명령을 보낸다
+        name = A.CMD_NAMES.get(code, cmd)
+        await _leak().cancel_and_wait(f"운전자 {name}", restore=False)
+        await push_notice(f"누설률 점검을 취소했습니다 — {name} 을(를) 보냅니다", "warn", ws)
     if code in (A.CMD_VENT, A.CMD_PUMP_STOP, A.CMD_ALL_CLOSE) and state.runner:
         # ★ 베이스 압력 대기 중에 벤트 · 펌핑 정지 · 전체 닫기를 보내면 대기를 먼저 취소한다 —
         #   대기가 살아 있으면 나중에 누가 펌핑할 때 운전자 없이 공정이 시작된다
@@ -500,9 +505,13 @@ async def _cmd_plc_recipe_read(d, ws):
 # ===================== 공정 시작 흐름 =====================
 async def _cmd_process_start(d, ws):
     """시작 흐름을 백그라운드로 띄우고 바로 돌아온다 — 같은 연결의 다음 명령(대기 취소 등)이
-    바로 처리돼야 한다. 결과는 흐름이 끝날 때 알린다."""
+    바로 처리돼야 한다. 결과는 흐름이 끝날 때 알린다.
+    ★ v0.7.0(A2): 작업자 · 시료 · 메모(모두 선택)를 받는다 — 서버가 길이 · 제어 문자를 정리한다(process.clean_run_info)."""
     if state.runner.busy:
         await push_notice("이미 시작 절차가 진행 중입니다", "warn", ws)
+        return
+    if _leak().running:
+        await push_notice("누설률 점검 중에는 공정을 시작할 수 없습니다 — 끝나거나 취소한 뒤에", "warn", ws)
         return
     name = d.get("name")
     if name:
@@ -518,9 +527,78 @@ async def _cmd_process_start(d, ws):
         await push_notice(msg, lv, ws)
         await push_state()
 
+    info = {k: d.get(k) for k in ("operator", "sample", "memo")}
+    if hasattr(state.runner, "set_run_info"):
+        state.runner.set_run_info(info)
     ok, msg = state.runner.begin(push_log, push_notice, notify)
+    if ok:
+        _save_last_operator((getattr(state.runner, "run_info", None) or {}).get("operator", ""))
     await push_notice(msg, "info" if ok else "warn", ws)
     await push_state()
+
+
+# ===================== v0.7.0(A2) 마지막 작업자 =====================
+def _operator_path() -> str:
+    import os
+    from . import paths
+    return os.path.join(paths.DATA_DIR, "last_operator.json")
+
+
+def last_operator() -> str:
+    from .storage import read_json
+    import os
+    p = _operator_path()
+    d = read_json(p) if os.path.isfile(p) else None
+    v = d.get("operator") if isinstance(d, dict) else ""
+    return v if isinstance(v, str) else ""
+
+
+def _save_last_operator(name: str):
+    if not name:
+        return
+    try:
+        from .storage import atomic_write_json
+        atomic_write_json(_operator_path(), {"operator": name})
+    except Exception as e:  # noqa: BLE001
+        logger.write("warn", f"마지막 작업자 저장 실패: {e}")
+
+
+# ===================== v0.7.0(A3 · A4) 정비 =====================
+def _leak():
+    from .leakcheck import leak
+    return leak
+
+
+async def _cmd_leak_check(d, ws):
+    """누설률 점검 시작 — 로컬만 · PIN 없음(확인 창은 화면이). 조건이 안 되면 이유와 함께 거절."""
+    if state.runner and state.runner.busy:
+        await push_notice("공정 시작 절차가 진행 중입니다 — 누설률 점검을 시작할 수 없습니다", "warn", ws)
+        return
+    ok, msg = _leak().start(state, push_log, push_notice)
+    await push_notice(msg, "info" if ok else "warn", ws)
+    if not ok:
+        logger.write("warn", msg)
+
+
+async def _cmd_leak_cancel(d, ws):
+    if _leak().cancel("운전자 취소"):
+        await push_notice("누설률 점검을 취소합니다 — IV-E 를 다시 엽니다", "info", ws)
+    else:
+        await push_notice("진행 중인 누설률 점검이 없습니다", "warn", ws)
+
+
+async def _cmd_maint_reset(d, ws):
+    """정비 카운터 하나 리셋 — 관리자 PIN(잠금 해제) · 확인 창. 이벤트 로그에 이전 값."""
+    if not await _need_admin(d, ws):
+        return
+    from .maintenance import maint
+    key = str(d.get("key") or "")
+    before = maint.reset(key)
+    if not before:
+        await push_notice(f"알 수 없는 정비 항목입니다: {logger.clean(key, 40)}", "warn", ws)
+        return
+    await push_log(f"정비 카운터 리셋 — 이전 값: {before}", "warn")
+    await push_notice("정비 카운터를 리셋했습니다", "ok", ws)
 
 
 def _flow_block(name: str = None) -> str:
@@ -561,6 +639,8 @@ async def _cmd_manual_unlock(d, ws):
 def _manual_allowed():
     if _running():
         return False, "공정 중에는 수동 조작을 할 수 없습니다"
+    if _leak().running:
+        return False, "누설률 점검 중에는 수동 밸브를 조작할 수 없습니다"
     if time.monotonic() >= state.manual_unlock_until:
         return False, "수동 조작이 잠겨 있습니다 — 잠금 해제를 먼저 켜세요"
     return True, ""
@@ -613,8 +693,11 @@ async def _cmd_manual_valve(d, ws):
         await push_notice(f"수동으로 다룰 수 없는 밸브입니다: {tag}", "warn", ws)
         return
 
+    was = {}
+
     def mutate(cur):
         bit = 1 << v["bit"]
+        was["open"] = bool(cur["valve"] & bit)
         new = (cur["valve"] | bit) if want else (cur["valve"] & ~bit)
         # ★ 전구체와 반응물을 함께 여는 요청은 PC 가 막는다(PLC 도 둘 다 막고 알람을 낸다).
         pre = any(new & (1 << b) for b in DEV.PRECURSOR_VALVE_BITS)
@@ -626,7 +709,10 @@ async def _cmd_manual_valve(d, ws):
         return cur, ""
 
     state.manual_unlock_until = time.monotonic() + MANUAL_UNLOCK_S   # 조작하면 시간 연장
-    await _manual_send(ws, f"밸브 {tag} {'열기' if want else '닫기'}", mutate)
+    res, box = await _manual_send(ws, f"밸브 {tag} {'열기' if want else '닫기'}", mutate)
+    if want and res == A.RESULT_OK and was.get("open") is False and not (box.get("lost_valve", 0) >> v["bit"]) & 1:
+        from .maintenance import maint
+        maint.manual_open(tag)          # v0.7.0(A4): 수동 밸브 열기(닫힘 → 열림) 1 회
 
 
 async def _cmd_manual_mfc(d, ws):
@@ -1178,6 +1264,9 @@ _HANDLERS = {
     # 공정
     "process_start": _cmd_process_start,
     "process_cancel_wait": _cmd_process_cancel_wait,
+    "leak_check": _cmd_leak_check,
+    "leak_cancel": _cmd_leak_cancel,
+    "maint_reset": _cmd_maint_reset,
     "alarm_history": _cmd_alarm_history,
     # 수동
     "manual_unlock": _cmd_manual_unlock,

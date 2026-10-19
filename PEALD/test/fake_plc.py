@@ -74,6 +74,7 @@ class PlantSim(SIM.PlcSim):
         # 대기압 입력(압력 스위치)이 켜지는 압력 — 장비 물리라 fake_plant.json 에서.
         # ★ v0.6.2(D8): 모듈 값(SIM.ATM_INPUT_TORR)을 바꾸지 않고 이 인스턴스만 — pytest 안에서 만들어도 뒤 시험에 남지 않게
         self.atm_input_torr = float(plant["pressure"].get("atm_input_torr", SIM.ATM_INPUT_TORR))
+        self.leak_torr_per_s = float(plant["pressure"].get("leak_torr_per_s", SIM.LEAK_TORR_PER_S))
 
     # ---------- 시작 상태 ----------
     def set_state(self, spec):
@@ -115,7 +116,9 @@ class PlantSim(SIM.PlcSim):
             lp += (lu - lp) * (1 - _e(-sdt / float(P["pumpdown_tau_s"])))
             bp = 10 ** lp
         else:
-            bp += float(P["leak_torr_per_s"]) * sdt       # 막혀 있으면 조금씩 샌다
+            # 막혀 있으면 조금씩 샌다 — ★ v0.7.0(A3): 실제 시간(rdt). 배속 시간이면 배속 10 에서 누설률 점검이 10 배로
+            #   잰다. 고장 'chamber_leak' 은 × 100(SIM.LEAK_FAULT_X)
+            bp += self.leak_rate() * rdt
         self.base_pressure = bp = max(1.0e-4, min(atm, bp))
 
         # PCV 개도 · 흐름이 만드는 공정 압력

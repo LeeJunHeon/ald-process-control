@@ -173,8 +173,13 @@
     if (chip) {
       // 시퀀서 상태는 장비 상태와 다를 때만 함께 보여 준다(같은 말이 두 번 보이면 읽지 않는다).
       var qn = (t.seq || {}).name || '';
+      // v0.7.0(P7): 남은 PC 끊김 트립 — 작은 표시(자세한 글은 알람 · 로그 탭 Program Notices)
+      var trip = conn && t.plc && t.plc.pc_trip;
       core.html(chip, conn && t.state
-        ? (qn && qn !== t.state.name ? core.chip(qn, 'off') + ' ' : '') +
+        ? (trip ? core.chip('PC Trip', 'warn', 'PC 연결이 끊겼던 기록(PC Link Lost)이 남아 있습니다 — ' +
+            (t.state.code === 6 ? 'PLC 가 안전 정지 상태입니다. ' : '공정이 끝나면 PLC 가 안전 정지합니다. ') +
+            '[Alarm Reset] 으로 풀립니다') + ' ' : '') +
+          (qn && qn !== t.state.name ? core.chip(qn, 'off') + ' ' : '') +
           core.chip(t.state.name, stateLevel(t.state.code))
         : '');
     }
@@ -611,11 +616,41 @@
           (p.checks || []).filter(function (c) { return !c.ok; })
             .map(function (c) { return '· ' + core.esc(c.label) + ' — ' + core.esc(checkDetail(c)); })
             .join('<br>')
-        : ''),
-      T('b.start'), function () { w.app.send('process_start'); });
+        : '') + runInfoForm(),
+      T('b.start'), function () { w.app.send('process_start', runInfo()); });
   }
+
+  /* ---------- v0.7.0(A2) 실행 정보 — 작업자 · 시료 · 메모(모두 선택) ---------- */
+  var RUN_INFO = [['operator', 'Operator', 40], ['sample', 'Sample', 80], ['memo', 'Memo', 200]];
+
+  function runInfoForm() {
+    var last = (core.state || {}).last_operator || '';
+    return '<div class="runinfo">' + RUN_INFO.map(function (f) {
+      return '<label><span>' + f[1] + '</span><input class="inp" data-runinfo="' + f[0] + '" maxlength="' + f[2] + '"' +
+        (f[0] === 'operator' ? ' value="' + core.esc(last) + '"' : '') + ' placeholder="(선택)"></label>';
+    }).join('') + '<div class="hint">Enter 로는 시작하지 않습니다 — [' + core.esc(T('b.start')) + '] 를 누르세요.</div></div>';
+  }
+
+  function runInfo() {
+    var out = {};
+    Array.prototype.forEach.call(d.querySelectorAll('[data-runinfo]'), function (e) {
+      out[e.getAttribute('data-runinfo')] = String(e.value || '').trim();
+    });
+    return out;
+  }
+
+  /** 실행 정보 칸의 Enter 는 막는다(시작 단추로만) — 막았으면 true. */
+  function runInfoKey(ev) {
+    if (ev.key === 'Enter' && ev.target && ev.target.closest && ev.target.closest('[data-runinfo]')) {
+      ev.preventDefault();
+      ev.stopPropagation();
+      return true;
+    }
+    return false;
+  }
+  if (d && d.addEventListener) d.addEventListener('keydown', runInfoKey, true);
 
   core.register('main', { render: render, update: update });
   // confirmFor — 배관도 조작 창(faceplate)이 펌핑 · 벤트에 같은 확인 창을 쓴다
-  w.viewMain = { render: render, update: update, confirmFor: confirmFor };
+  w.viewMain = { render: render, update: update, confirmFor: confirmFor, runInfoKey: runInfoKey };
 })(window, document);

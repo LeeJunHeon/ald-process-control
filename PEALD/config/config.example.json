@@ -95,7 +95,20 @@
   "process": {
     "base_wait_timeout_s": 1800,
     "base_stable_s": 3,
-    "heater_ready": { "enabled": false, "band_c": 2.0, "stable_s": 60 }
+    "heater_ready": { "enabled": false, "band_c": 2.0, "stable_s": 60 },
+    "_pc_watch": "공정 중 압력 상한 · 히터 이탈 경고 — PC 감시(프로그램이 꺼져 있으면 동작하지 않는다). 0 = 끔",
+    "press_high_torr": 10, "press_high_s": 5, "press_high_abort": false,
+    "heater_dev_c": 15, "heater_dev_s": 120
+  },
+
+  "leakcheck": {
+    "_note": "누설률(압력 상승률) 점검 — 설정 탭 Maintenance 의 [Leak Check]. 안정 s · 측정 s · 한계 mTorr/min · 이 압력을 넘으면 멈춤(큰 누설)",
+    "settle_s": 10, "measure_s": 120, "limit_mtorr_min": 10, "max_torr": 1.0
+  },
+
+  "maintenance": {
+    "_note": "정비 카운터 한계 — 넘으면 Program Notices 에 '정비 한계'. 0 = 끔",
+    "valve_opens_warn": 0, "pump_hours_warn": 0, "rf_hours_warn": 0
   },
 
   "log": { "level": "info", "keep_days": 90, "datalog_interval_s": 1, "datalog_keep_days": 180 },

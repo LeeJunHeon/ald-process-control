@@ -66,11 +66,13 @@ class DataLog:
         return self.fp is not None
 
     # ===================== 시작 · 끝 =====================
-    def start(self, recipe_name: str, recipe: dict, table: dict, total_ms: int):
+    def start(self, recipe_name: str, recipe: dict, table: dict, total_ms: int, adopted: bool = False):
         if self.fp:
             self.close()
         self.error = ""
         self._down_since = 0.0
+        if adopted and self._resume(table):
+            return
         try:
             os.makedirs(paths.DATALOG_DIR, exist_ok=True)
             safe = _safe(recipe_name) or "recipe"
@@ -88,10 +90,13 @@ class DataLog:
             self._rows = 0
             self.end_result = ""
             self.meta_path = os.path.join(paths.DATALOG_DIR, self.name + ".recipe.json")
-            self.meta = {"recipe": recipe, "number": (table or {}).get("number"),
-                         "checksum": (table or {}).get("checksum"),
+            num, chk = table_id(table)
+            self.meta = {"recipe": recipe, "number": num, "checksum": chk,
                          "estimated_ms": total_ms,
                          "started": time.strftime("%Y-%m-%d %H:%M:%S")}
+            self.meta.update(run_meta(self.state))        # v0.7.0(A2): 실행 정보 · 장비 · 히터 설정 · PRM
+            if adopted:
+                self.meta["adopted"] = True                 # 이어받았는데 같은 파일 조건이 안 맞음 — 새 파일
             storage.atomic_write_json(self.meta_path, self.meta)
             logview.set_writing(self.name)
             logger.write("info", f"데이터 로그 시작: {os.path.basename(self.path)}")
@@ -101,6 +106,62 @@ class DataLog:
             logger.write("err", self.error)
             self.fp = None
             self.writer = None
+
+    def _resume(self, table) -> bool:
+        """v0.7.0(P5) — 이어받기 → 같은 파일. 가장 최근 메타가 끝 판정이 없고 번호 · 합계가 되읽은 PLC 표와 같고 CSV
+        머리줄이 지금 머리줄과 같으면 그 CSV 를 덧붙이기로 다시 연다 — 표시 줄 하나(State 'PC Restart', 값 칸 비움)를
+        쓰고 이어 쓴다. 메타는 처음 것을 두고 ended · result 를 지운 뒤 'resumed' 에 {at, why} 를 더한다. 열었으면 True."""
+        num, chk = table_id(table)
+        if num is None or chk is None or not (table or {}).get("words"):
+            return False
+        name, meta = latest_meta()
+        if not name or judged(meta) or meta.get("number") != num or meta.get("checksum") != chk:
+            return False
+        path = os.path.join(paths.DATALOG_DIR, name + ".csv")
+        try:
+            with open(path, encoding="utf-8-sig", newline="") as f:
+                head = next(csv.reader(f), [])
+                rows = sum(1 for _ in f)
+        except (OSError, csv.Error, UnicodeDecodeError):
+            return False
+        if head != logger.csv_row(self._header()):
+            logger.write("info", f"이어받기 — 데이터 로그 {name} 의 머리줄이 지금과 달라 새 파일로 씁니다")
+            return False
+        try:
+            self.fp = open(path, "a", encoding="utf-8", newline="")
+            self.writer = csv.writer(self.fp)
+        except OSError as e:
+            logger.write("warn", f"이어받기 — 데이터 로그 {name} 을(를) 다시 열지 못해 새 파일로 씁니다: {e}")
+            self.fp = self.writer = None
+            return False
+        self.name, self.path = name, path
+        self.meta_path = os.path.join(paths.DATALOG_DIR, name + ".recipe.json")
+        meta = {k: v for k, v in meta.items() if k not in ("ended", "result", "rows", "took_s")}
+        meta["resumed"] = list(meta.get("resumed") or []) + [
+            {"at": time.strftime("%Y-%m-%d %H:%M:%S"), "why": "프로그램을 다시 켜 이어받음(PLC 공정 계속)"}]
+        self.meta = meta
+        # 경과 s 는 처음 시작 시각부터 이어 간다(메타의 started)
+        try:
+            t0 = time.mktime(time.strptime(meta.get("started") or "", "%Y-%m-%d %H:%M:%S"))
+            self.started = time.monotonic() - max(0.0, time.time() - t0)
+        except (TypeError, ValueError, OverflowError):
+            self.started = time.monotonic()
+        self.stop_at = 0.0
+        self._next = 0.0
+        self._rows = rows
+        self.end_result = ""
+        try:
+            n = len(self._header())
+            row = [time.strftime("%Y-%m-%d %H:%M:%S"), f"{time.monotonic() - self.started:.1f}", RESTART_STATE]
+            self.writer.writerow(logger.csv_row(row + [""] * (n - len(row))))
+            self.fp.flush()
+            self._rows += 1
+            storage.atomic_write_json(self.meta_path, self.meta)
+        except Exception as e:  # noqa: BLE001
+            logger.write("warn", f"이어받기 — 표시 줄 · 메타 쓰기 실패(계속 기록): {e}")
+        logview.set_writing(self.name)
+        logger.write("info", f"데이터 로그 이어 쓰기(이어받기): {os.path.basename(self.path)}")
+        return True
 
     def follow(self, running: bool, start_fn, result_fn=None):
         """공정 상태를 따라 파일을 연다·닫는다.
@@ -172,21 +233,30 @@ class DataLog:
         if self.stop_at and now - self.stop_at > TAIL_S:
             self.close()
             return
-        # ★ PLC 가 끊겨도 같은 파일에 이어 쓴다(값 칸은 비우고 상태 칸 'PLC 끊김'). 30 분을 넘으면 닫는다
+        # ★ PLC 가 끊겨도 같은 파일에 이어 쓴다(값 칸은 비우고 상태 칸 'PLC 끊김').
+        # ★ v0.7.0(P4): 공정 구간(active_run) 동안은 끊김 · 멈춤이 길어도 닫지 않는다 — PLC 는 받은 레시피를 끝까지
+        #   돌린다. 30 분을 넘으면 'PLC Lost' · 'PLC Stalled' 줄을 60 s 에 한 줄로 줄이고, 다시 붙으면 같은 파일에 이어
+        #   쓴다. 공정 구간이 아닌(끝난 뒤 꼬리) 파일만 30 분에 닫는다
         link = self.state.link
+        thin = False
         if link and link.connected and not getattr(link, "plc_hb_stalled", False):
+            if self._down_since and now - self._down_since > DOWN_CLOSE_S:
+                self._next = 0.0                # 줄인 간격(60 s)을 기다리지 않고 다시 붙은 값을 바로 쓴다
             self._down_since = 0.0
         else:
             self._down_since = self._down_since or now
             if now - self._down_since > DOWN_CLOSE_S:
-                self.end_result = "기록 중단(PLC 끊김)" if not (link and link.connected) else "기록 중단(PLC 멈춤)"
-                logger.write("warn", f"데이터 로그를 닫습니다 — PLC 끊김 · 멈춤이 {DOWN_CLOSE_S / 60:.0f} 분을 "
-                                     "넘었습니다")
-                self.close()
-                return
+                runner = self.state.runner
+                if not (runner and runner.active_run):
+                    self.end_result = "기록 중단(PLC 끊김)" if not (link and link.connected) else "기록 중단(PLC 멈춤)"
+                    logger.write("warn", f"데이터 로그를 닫습니다 — PLC 끊김 · 멈춤이 {DOWN_CLOSE_S / 60:.0f} 분을 "
+                                         "넘었습니다")
+                    self.close()
+                    return
+                thin = True
         if now < self._next:
             return
-        self._next = now + max(0.2, float(interval_s or 1))
+        self._next = now + (DOWN_THIN_S if thin else max(0.2, float(interval_s or 1)))
         try:
             self.writer.writerow(logger.csv_row(self._row(now)))
             self.fp.flush()
@@ -283,7 +353,71 @@ class DataLog:
         return row
 
 
-DOWN_CLOSE_S = 1800.0           # PLC 끊김이 이만큼 이어지면 데이터 로그를 닫는다
+DOWN_CLOSE_S = 1800.0           # PLC 끊김이 이만큼 이어지면 — 공정 구간이 아니면 닫고, 공정 구간이면 줄을 줄인다
+DOWN_THIN_S = 60.0              # 그때 'PLC Lost' · 'PLC Stalled' 줄 간격(v0.7.0 P4)
+RESTART_STATE = "PC Restart"    # 이어받아 같은 파일을 다시 열 때 쓰는 표시 줄의 State 칸(v0.7.0 P5)
+
+
+def table_id(table):
+    """(레시피 번호, 합계) — 되읽은 PLC 표(words)가 있으면 그 표에서, 없으면 표 머리 값."""
+    t = table or {}
+    if t.get("words"):
+        try:
+            from . import recipe as R
+            info = R.from_plc_words(t["words"])
+            return info["number"], info["checksum"]
+        except Exception:  # noqa: BLE001
+            pass
+    return t.get("number"), t.get("checksum")
+
+
+def judged(meta) -> bool:
+    """메타에 끝 판정이 있나 — 'ended' 가 있고 result 가 '기록 중단(' 으로 시작하지 않으면."""
+    if not isinstance(meta, dict) or not meta.get("ended"):
+        return False
+    return not str(meta.get("result") or "").startswith("기록 중단(")
+
+
+def latest_meta():
+    """가장 최근(이름 순 마지막) 데이터 로그의 (이름, 메타). 없으면 (None, None)."""
+    try:
+        names = sorted(os.path.basename(p)[:-len(".recipe.json")]
+                       for p in glob.glob(os.path.join(paths.DATALOG_DIR, "*.recipe.json")))
+    except OSError:
+        return None, None
+    for name in reversed(names):
+        meta = storage.read_json(os.path.join(paths.DATALOG_DIR, name + ".recipe.json"))
+        if isinstance(meta, dict):
+            return name, meta
+        return None, None
+    return None, None
+
+
+def run_meta(state) -> dict:
+    """v0.7.0(A2) — 메타에 더하는 실행 정보 · 프로그램 버전 · 장비 · 히터 설정(사용 채널 ℃) · PRM(되읽은 값)."""
+    from . import version
+    from .convert import heater_temp
+    runner, link = state.runner, state.link
+    info = dict(getattr(runner, "run_info", {}) or {}) if runner else {}
+    out = {"operator": info.get("operator", ""), "sample": info.get("sample", ""), "memo": info.get("memo", ""),
+           "app_version": version.APP_VERSION,
+           "device": {"key": DEV.KEY, "name": DEV.NAME,
+                      "id": getattr(link, "device_id", None) if (link and link.connected) else None}}
+    hs = {}
+    for h in state.cfg.get("heaters") or []:
+        if not h.get("enabled"):
+            continue
+        raw = link.cmd_reg(A.D_HEATER_SV + h["ch"] - 1) if (link and hasattr(link, "cmd_reg")) else None
+        hs[f"CH{h['ch']} {h.get('name', '')}"] = heater_temp(raw) if raw is not None else None
+    out["heater_sv"] = hs
+    prm = []
+    try:
+        for r in state.prm_table() if (link and link.connected) else []:
+            prm.append({"name": r.get("name") or r.get("addr"), "value": r.get("eng"), "unit": r.get("unit", "")})
+    except Exception:  # noqa: BLE001
+        pass
+    out["prm"] = prm
+    return out
 
 
 def _safe(name: str) -> str:

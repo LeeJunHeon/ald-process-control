@@ -446,14 +446,27 @@
     }
   }
 
+  /** 글의 첫 문장 — '. ' 또는 ' — ' 앞까지(마침표는 남긴다). */
+  function firstSentence(s) {
+    s = String(s || '');
+    var i = s.indexOf('. ');
+    var j = s.indexOf(' — ');
+    var cut = [i >= 0 ? i + 1 : -1, j].filter(function (x) { return x > 0; });
+    return cut.length ? s.slice(0, Math.min.apply(null, cut)) : s;
+  }
+
   function renderAlarmModal() {
     var t = (lastState || {}).live || {};
     var tbl = bind('amTbl');
     if (!tbl) return;
+    var defs = ((lastState || {}).structure || {}).alarm_defs || {};
     var rows = (t.alarms || []).map(function (a) {
+      // v0.7.0(A1): 이름 아래 작게 '확인: …' 첫 문장(전체는 알람 · 로그 탭에서 행을 눌러)
+      var ck = firstSentence((defs[a.code] || {}).check || '');
       return '<tr><td>' + chip(a.crit ? T('s.critical') : T('s.warning'), a.crit ? 'stop' : 'warn') + '</td>' +
         '<td class="mono">' + esc(a.since) + '</td>' +
-        '<td class="l">' + esc(a.name) + '</td></tr>';
+        '<td class="l">' + esc(a.name) + (ck ? '<div class="am-check">확인: ' + esc(ck) + '</div>' : '') +
+        '</td></tr>';
     }).join('');
     // 서버 · PLC 가 끊겼거나 PLC 가 멈췄으면 알람을 모른다 — '없습니다' 가 아니라 '알 수 없음'
     var known = !t.offline && t.plc && t.plc.connected;

@@ -12,6 +12,12 @@
   'use strict';
 
   var lastSig = null;       // null = 아직 안 그림(빈 알람 목록 '' 과 구분 — 처음 열 때 '—' · 빈 표가 남지 않게)
+  var openCode = {};        // v0.7.0(A1): 원인 · 확인을 펼친 알람 코드
+
+  /** 알람 정의(원인 · 확인) — structure.alarm_defs */
+  function def(code) {
+    return (((core.state || {}).structure || {}).alarm_defs || {})[code] || {};
+  }
 
   function render(s) {
     renderHistory(s);
@@ -56,7 +62,7 @@
     var p = t.plc || {};
     var known = !t.offline && !!p.connected;
     var sig = (known ? 'k' : 'u:' + (t.offline ? 's' : p.stalled ? 'h' : 'p')) + '|' +
-      alarms.map(function (a) { return a.code; }).join('|');
+      alarms.map(function (a) { return a.code + (openCode[a.code] ? '+' : ''); }).join('|');
     if (sig === lastSig) return;
     lastSig = sig;
 
@@ -76,12 +82,19 @@
     }
     var html = '<thead><tr><th>' + T('v.severity') + '</th><th>' + T('v.raised') + '</th><th>' + T('v.code') +
       '</th><th class="l">' + T('v.message') + '</th></tr></thead><tbody>';
+    // v0.7.0(A1): 행을 누르면(키보드 Enter/Space 도) 아래로 원인 · 확인이 펼쳐진다
     alarms.forEach(function (a) {
-      html += '<tr class="' + (a.crit ? 'hl' : '') + '">' +
+      var df = def(a.code), open = !!openCode[a.code];
+      html += '<tr class="almrow' + (a.crit ? ' hl' : '') + '" tabindex="0" role="button" aria-expanded="' + open +
+        '" data-almcode="' + core.esc(a.code) + '" title="눌러서 원인 · 확인 보기">' +
         '<td>' + core.chip(a.crit ? T('s.critical') : T('s.warning'), a.crit ? 'stop' : 'warn') + '</td>' +
         '<td class="mono">' + core.esc(a.since) + '</td>' +
         '<td class="mono">' + core.esc(a.code) + '</td>' +
-        '<td class="l">' + core.esc(a.name) + '</td></tr>';
+        '<td class="l">' + (open ? '▾ ' : '▸ ') + core.esc(a.name) + '</td></tr>';
+      if (open) {
+        html += '<tr class="almhelp"><td colspan="4" class="l"><div><b>원인</b> ' + core.esc(df.cause || '—') +
+          '</div><div><b>확인</b> ' + core.esc(df.check || '—') + '</div></td></tr>';
+      }
     });
     tbl.innerHTML = html + '</tbody>';
   }
@@ -105,6 +118,10 @@
     (plc.prm_mismatch || []).forEach(function (m) {
       out.push(['warn', 'PLC 파라미터 되읽기 불일치 — ' + m]);
     });
+    // v0.7.0: 서버가 판단하는 알림(남은 PC 끊김 트립 · 정비 한계 · 공정 중 압력 상한 · 히터 이탈)
+    if (!t.offline) {
+      (t.pc_notices || []).forEach(function (n) { out.push([n[0] === 'err' ? 'err' : 'warn', n[1]]); });
+    }
     (s.notices || []).forEach(function (n) {
       out.push([n.level === 'err' ? 'err' : 'warn', n.msg]);
     });
@@ -128,7 +145,9 @@
     var html = '<thead><tr><th>' + T('v.raised') + '</th><th>' + T('v.cleared') + '</th><th>' + T('v.severity') +
       '</th><th>' + T('v.code') + '</th><th class="l">' + T('v.message') + '</th></tr></thead><tbody>';
     h.forEach(function (a) {
-      html += '<tr><td class="mono">' + core.esc((a.date || '') + ' ' + a.since) + '</td>' +
+      var df = def(a.code);
+      var tip = df.cause ? '원인: ' + df.cause + String.fromCharCode(10) + '확인: ' + df.check : '';
+      html += '<tr' + (tip ? ' title="' + core.esc(tip) + '"' : '') + '><td class="mono">' + core.esc((a.date || '') + ' ' + a.since) + '</td>' +
         '<td class="mono">' + core.esc(a.cleared || fmt.DASH) + '</td>' +
         '<td>' + core.chip(a.crit ? T('s.critical') : T('s.warning'), a.crit ? 'stop' : 'warn') + '</td>' +
         '<td class="mono">' + core.esc(a.code) + '</td>' +
@@ -161,6 +180,19 @@
     while (box.children.length > 500) box.removeChild(box.firstChild);
     if (atBottom) box.scrollTop = box.scrollHeight;
   }
+
+  // 현재 알람 행 펼치기 — 마우스 · 키보드(core.js 가 tabindex="0" 의 Enter/Space 를 click 으로)
+  d.addEventListener('click', function (ev) {
+    var tr = ev.target.closest && ev.target.closest('tr[data-almcode]');
+    if (!tr) return;
+    var code = tr.getAttribute('data-almcode');
+    openCode[code] = !openCode[code];
+    lastSig = null;
+    var s = core.state;
+    if (s) renderAlarms(s, s.live || {});
+    var back = d.querySelector('tr[data-almcode="' + code + '"]');
+    if (back && back.focus) back.focus();
+  });
 
   core.register('alarm', { render: render, update: update });
   w.viewAlarm = { render: render, update: update, appendLog: appendLog };

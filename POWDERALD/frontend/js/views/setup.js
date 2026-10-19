@@ -143,7 +143,12 @@
       panel('Process', '',
         tbl(row('process.base_wait_timeout_s', 's') + row('process.base_stable_s', 's') +
             row('process.heater_ready.enabled') + row('process.heater_ready.band_c', '℃') +
-            row('process.heater_ready.stable_s', 's') + (dev.has_o3 ? row('process.o3_off_delay_s', 's') : ''))) +
+            row('process.heater_ready.stable_s', 's') + (dev.has_o3 ? row('process.o3_off_delay_s', 's') : '') +
+            // v0.7.0(A5): PC 감시 — 프로그램이 꺼져 있으면 동작하지 않는다
+            '<tr><td class="l sub" colspan="2">PC Watch in Process (프로그램이 꺼져 있으면 동작하지 않음)</td></tr>' +
+            row('process.press_high_torr', 'Torr') + row('process.press_high_s', 's') + row('process.press_high_abort') +
+            row('process.heater_dev_c', '℃') + row('process.heater_dev_s', 's'))) +
+      maintPanel(row, tbl) +
       panel('Display', '', tbl(row('window.theme'))) +
       panel('Log', '',
         tbl(row('log.keep_days', 'd') + row('log.datalog_interval_s', 's') +
@@ -199,7 +204,91 @@
     update(s.live || {});
   }
 
+  /* ===================== v0.7.0(A3 · A4) Maintenance ===================== */
+  function maintPanel(row, tbl) {
+    var op = core.canOperate();
+    return panel('Maintenance', '<span data-bind="lcChip"></span>',
+      '<div class="sub-h">Leak Check (압력 상승률)</div>' +
+      '<div class="adm-row"><span class="dim" data-bind="lcProg">—</span><span class="right">' +
+      '<button class="btn sm primary" data-lc="start"' + (op ? '' : ' disabled title="이 PC 에서만 됩니다"') + '>Leak Check</button>' +
+      '<button class="btn sm" data-lc="cancel"' + (op ? '' : ' disabled') + '>' + T('b.cancel') + '</button></span></div>' +
+      '<div class="hint">명령 11 로 IV-E 를 닫고(펌프는 그대로) 안정 뒤 압력 상승률을 잽니다. 끝나면 명령 8 로 IV-E 를 다시 엽니다. ' +
+      '점검 중 프로그램을 끄면 IV-E 는 닫힌 채 남습니다 — [Pumping Start] 로 여세요.</div>' +
+      tbl(row('leakcheck.settle_s', 's') + row('leakcheck.measure_s', 's') + row('leakcheck.limit_mtorr_min', 'mTorr/min') +
+          row('leakcheck.max_torr', 'Torr')) +
+      '<div class="tblx"><table class="tbl lctbl"><thead><tr><th class="l">Time</th><th>Gauge</th><th>mTorr/min</th>' +
+      '<th>Result</th></tr></thead><tbody data-bind="lcBody"><tr><td class="l dim" colspan="4">기록 없음</td></tr></tbody></table></div>' +
+      '<div class="sub-h" style="margin-top:8px">Counters</div>' +
+      '<div class="tblx"><table class="tbl mttbl"><thead><tr><th class="l">Item</th><th>Value</th><th>Limit</th>' +
+      '<th>Reset At</th><th></th></tr></thead><tbody data-bind="mtBody"></tbody></table></div>' +
+      '<div class="hint">밸브 열림은 공정 끝 판정 때(정상 종료면 레시피 전체, 아니면 멈춘 위치까지)와 수동 열기에서 셉니다. ' +
+      '켜진 시간은 PLC 링크가 붙어 있는 동안(멈춤 제외)만 셉니다 — 프로그램이 꺼져 있던 동안은 모릅니다. ' +
+      '[Reset] 은 관리자 잠금 해제가 필요합니다.</div>' +
+      tbl(row('maintenance.valve_opens_warn') + row('maintenance.pump_hours_warn', 'h') +
+          row('maintenance.rf_hours_warn', 'h') + row('maintenance.o3_hours_warn', 'h')));
+  }
+
+  var LC_PHASE = { closing: 'IV-E 닫는 중', settle: '안정 대기', measure: '측정 중', restore: 'IV-E 다시 여는 중' };
+
+  function updateMaint(t) {
+    var lc = t.leakcheck || {};
+    var pg = lc.progress || {};
+    core.setText('lcProg', lc.running
+      ? (LC_PHASE[lc.phase] || lc.phase) + ' · ' + Math.round(lc.elapsed_s || 0) + ' s' +
+        (pg.pressure != null ? ' · ' + (pg.gauge || '') + ' ' + fmt.torr(pg.pressure) + ' Torr' : '') +
+        (pg.slope != null ? ' · ' + fmt.num(pg.slope, 2) + ' mTorr/min' : '') +
+        ' (측정 ' + (lc.measure_s || 0) + ' s · 한계 ' + (lc.limit || 0) + ')'
+      : '대기 — 측정 ' + (lc.measure_s || 0) + ' s · 한계 ' + (lc.limit || 0) + ' mTorr/min');
+    var st = d.querySelector('[data-lc="start"]'), cn = d.querySelector('[data-lc="cancel"]');
+    if (st) st.disabled = !core.canOperate() || !!lc.running;
+    if (cn) cn.disabled = !core.canOperate() || !lc.running;
+    var lb = core.bind('lcBody');
+    var rec = lc.recent || [];
+    if (lb) {
+      core.html(lb, rec.length ? rec.map(function (r) {
+        var res = r.Result || '';
+        return '<tr' + (r.Reason ? ' title="' + core.esc(r.Reason) + '"' : '') + '><td class="l mono">' + core.esc(r.Time || '') +
+          '</td><td>' + core.esc(r.Gauge || '') + '</td><td class="mono">' + core.esc(r['mTorr/min'] || fmt.DASH) +
+          '</td><td>' + core.chip(res, res === 'PASS' ? 'ok' : res === 'FAIL' ? 'stop' : 'warn') + '</td></tr>';
+      }).join('') : '<tr><td class="l dim" colspan="4">기록 없음</td></tr>');
+    }
+    var mb = core.bind('mtBody');
+    if (mb) {
+      core.html(mb, (t.maintenance || []).map(function (r) {
+        return '<tr' + (r.over ? ' class="hl"' : '') + '><td class="l">' + core.esc(r.label) +
+          (r.extra ? '<div class="dim small">' + core.esc(r.extra) + '</div>' : '') + '</td>' +
+          '<td class="mono">' + core.esc(r.value) + (r.unit ? ' ' + core.esc(r.unit) : '') + '</td>' +
+          '<td class="mono">' + (r.limit ? core.esc(r.limit) : 'Off') + '</td>' +
+          '<td class="mono">' + core.esc(r.reset_at || fmt.DASH) + '</td>' +
+          '<td><button class="btn sm" data-mtreset="' + core.esc(r.key) + '"' + (locked() ? ' disabled title="관리자 잠금 해제 필요"' : '') +
+          '>Reset</button></td></tr>';
+      }).join(''));
+    }
+    var ch = core.bind('lcChip');
+    if (ch) core.html(ch, lc.running ? core.chip('Leak Check', 'warn') : '');
+  }
+
+  d.addEventListener('click', function (ev) {
+    var b = ev.target.closest && ev.target.closest('[data-lc],[data-mtreset]');
+    if (!b || b.disabled || !core.canOperate()) return;
+    if (b.dataset.lc === 'start') {
+      var lc = ((core.state || {}).live || {}).leakcheck || {};
+      core.confirmAsk('누설률 점검을 시작할까요?',
+        'IV-E 를 닫고(명령 11 — 펌프는 그대로) ' + core.esc(lc.settle_s) + ' s 안정 뒤 ' + core.esc(lc.measure_s) +
+        ' s 동안 압력 상승률을 잽니다.<br>끝나면 명령 8(펌핑 시작)로 IV-E 를 다시 엽니다.<br>' +
+        '점검 중에는 공정 시작 · 수동 밸브를 막습니다. 펌핑 · 벤트 · 전체 닫기를 누르면 점검을 먼저 취소합니다.',
+        'Leak Check', function () { w.app.send('leak_check'); });
+    } else if (b.dataset.lc === 'cancel') {
+      w.app.send('leak_cancel');
+    } else if (b.dataset.mtreset) {
+      var key = b.dataset.mtreset;
+      core.confirmAsk('정비 카운터를 리셋할까요?', '<b>' + core.esc(key) + '</b> 를 0 으로 만듭니다. 이전 값은 이벤트 로그에 남습니다.',
+        'Reset', function () { w.app.send('maint_reset', { token: adm.token, key: key }); });
+    }
+  });
+
   function update(t) {
+    updateMaint(t);
     var conn = !!(t.plc && t.plc.connected);
     // ★ PLC 하트비트 멈춤 — PLC 값은 모르지만 통신은 된다. PC 쪽 값(응답 · PC 하트비트 간격)은 보인다
     var link = conn || !!(t.plc && t.plc.stalled);

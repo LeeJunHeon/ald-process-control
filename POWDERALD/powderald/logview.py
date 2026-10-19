@@ -176,13 +176,15 @@ def _guess_meta(path: str) -> dict:
 
 
 _WARN_RE = re.compile(r"중단|알 수 없음|기록 중단|사이클 후 정지")
+_PC_TAIL_RE = re.compile(r" · PC (끊긴|꺼진) 동안 끝남.*$")
 
 
 def result_level(result: str) -> str:
     """끝 결과의 수준 — 이벤트 로그와 데이터 로그 목록 색이 같은 규칙(ok · warn · off).
     '정상 종료' · '정상 종료 (사이클 후 정지와 겹침)' · '정상 종료(추정)' = ok,
-    '정상 종료 (끝난 뒤 안전 정지: …)' 와 중단 · 사이클 후 정지 · 알 수 없음 = warn, 그 밖(기록 중 등) = off."""
-    r = result or ""
+    '정상 종료 (끝난 뒤 안전 정지: …)' 와 중단 · 사이클 후 정지 · 알 수 없음 = warn, 그 밖(기록 중 등) = off.
+    ★ v0.7.0(P3): 붙인 꼬리(' · PC 끊긴 동안 끝남' · ' · PC 꺼진 동안 끝남(…)')는 떼고 판정한다 — 정상 종료면 ok."""
+    r = _PC_TAIL_RE.sub("", result or "")
     if r.startswith("정상 종료 (끝난 뒤 안전 정지"):
         return "warn"
     if r in ("정상 종료", "정상 종료(추정)") or r.startswith("정상 종료 (사이클 후 정지와 겹침)"):
@@ -200,6 +202,8 @@ def meta_of(name: str) -> dict:
         "recipe": (rec.get("recipe") or {}).get("name") or name[16:],
         "number": rec.get("number"),
         "estimated_ms": rec.get("estimated_ms"),
+        # v0.7.0(A2): 실행 정보
+        "operator": rec.get("operator") or "", "sample": rec.get("sample") or "", "memo": rec.get("memo") or "",
     }
     if name == _writing:
         # ★ 아직 쓰는 중(종료 뒤 꼬리 포함)인 파일은 결과를 짐작하지 않는다 — 운전자 중단 직후
