@@ -61,6 +61,12 @@
     //   '알 수 없음'(머리말 '알람 —' 과 같게). 멈춤이면 core 가 live 를 끊김 모양(plc.stalled)으로 바꿔 준다
     var p = t.plc || {};
     var known = !t.offline && !!p.connected;
+    // v0.7.1(U6): 사라진 알람의 펼침 표시는 지운다(다시 나면 접힌 채로)
+    if (known) {
+      var now = {};
+      alarms.forEach(function (a) { now[a.code] = 1; });
+      Object.keys(openCode).forEach(function (c) { if (!now[c]) delete openCode[c]; });
+    }
     var sig = (known ? 'k' : 'u:' + (t.offline ? 's' : p.stalled ? 'h' : 'p')) + '|' +
       alarms.map(function (a) { return a.code + (openCode[a.code] ? '+' : ''); }).join('|');
     if (sig === lastSig) return;

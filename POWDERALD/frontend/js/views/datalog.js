@@ -68,8 +68,10 @@
         '<div class="b">' + core.esc(it.recipe || '') +
         (it.number != null ? ' <span class="dim">#' + core.esc(it.number) + '</span>' : '') +
         // v0.7.0(A2): 작업자 · 시료
-        ((it.operator || it.sample) ? ' <span class="dim">· ' + core.esc([it.operator, it.sample].filter(Boolean).join(' · ')) +
-          '</span>' : '') +
+        // v0.7.1(U5): 띄어쓰기 없는 긴 시료 이름이 시간 · 줄 수를 밀어내지 않게 — 줄임표 + title
+        ((it.operator || it.sample) ? ' <span class="dim dl-who" title="' +
+          core.esc([it.operator, it.sample].filter(Boolean).join(' · ')) + '">· ' +
+          core.esc([it.operator, it.sample].filter(Boolean).join(' · ')) + '</span>' : '') +
         '<span class="dim right">' + (it.took_s != null ? fmt.hms(it.took_s) : fmt.DASH) +
         (it.rows != null ? ' · ' + core.esc(it.rows) + ' rows' : '') + (it.guessed ? ' (추정)' : '') + '</span></div></div>';
     }).join('') || '<div class="empty">데이터 로그가 없습니다</div>';
@@ -96,7 +98,7 @@
           ((m.operator || m.sample || m.memo)
             ? '<div class="dim dl-run">' + (m.operator ? 'Operator ' + core.esc(m.operator) : '') +
               (m.sample ? (m.operator ? ' · ' : '') + 'Sample ' + core.esc(m.sample) : '') +
-              (m.memo ? '<div class="dl-memo">' + core.esc(m.memo) + '</div>' : '') + '</div>'
+              (m.memo ? '<div class="dl-memo" title="' + core.esc(m.memo) + '">' + core.esc(m.memo) + '</div>' : '') + '</div>'
             : '');
       }
       buildPicker();

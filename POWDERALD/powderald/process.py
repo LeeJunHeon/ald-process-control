@@ -57,7 +57,8 @@ class ProcessRunner:
         self._stop_reserved = False     # 사이클 후 정지 예약(명령 4 처리됨)
         self._stopping_seen = False     # 이번 공정 중 장비 상태 '사이클 후 정지 예약'(STATE_STOPPING)을 봤다(v0.4.14)
         self._adopted = False           # 이번 공정은 이어받은 것(끝 줄의 걸린 시간 = 이어받은 뒤)
-        self._last_pos = None           # 공정 중 마지막으로 본 (블록, 스텝, 사이클)
+        self._last_pos = None           # 공정 중 마지막으로 본 (블록, 스텝, 사이클, 그룹 회차)
+        self._last_seq = None           # 공정 중 마지막으로 본 시퀀서 상태(3 · 4 · 7) — 정비 카운터(v0.7.1 M3)
         self._cancel = False
         self._cancel_why = "운전자"
         self._b13_wait = None           # (기한, 끝 인자) — 시퀀서 8 인데 알람0 b13 이 아직 안 보일 때 1 s 기다림
@@ -86,14 +87,19 @@ class ProcessRunner:
         # ★ v0.7.0(A2): 실행 정보(작업자 · 시료 · 메모) — 시작 확인 창에서 받은 것(다음 시작까지 남는다)
         self.run_info = {}
         # ★ v0.7.0(A5): 공정 중 압력 상한 · 히터 이탈 경고(PC 감시)
-        self._press_since = None
+        self._press_since = None        # 압력 상한을 넘은 채 마지막으로 본 때(일시정지면 None — 시간이 흐르지 않는다)
+        self._press_acc = 0.0           # 넘은 채 이어진 시간(일시정지 동안은 더하지 않는다 — v0.7.1 W2)
         self._press_warned = False
         self._press_abort_sent = False
+        self._press_task = None         # 띄운 즉시 중단 태스크(v0.7.1 W3 — 참조를 잡아 둔다)
         self._abort_why = ""            # 즉시 중단 이유(압력 상한 — PC 가 즉시 중단) — 끝 결과 문구
         self._hdev_since = {}
         self._hdev_warned = set()
         self.watch_notices = []         # 지금 이어지는 경고(Program Notices)
         self.offline_checked = False    # v0.7.0(P6): 켜진 뒤 꺼진 동안 끝난 공정을 판정해 봤나(실행마다 한 번)
+        self.start_sent = False         # v0.7.1(P2): 이 실행에서 공정 시작 명령을 보낸 적이 있나
+        self.adopt_count = 0            # 이 실행에서 이어받은 횟수
+        self.may_resume = False         # 이번 이어받기가 같은 데이터 로그 파일을 다시 열어도 되나
 
     # ===================== 시작 조건 =====================
     def start_checks(self) -> list:
@@ -158,6 +164,11 @@ class ProcessRunner:
                             "detail": "켜짐" if gen else "레시피가 O3 를 씁니다 — [O3 라인 켜기]로 발생기를 켜세요",
                             "action": None if gen else "o3_on"})
 
+        from .leakcheck import leak
+        if leak.running:
+            # ★ v0.7.1(L7): 점검 중에는 시작 조건에 넣어 Start 단추를 막는다(시작 창을 다 채운 뒤 거절되지 않게)
+            out.append({"key": "leakcheck", "label": "Leak Check 진행 중", "ok": False,
+                        "detail": "누설률 점검이 끝나거나 취소한 뒤에 시작하세요"})
         res = st.recipe_check or {}
         out.append({"key": "recipe", "label": "Recipe Check",
                     "ok": bool(self.recipe) and not res.get("errors"),
@@ -396,9 +407,12 @@ class ProcessRunner:
         self._stopping_seen = False
         self._adopted = False
         self._last_pos = None
+        self._last_seq = None
         self.last_result = ""
         self._b13_wait = None
         self._abort_unknown = False
+        self._abort_why = ""                # v0.7.1(W3)
+        self._press_abort_sent = False
 
         # --- 스냅샷 ---
         rec = copy.deepcopy(self.recipe)
@@ -460,6 +474,7 @@ class ProcessRunner:
         self._b13_pre = A.bit(st.link.status[A.D_ALARM0], A.ALM0_RECIPE)
         self._b13_cleared = False
         no = st.link._cmd_no
+        self.start_sent = True              # v0.7.1(P2): 이 실행에서 시작 명령을 보냈다(이어받기 같은 파일 조건)
         try:
             result, text = await st.link.send_command(A.CMD_PROCESS_START)
         except BaseException:
@@ -620,8 +635,11 @@ class ProcessRunner:
             # ★ 마지막 위치는 공정 중에 본 값으로 — 끝난 뒤의 상태 영역은 래더에서 정상 완료면
             #   '블록 N+1' 이 되고, 다른 끝에서도 다음 시작 전까지 남은 값일 뿐이다.
             if s[A.D_SEQ_BLOCK]:
+                # ★ v0.7.1(M1): 그룹 회차도 — PLC 재시작으로 끝나면 끝 스냅샷의 회차는 0 이다
                 self._last_pos = (s[A.D_SEQ_BLOCK], s[A.D_SEQ_STEP],
-                                  A.dword(s[A.D_SEQ_BLOCK_PASS], s[A.D_SEQ_BLOCK_PASS + 1]))
+                                  A.dword(s[A.D_SEQ_BLOCK_PASS], s[A.D_SEQ_BLOCK_PASS + 1]), s[A.D_SEQ_GROUP_PASS])
+                if s[A.D_SEQ_STATE] in (3, 4, 7):
+                    self._last_seq = s[A.D_SEQ_STATE]       # v0.7.1(M3): 블록 준비(3)였으면 그 블록은 세지 않는다
             return
         self._reset_watch()
         # ★ 시작 직후 '공정 중'을 한 번도 못 보고 끝난 경우(아주 짧은 공정 · 바로 중단)도 끝을 기록한다
@@ -654,7 +672,9 @@ class ProcessRunner:
         if self._id_blocked():
             return
         if self.active_run and not running:
-            self._ended_while_lost = True
+            # ★ v0.7.1(P4): 끊기기 전에 이미 끝을 봤으면(b13 대기 · 미뤄 둔 끝) '끊긴 동안 끝남' 이 아니다
+            if self._b13_wait is None and self._end_deferred is None:
+                self._ended_while_lost = True
             return
         if running and self.active_run:
             link = self.state.link
@@ -666,6 +686,7 @@ class ProcessRunner:
     # ---- v0.7.0(A5): 공정 중 압력 상한 · 히터 이탈 경고(PC 감시) ----
     def _reset_watch(self):
         self._press_since = None
+        self._press_acc = 0.0
         self._press_warned = False
         self._hdev_since = {}
         if self._hdev_warned:
@@ -684,10 +705,16 @@ class ProcessRunner:
         lim = _num(pr.get("press_high_torr"), 10.0)
         hold = _num(pr.get("press_high_s"), 5.0)
         cvg = self.state.conv.cvg.to_torr(s[A.D_CVG_RAW]) if self.state.conv else None
-        if lim > 0 and not paused and cvg is not None and cvg > lim:
-            if self._press_since is None:
-                self._press_since = now
-            if now - self._press_since >= hold:
+        if paused and lim > 0:
+            # ★ v0.7.1(W2): 일시정지는 타이머를 멈추기만 한다 — '해제' 로 끝내지 않는다(재개 뒤 다시 경고 · 토스트 없음)
+            self._press_since = None
+            if self._press_warned:
+                notes.append(("warn", "공정 중 압력 상한 — 일시정지 중(재개하면 다시 본다) · PC 감시(process.press_high_torr)"))
+        elif lim > 0 and cvg is not None and cvg > lim:
+            if self._press_since is not None:
+                self._press_acc += max(0.0, now - self._press_since)
+            self._press_since = now
+            if self._press_acc >= hold:
                 msg = f"공정 중 압력 상한 — CVG {_torr(cvg)} Torr > {lim:g} Torr ({hold:g} s 넘게)"
                 notes.append(("warn", msg + " · PC 감시(process.press_high_torr)"))
                 if not self._press_warned:
@@ -696,13 +723,13 @@ class ProcessRunner:
                     self.pending_toasts.append(("warn", msg))
                     if pr.get("press_high_abort") and not self._press_abort_sent:
                         self._press_abort_sent = True
-                        self._abort_why = "압력 상한 — PC 가 즉시 중단"
                         push_log_sync("warn", "압력 상한 — PC 가 즉시 중단을 보냅니다(process.press_high_abort)")
-                        self._spawn(self._press_abort())
+                        self._press_task = self._spawn(self._press_abort(push_log_sync))
         else:
             if self._press_warned:
                 push_log_sync("info", "공정 중 압력 상한 해제")
             self._press_since = None
+            self._press_acc = 0.0
             self._press_warned = False
         dev = _num(pr.get("heater_dev_c"), 15.0)
         dhold = _num(pr.get("heater_dev_s"), 120.0)
@@ -712,7 +739,9 @@ class ProcessRunner:
                 continue
             ch = h["ch"]
             sv_raw = link.cmd_reg(A.D_HEATER_SV + ch - 1) if hasattr(link, "cmd_reg") else None
-            if not _tc_ok(s, h) or sv_raw is None:
+            power = link.cmd_reg(A.D_HEATER_POWER) if hasattr(link, "cmd_reg") else None
+            # ★ v0.7.1(W1): 전원이 켜진 채널(D01010 의 그 비트)만 본다 — 사용으로만 두고 전원을 끈 채널은 보지 않는다
+            if not _tc_ok(s, h) or sv_raw is None or not (power is not None and (power >> (ch - 1)) & 1):
                 self._hdev_since.pop(ch, None)
                 continue
             pv, sv = _temp(s[A.D_HEATER_PV + ch - 1]), _temp(sv_raw)
@@ -735,15 +764,21 @@ class ProcessRunner:
 
     def _spawn(self, coro):
         try:
-            asyncio.get_running_loop().create_task(coro)
+            return asyncio.get_running_loop().create_task(coro)
         except RuntimeError:
             coro.close()            # 루프 밖(시험의 동기 호출) — 보낼 수 없다
+            return None
 
-    async def _press_abort(self):
-        """압력 상한 — 즉시 중단을 한 번 보낸다(운전자 즉시 중단과 같은 결과 처리, 이유만 다르다)."""
+    async def _press_abort(self, log_sync=None):
+        """압력 상한 — 즉시 중단을 한 번 보낸다(운전자 즉시 중단과 같은 결과 처리, 이유만 다르다).
+        ★ v0.7.1(W3): 끝 결과의 이유(_abort_why)는 실제로 보낼 때만 세운다 — 일찍 돌아가면 뒤의 운전자 중단이 '압력 상한'
+          으로 적히지 않게. 거절 · 실패는 이벤트 로그에도 남긴다."""
+        log_sync = log_sync or (lambda lv, m: logger.write(lv, m))
         link = self.state.link
         if not (link and link.connected) or link.status[A.D_STATE] not in RUNNING_STATES:
+            log_sync("warn", "압력 상한 즉시 중단을 보내지 않았습니다 — PLC 연결 없음 또는 공정이 이미 끝남")
             return
+        self._abort_why = "압력 상한 — PC 가 즉시 중단"
         self.abort_begin()
         done = unknown = False
         try:
@@ -751,14 +786,19 @@ class ProcessRunner:
             done = result == A.RESULT_OK
             unknown = result is None and ("응답 없음" in text or "받았을 수" in text)
             logger.command("즉시 중단(압력 상한)", link._cmd_no, text, "local")
+            if not done and not unknown:
+                log_sync("warn", f"압력 상한 즉시 중단이 처리되지 않았습니다 — {text}")
         except Exception as e:  # noqa: BLE001
-            logger.write("warn", f"압력 상한 즉시 중단 실패: {type(e).__name__}: {e}")
+            log_sync("warn", f"압력 상한 즉시 중단 실패: {type(e).__name__}: {e}")
         finally:
+            if not done and not unknown:
+                self._abort_why = ""
             self.abort_result(done, unknown)
 
     def _needs_b13_wait(self, s) -> bool:
         """시퀀서 8 · 안전 정지 아님 · 이번 공정의 b13 이 아직 안 보임 — 1 s 기다린다."""
-        return (s[A.D_SEQ_STATE] == 8 and s[A.D_STATE] != A.STATE_SAFE_STOP
+        # ★ v0.7.1(P1): 트립만 남은 안전 정지는 안전 정지로 보지 않는다(b13 1 s 대기를 건너뛰지 않게)
+        return (s[A.D_SEQ_STATE] == 8 and (s[A.D_STATE] != A.STATE_SAFE_STOP or trip_only(s))
                 and not self._b13_rose(s))
 
     def _b13_rose(self, s) -> bool:
@@ -831,7 +871,8 @@ class ProcessRunner:
             dl = self.state.datalog
             key = (dl.name if (dl is not None and dl.fp) else "") or f"run-{int(self.started_at or time.time())}"
             msg = maintenance.count_run(self.state.cfg, key, self.active_recipe, s, self._last_pos,
-                                        self.last_result.startswith("정상 종료"))
+                                        self.last_result.startswith("정상 종료"),
+                                        words=(self.active_table or {}).get("words"), last_seq=self._last_seq)
             if msg:
                 push_log_sync("info", msg)
         except Exception as e:  # noqa: BLE001
@@ -875,8 +916,9 @@ class ProcessRunner:
     def where_text(self) -> str:
         if not self._last_pos:
             return "(공정 중 위치를 보지 못함)"
-        b, st, c = self._last_pos
-        return f"블록 {b} · 스텝 {st} · 사이클 {c}"
+        b, st, c = self._last_pos[:3]
+        gp = self._last_pos[3] if len(self._last_pos) > 3 else 0
+        return f"블록 {b} · 스텝 {st} · 사이클 {c}" + (f" · 그룹 회차 {gp}" if gp > 1 else "")
 
     def _plan(self) -> dict:
         """끝 판정이 쓰는 블록 수 · 블록 반복 · 그룹 — plan_of(지금 공정의 표, 레시피)."""
@@ -896,9 +938,11 @@ class ProcessRunner:
         """켜진 중대 알람 이름. ★ Powder: 래더는 공정 중 안전 정지면 O3 허가 알람(알람1 b3)도 함께 세운다
         (P30 행 13 + P35 행 26) — O3 발생기 알람 입력이 꺼져 있고 다른 중대 알람이 있으면 b3 는 원인이
         아니라 '뒤따름'으로 적는다."""
-        crit = [a for a in self.state.alarms.list() if a["crit"]]
+        # ★ v0.7.1(P5): 끝 스냅샷의 중대 비트가 먼저(라이브 알람 목록이 비어도 EMO 를 놓치지 않게), 없으면 라이브 목록,
+        #   둘 다 없으면 crit_text_of — b6 만 서 있으면 'PC Link Lost (트립 남음)'
+        crit = crit_alarms_of(s) or [a for a in self.state.alarms.list() if a["crit"]]
         if not crit:
-            return crit_text_of(s, [])          # ★ v0.7.0(P3): b6 만 서 있으면 'PC Link Lost (트립 남음)'
+            return crit_text_of(s, [])
         if DEV.HAS_O3 and len(crit) > 1 and not A.bit(s[A.D_INPUT1], A.IN1_O3_ALM):
             b3 = f"A1-{A.ALM1_O3_GEN:02d}"
             follow = [a["name"] for a in crit if a["code"] == b3]
@@ -1053,6 +1097,10 @@ class ProcessRunner:
             return ""
         if self._id_blocked() or getattr(link, "id_state", "") not in ("ok", "unset"):
             return ""
+        if link.status[A.D_STATE] in RUNNING_STATES and not (self.active_run or self.busy):
+            # ★ v0.7.1(P3): PLC 가 공정 중 — 이어받기가 맡는다. 기회를 쓰지 않는다(이어받기가 되읽는 동안 공정이 끝나
+            #   그만두면 다시 본다)
+            return ""
         self.offline_checked = True             # 첫 기회에 한 번(아래 조건이 안 맞아도 다시 보지 않는다)
         if link.status[A.D_STATE] in RUNNING_STATES or self.active_run or self.busy:
             return ""
@@ -1081,7 +1129,8 @@ class ProcessRunner:
                        "ok" if result_level(res) == "ok" else "warn")
         try:
             from . import maintenance
-            msg = maintenance.count_run(self.state.cfg, name, meta.get("recipe"), s, None, res.startswith("정상 종료"))
+            msg = maintenance.count_run(self.state.cfg, name, meta.get("recipe"), s, None, res.startswith("정상 종료"),
+                                        words=list(words))
             if msg:
                 await push_log(msg, "info")
         except Exception as e:  # noqa: BLE001
@@ -1114,6 +1163,8 @@ class ProcessRunner:
             return False
         # ★ 되읽는 동안 공정이 끝났거나 이 PC 가 공정을 맡았으면 이어받지 않는다
         if not self.adopt_wanted():
+            if not self.active_run and link.connected and link.status[A.D_STATE] not in RUNNING_STATES:
+                self.offline_checked = False    # v0.7.1(P3): 되읽는 동안 끝났다 — 꺼진 동안 끝난 공정 판정을 다시 본다
             return False
         # ★ v0.4.14: 상태를 먼저 다 정하고 로그는 뒤에 — push_log 가 양보하면 그 사이 운전자 중단을 잃을 수 있다
         if words:
@@ -1145,16 +1196,23 @@ class ProcessRunner:
         self.active_run = True                  # 이어받은 공정도 데이터 로그 구간
         self._run_started_mono = time.monotonic()
         self._adopted = True
+        # ★ v0.7.1(P2): 같은 데이터 로그 파일을 다시 열어도 되는가 — 켠 뒤 첫 이어받기이고 이 실행에서 시작 명령을 보낸
+        #   적이 없을 때만(시간 창은 데이터 로그가 메타의 시작 시각 · 예상 시간으로 본다)
+        self.adopt_count += 1
+        self.may_resume = self.adopt_count == 1 and not self.start_sent
         # ★ b13 은 리셋 전까지 남는다 — 이어받는 순간 이미 서 있었으면 '이번 공정 중 선 것'이 아니다
         self._gen += 1
         self._b13_pre = b13_pre
         self._b13_cleared = False
         self._abort_sent = self._abort_pending = self._abort_unknown = False
         self._end_deferred = self._b13_wait = None
+        self._abort_why = ""                # v0.7.1(W3)
+        self._press_abort_sent = False
         # 시작 흐름과 같게 지운다
         self._stop_reserved = False
         self._stopping_seen = link.status[A.D_STATE] == A.STATE_STOPPING
         self._last_pos = None
+        self._last_seq = None
         self.last_result = ""
         self._rf_watch = None
         self._rf_warned = set()
@@ -1188,6 +1246,14 @@ def plan_of(table, recipe) -> dict:
             continue
     nb = int(tbl["block_count"]) if tbl.get("block_count") else len(blocks)
     return {"nb": nb, "repeats": [int(b.get("repeat") or 1) for b in blocks], "groups": groups}
+
+
+def crit_alarms_of(s) -> list:
+    """끝 스냅샷의 켜진 중대 알람 [{code, name}] (워드0 → 워드1, 비트 순)."""
+    out = []
+    for word, defs, tag in ((s[A.D_ALARM0], DEV.ALARMS0, "A0"), (s[A.D_ALARM1], DEV.ALARMS1, "A1")):
+        out += [{"code": f"{tag}-{d['bit']:02d}", "name": d["name"]} for d in defs if d["crit"] and (word >> d["bit"]) & 1]
+    return out
 
 
 def crit_names_of(s) -> list:
@@ -1277,14 +1343,40 @@ def judge_end(s, table=None, recipe=None, *, crit_text=None, stop_reserved=False
     6. PLC 재시작 — 끝 스냅샷이 시퀀서 0 · 블록 0(P00 첫 스캔이 지웠다). 원인이 남은 알람(장비 상태 6)은 뒤따름.
     7. 시퀀서 8 — PLC 중단 / 그 밖 — 끝 확인 안 됨
     table · recipe: 그 공정의 계획(표 words 가 있으면 표가 우선). crit_text: 안전 정지 원인 글(없으면 끝 스냅샷에서)."""
+    crit = crit_text if crit_text is not None else crit_text_of(s)
+    if trip_only(s):
+        # ★ v0.7.1(P1): 안전 정지 원인이 공정 뒤 남은 PC 끊김 트립뿐이다 — 공정이 끝난 다음 스캔에 선 것이라 끝의 진짜
+        #   원인(운전자 중단 · 표 오류 · 결과 모름 · 압력 상한 …)을 가리지 않게 상태가 안전 정지가 아닌 것처럼 판정하고
+        #   정상 종료가 아닌 결과에는 꼬리를 붙인다
+        s1 = list(s)
+        s1[A.D_STATE] = A.STATE_IDLE
+        res = _judge(s1, table, recipe, crit, True, stop_reserved, stopping_seen, b13_rose, abort_sent,
+                     abort_unknown, abort_why)
+        if not res.startswith("정상 종료") and "끝난 뒤 안전 정지" not in res:
+            res += f" · 끝난 뒤 안전 정지: {crit}"
+        return res
+    return _judge(s, table, recipe, crit, False, stop_reserved, stopping_seen, b13_rose, abort_sent,
+                  abort_unknown, abort_why)
+
+
+def trip_only(s) -> bool:
+    """v0.7.1(P1): 장비 상태 6(안전 정지)의 원인이 공정 뒤 남은 PC 끊김 트립(알람0 b6)뿐 — 비상정지 입력 정상(스냅샷에
+    입력이 있으면) · 중대 알람 없음."""
+    if s[A.D_STATE] != A.STATE_SAFE_STOP or not A.bit(s[A.D_ALARM0], A.ALM0_PC_LINK):
+        return False
+    return not ((s[A.D_ALARM0] & DEV.CRITICAL_MASK0) or s[A.D_ALARM1])
+
+
+def _judge(s, table, recipe, crit, trip_left, stop_reserved, stopping_seen, b13_rose, abort_sent, abort_unknown,
+           abort_why) -> str:
     seq, st = s[A.D_SEQ_STATE], s[A.D_STATE]
     plan = plan_of(table, recipe)
     nb = plan["nb"]
     blk = s[A.D_SEQ_BLOCK]
-    crit = crit_text if crit_text is not None else crit_text_of(s)
     trip = A.bit(s[A.D_ALARM0], A.ALM0_PC_LINK)
     crit_any = bool((s[A.D_ALARM0] & DEV.CRITICAL_MASK0) or s[A.D_ALARM1])
-    after_stop = st == A.STATE_SAFE_STOP or (seq == 6 and trip)      # 끝난 뒤 안전 정지(또는 다음 스캔에 선다)
+    # 끝난 뒤 안전 정지(또는 다음 스캔에 선다)
+    after_stop = st == A.STATE_SAFE_STOP or trip_left or (seq == 6 and trip)
     if seq == 6 and not nb and (stop_reserved or stopping_seen) and st != A.STATE_SAFE_STOP:
         # ★ v0.4.14: 표 없이 이어받은 공정 — 블록 수를 모른다. 공정 중 '사이클 후 정지 예약'을 봤으면 사이클 후
         #   정지(마지막 사이클과 겹쳤는지는 알 수 없다). 예전에는 '정상 종료'로 적혔다

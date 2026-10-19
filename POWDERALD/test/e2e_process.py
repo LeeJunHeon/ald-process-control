@@ -914,9 +914,12 @@ class Run:
                 res = op.proc.get("last_result") or ""
                 names = " · ".join(a["name"] for a in op.live.get("alarms") or [])
                 b6 = any(a.get("code") == "A0-06" and not a.get("crit") for a in op.live.get("alarms") or [])
+                # ★ v0.7.1(E1): 끝 문구만이 아니라 실제 장비 상태가 안전 정지인지도 본다
+                stopped = await op.wait(lambda: self.state_code() == A.STATE_SAFE_STOP, 5)
                 self.check(f"블랙홀 {secs} s → PC 끊김 트립(경고) · 공정 계속 · 끝난 뒤 안전 정지",
-                           ok and b6 and res.startswith("정상 종료 (끝난 뒤 안전 정지: PC Link Lost"),
-                           "알람 b6 경고 · '정상 종료 (끝난 뒤 안전 정지: PC Link Lost …)'", f"{res} / 알람 {names}")
+                           ok and b6 and stopped and res.startswith("정상 종료 (끝난 뒤 안전 정지: PC Link Lost"),
+                           "알람 b6 경고 · '정상 종료 (끝난 뒤 안전 정지: PC Link Lost …)' · 장비 상태 Safe Stop",
+                           f"{res} / 알람 {names} / 상태 {(op.live.get('state') or {}).get('name')}")
         # 통신이 끊긴 사이 보낸 명령(C12) — ★ v0.6.2(D6): 끊김을 '다음 명령 번호(D01001) 쓰기' 에서 시작한다. 전에는 끊은 뒤
         # 0.05 s 에 보내 앞 요청이 시간 초과로 끊겨 '연결되어 있지 않습니다' 로만 끝났다(PLC 받음 늘 0 — 결과 모름 길을 못 봄).
         #   블랙홀: PLC 는 명령을 받고(1 번) 답만 없다 → '받았을 수 있습니다' 알림 · 다시 보내지 않음
@@ -1087,6 +1090,49 @@ class Run:
             await op.send("alarm_reset")
             ok = await op.wait(lambda: self.state_code() == A.STATE_IDLE and not self._trip(), 10)
             self.check("Alarm Reset → 대기", ok, "장비 상태 1(대기)", (op.live.get("state") or {}).get("name"))
+        # (5) v0.7.1(E2): 트립이 남은 채 운전자 즉시 중단 → 끝의 진짜 원인(운전자 중단) + 끝난 뒤 안전 정지
+        await self.ready()
+        name = "E2E Trip Abort"
+        started, _ = await self.run_recipe(name, long_recipe(name, 60, 100), wait_end=False)
+        if started:
+            await asyncio.sleep(2)
+            self.h.ctl({"op": "cut", "mode": "blackhole", "s": 4.0})
+            await asyncio.sleep(4.5)
+            back = await self.plc_ready(15)
+            await op.wait(self._trip, 5)
+            await op.send("process_abort")
+            ok = await op.wait(lambda: not op.proc.get("running") and op.proc.get("last_result"), 30)
+            res = op.proc.get("last_result") or ""
+            want = "중단 (운전자 중단) · 끝난 뒤 안전 정지: PC Link Lost (트립 남음)"
+            self.check("트립이 남은 채 운전자 즉시 중단 → 운전자 중단 · 끝난 뒤 안전 정지", back and ok and res == want,
+                       f"'{want}'", res)
+            await op.send("alarm_reset")
+            await op.wait(lambda: not self._trip(), 5)
+        # (6) v0.7.1(E2): 이어받은 공정이 트립을 남긴 채 끝남 → 끝 결과 · 같은 데이터 로그 파일
+        await self.ready()
+        name = "E2E Adopt Trip"
+        before = self.datalog_names()
+        started, _ = await self.run_recipe(name, long_recipe(name, 40, 100), wait_end=False)
+        if started:
+            await asyncio.sleep(2)
+            await op.close()
+            self.h.stop_app()
+            await asyncio.sleep(4.0)                    # 와치독(3 s)을 넘겨 트립이 서게
+            self.h.start_app()
+            await op.connect()
+            ok = await op.wait(lambda: op.proc.get("running") and op.proc.get("adopted"), 20)
+            ok = ok and await op.wait(lambda: not op.proc.get("running") and op.proc.get("last_result"), 120)
+            res = op.proc.get("last_result") or ""
+            await self.new_datalog(before)
+            new = [n for n in self.datalog_names() if n not in before]
+            meta = self._meta(new[0]) if len(new) == 1 else {}
+            self.check("이어받은 공정이 트립을 남긴 채 끝남 → 끝 결과 · 같은 데이터 로그 파일",
+                       ok and res.startswith("정상 종료 (끝난 뒤 안전 정지: PC Link Lost") and len(new) == 1
+                       and meta.get("result") == res and bool(meta.get("resumed")),
+                       "'정상 종료 (끝난 뒤 안전 정지: PC Link Lost …)' · 새 파일 1 개(resumed) · 메타 결과 같음",
+                       f"{res} · {len(new)} 개 · 메타 {meta.get('result')} · resumed {len(meta.get('resumed') or [])}")
+            await op.send("alarm_reset")
+            await op.wait(lambda: not self._trip(), 5)
         # (4) 공정 중 프로그램 재시작 → 이어받기 → 같은 데이터 로그 파일 · 끝 결과가 그 메타에
         await self.ready()
         name = "E2E Resume"

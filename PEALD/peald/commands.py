@@ -90,16 +90,23 @@ async def handle_command(data: dict, ws=None):
     if code == A.CMD_ABORT and state.runner:
         await _abort(ws)
         return
+    leak_cancelled = False
     if code in (A.CMD_PUMP_START, A.CMD_PUMP_STOP, A.CMD_VENT, A.CMD_ALL_CLOSE) and _leak().running:
         # ★ v0.7.0(A3): 누설률 점검 중 운전자가 펌핑 · 벤트 · 전체 닫기를 누르면 점검을 먼저 취소하고 그 명령을 보낸다
         name = A.CMD_NAMES.get(code, cmd)
         await _leak().cancel_and_wait(f"운전자 {name}", restore=False)
         await push_notice(f"누설률 점검을 취소했습니다 — {name} 을(를) 보냅니다", "warn", ws)
+        leak_cancelled = True
     if code in (A.CMD_VENT, A.CMD_PUMP_STOP, A.CMD_ALL_CLOSE) and state.runner:
         # ★ 베이스 압력 대기 중에 벤트 · 펌핑 정지 · 전체 닫기를 보내면 대기를 먼저 취소한다 —
         #   대기가 살아 있으면 나중에 누가 펌핑할 때 운전자 없이 공정이 시작된다
         state.runner.cancel_wait(A.CMD_NAMES.get(code, cmd))
     result = await _send_plc(code, ws)
+    if leak_cancelled and result != A.RESULT_OK:
+        # ★ v0.7.1(L6): 점검을 취소했는데 그 명령이 거절됐다 — IV-E 가 닫힌 채 남을 수 있다
+        from .leakcheck import REOPEN_TEXT
+        await push_notice(f"누설률 점검을 취소했지만 {A.CMD_NAMES.get(code, cmd)} 이(가) 처리되지 않았습니다 — "
+                          f"{REOPEN_TEXT}", "warn")
     if code == A.CMD_STOP_AFTER_CYCLE and result == A.RESULT_OK and state.runner:
         state.runner.note_stop_after_cycle()
 
@@ -544,18 +551,26 @@ def _operator_path() -> str:
     return os.path.join(paths.DATA_DIR, "last_operator.json")
 
 
+_last_op = None          # v0.7.1(U6): 메모리에 둔다(스냅샷마다 파일을 읽지 않게) — 처음 한 번만 읽는다
+
+
 def last_operator() -> str:
-    from .storage import read_json
-    import os
-    p = _operator_path()
-    d = read_json(p) if os.path.isfile(p) else None
-    v = d.get("operator") if isinstance(d, dict) else ""
-    return v if isinstance(v, str) else ""
+    global _last_op
+    if _last_op is None:
+        from .storage import read_json
+        import os
+        p = _operator_path()
+        d = read_json(p) if os.path.isfile(p) else None
+        v = d.get("operator") if isinstance(d, dict) else ""
+        _last_op = v if isinstance(v, str) else ""
+    return _last_op
 
 
 def _save_last_operator(name: str):
+    global _last_op
     if not name:
         return
+    _last_op = name
     try:
         from .storage import atomic_write_json
         atomic_write_json(_operator_path(), {"operator": name})

@@ -176,7 +176,8 @@ def _datalog_tick():
     dl.follow(bool(runner.active_run),
               lambda: dl.start(runner.active_name, runner.active_recipe, runner.active_table,
                                _total_ms(runner.active_recipe),
-                               adopted=bool(getattr(runner, "_adopted", False))),     # v0.7.0(P5)
+                               adopted=bool(getattr(runner, "_adopted", False)),      # v0.7.0(P5)
+                               may_resume=bool(getattr(runner, "may_resume", False))),  # v0.7.1(P2)
               lambda: runner.last_result)
     dl.tick((state.cfg.get("log") or {}).get("datalog_interval_s", 1))
 

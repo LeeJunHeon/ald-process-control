@@ -240,7 +240,12 @@
         ' (측정 ' + (lc.measure_s || 0) + ' s · 한계 ' + (lc.limit || 0) + ')'
       : '대기 — 측정 ' + (lc.measure_s || 0) + ' s · 한계 ' + (lc.limit || 0) + ' mTorr/min');
     var st = d.querySelector('[data-lc="start"]'), cn = d.querySelector('[data-lc="cancel"]');
-    if (st) st.disabled = !core.canOperate() || !!lc.running;
+    if (st) {
+      // v0.7.1(L7): 시작할 수 없는 상태(연결 없음 · 멈춤 · 공정 중 · 시작 절차 중)면 흐리게 두고 이유를 툴팁으로
+      var why = !core.canOperate() ? '이 PC 에서만 됩니다' : lc.running ? '누설률 점검 중' : (lc.blocked || '');
+      st.disabled = !!why;
+      if (st.title !== why) st.title = why;
+    }
     if (cn) cn.disabled = !core.canOperate() || !lc.running;
     var lb = core.bind('lcBody');
     var rec = lc.recent || [];
@@ -260,7 +265,7 @@
           '<td class="mono">' + core.esc(r.value) + (r.unit ? ' ' + core.esc(r.unit) : '') + '</td>' +
           '<td class="mono">' + (r.limit ? core.esc(r.limit) : 'Off') + '</td>' +
           '<td class="mono">' + core.esc(r.reset_at || fmt.DASH) + '</td>' +
-          '<td><button class="btn sm" data-mtreset="' + core.esc(r.key) + '"' + (locked() ? ' disabled title="관리자 잠금 해제 필요"' : '') +
+          '<td><button class="btn sm" data-mtreset="' + core.esc(r.key) + '" data-mtlabel="' + core.esc(r.label) + '"' + (locked() ? ' disabled title="관리자 잠금 해제 필요"' : '') +
           '>Reset</button></td></tr>';
       }).join(''));
     }
@@ -282,7 +287,9 @@
       w.app.send('leak_cancel');
     } else if (b.dataset.mtreset) {
       var key = b.dataset.mtreset;
-      core.confirmAsk('정비 카운터를 리셋할까요?', '<b>' + core.esc(key) + '</b> 를 0 으로 만듭니다. 이전 값은 이벤트 로그에 남습니다.',
+      // v0.7.1(U6): 키(hours:pump) 대신 항목 이름
+      core.confirmAsk('정비 카운터를 리셋할까요?', '<b>' + core.esc(b.dataset.mtlabel || key) +
+        '</b> 를 0 으로 만듭니다. 이전 값은 이벤트 로그에 남습니다.',
         'Reset', function () { w.app.send('maint_reset', { token: adm.token, key: key }); });
     }
   });

@@ -15,6 +15,7 @@ data/maintenance.json(원자적 저장)에 남긴다:
 """
 
 import os
+import json
 import time
 
 from . import addresses as A
@@ -22,7 +23,7 @@ from . import device as DEV
 from . import logger
 from . import paths
 from . import recipe as R
-from .storage import atomic_write_json, read_json
+from .storage import atomic_write_json
 
 SAVE_S = 60.0
 COUNTED_KEEP = 300          # 센 데이터 로그 이름을 이만큼 기억한다
@@ -42,11 +43,39 @@ class Maintenance:
         self._last_t = None
         self._saved_at = 0.0
         self.dirty = False
+        self.problem = ""           # 파일을 읽지 못했을 때의 알림(Program Notices · 이벤트 로그)
+        self._no_save = False       # 읽지 못한 파일을 옮기지도 못했다 — 덮어쓰지 않는다
 
     # ===================== 파일 =====================
+    def _read(self) -> dict:
+        """★ v0.7.1(M2): 정비 카운터 파일을 못 읽으면(깨짐 · 권한) 0 으로 덮어쓰지 않는다 — maintenance.bad-<시각>.json 으로
+        옮기고 알린 뒤 새로 센다. 옮기지도 못하면 이번 실행에서는 저장하지 않는다."""
+        p = path()
+        self.problem, self._no_save = "", False
+        if not os.path.isfile(p):
+            return {}
+        try:
+            with open(p, encoding="utf-8-sig") as f:
+                d = json.load(f)
+            if not isinstance(d, dict):
+                raise ValueError("JSON 객체가 아님")
+            return d
+        except Exception as e:  # noqa: BLE001
+            why = f"{type(e).__name__}: {logger.clean(e, 120)}"
+        bad = os.path.join(os.path.dirname(p), f"maintenance.bad-{time.strftime('%Y%m%d_%H%M%S')}.json")
+        try:
+            os.replace(p, bad)
+            self.problem = (f"정비 카운터 파일을 읽지 못했습니다({why}) — {os.path.basename(bad)} 로 옮기고 0 부터 "
+                            "새로 셉니다")
+        except OSError as e:
+            self._no_save = True
+            self.problem = (f"정비 카운터 파일을 읽지 못했고 옮기지도 못했습니다({why} · {e}) — 덮어쓰지 않게 이번 실행에서는 "
+                            "저장하지 않습니다")
+        logger.write("err", self.problem)
+        return {}
+
     def load(self):
-        d = read_json(path()) if os.path.isfile(path()) else None
-        d = d if isinstance(d, dict) else {}
+        d = self._read()
         valves = d.get("valves") if isinstance(d.get("valves"), dict) else {}
         hours = d.get("hours") if isinstance(d.get("hours"), dict) else {}
         out = {"valves": {}, "hours": {}, "counted": [str(x) for x in (d.get("counted") or [])
@@ -65,7 +94,7 @@ class Maintenance:
         return self.data if self.data is not None else self.load()
 
     def save(self, force: bool = False):
-        if not (self.dirty or force):
+        if not (self.dirty or force) or self._no_save:
             return
         try:
             os.makedirs(paths.DATA_DIR, exist_ok=True)
@@ -86,26 +115,36 @@ class Maintenance:
             v["open_ms"] += int(ms)
         self.dirty = True
 
-    def count_run(self, cfg, key: str, recipe, s, last_pos, normal: bool) -> str:
-        """끝 판정 때 — 밸브 사용량을 더하고 이벤트 로그 글을 돌려준다(이미 센 것 · 표 없음이면 그 글)."""
+    def count_run(self, cfg, key: str, recipe, s, last_pos, normal: bool, words=None, last_seq=4) -> str:
+        """끝 판정 때 — 밸브 사용량을 더하고 이벤트 로그 글을 돌려준다(이미 센 것 · 표 없음이면 그 글).
+        last_pos: 공정 중 마지막으로 본 (블록, 스텝, 사이클, 그룹 회차). words: 되읽은 PLC 표(레시피가 없으면 이것으로 —
+        v0.7.1 M3). last_seq: 공정 중 마지막으로 본 시퀀서 상태(3 = 블록 준비 · None = 스텝을 본 적 없음이면 그 블록은
+        세지 않는다 — 시작하지 않은 스텝)."""
         d = self._d()
         if key in d["counted"]:
             return ""
+        if not (isinstance(recipe, dict) and recipe.get("blocks")) and words:
+            recipe = R.recipe_from_words(words)
         if not (isinstance(recipe, dict) and recipe.get("blocks")):
             return "정비 카운터: 레시피(표) 없이 이어받은 공정이라 밸브 열림을 세지 않았습니다"
+        before = not normal and last_seq in (None, 3)
         if normal:
             upto, where = None, "레시피 전체"
         elif s is not None and s[A.D_SEQ_STATE] in (6, 8) and s[A.D_SEQ_BLOCK]:
             upto = {"block": s[A.D_SEQ_BLOCK], "step": s[A.D_SEQ_STEP],
                     "cycle": A.dword(s[A.D_SEQ_BLOCK_PASS], s[A.D_SEQ_BLOCK_PASS + 1]),
-                    "group_pass": s[A.D_SEQ_GROUP_PASS]}
-            where = f"끝 위치 블록 {upto['block']} · 스텝 {upto['step']} · 사이클 {upto['cycle']}까지"
+                    "group_pass": s[A.D_SEQ_GROUP_PASS], "before_block": before}
+            where = f"끝 위치 블록 {upto['block']} · 스텝 {upto['step']} · 사이클 {upto['cycle']}"
         elif last_pos:
-            upto = {"block": last_pos[0], "step": last_pos[1], "cycle": last_pos[2],
-                    "group_pass": s[A.D_SEQ_GROUP_PASS] if s is not None else 1}
-            where = f"마지막으로 본 위치 블록 {last_pos[0]} · 스텝 {last_pos[1]} · 사이클 {last_pos[2]}까지"
+            # ★ v0.7.1(M1): 그룹 회차도 공정 중 마지막으로 본 값(PLC 재시작이면 끝 스냅샷은 0 이다)
+            gp = last_pos[3] if len(last_pos) > 3 else (s[A.D_SEQ_GROUP_PASS] if s is not None else 1)
+            upto = {"block": last_pos[0], "step": last_pos[1], "cycle": last_pos[2], "group_pass": gp or 1,
+                    "before_block": before}
+            where = (f"마지막으로 본 위치 블록 {last_pos[0]} · 스텝 {last_pos[1]} · 사이클 {last_pos[2]}"
+                     f" · 그룹 회차 {gp or 1}")
         else:
             return "정비 카운터: 공정 위치를 몰라 밸브 열림을 세지 않았습니다"
+        where += "(그 블록은 준비 중이라 빼고)" if (upto and before) else ("까지" if upto else "")
         usage = R.valve_usage(cfg, recipe, upto)
         self.add_valves(usage)
         d["counted"] = (d["counted"] + [key])[-COUNTED_KEEP:]
@@ -159,7 +198,7 @@ class Maintenance:
         return out
 
     def notices(self, cfg) -> list:
-        return [("warn", f"정비 한계 — {r['label']} {r['value']}{(' ' + r['unit']) if r['unit'] else ''} "
+        return ([("err", self.problem)] if self.problem else []) + [("warn", f"정비 한계 — {r['label']} {r['value']}{(' ' + r['unit']) if r['unit'] else ''} "
                          f"≥ 한계 {r['limit']:g}")
                 for r in self.rows(cfg) if r["over"]]
 

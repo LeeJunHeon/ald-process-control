@@ -510,7 +510,8 @@ def _block_usage(acc: dict, block: dict, vmin: int, k: int = 1, cycle=None, idx=
 def valve_usage(cfg: dict, recipe: dict, upto=None) -> dict:
     """레시피를 돌렸을 때 밸브별 {tag: [열림 횟수, 열린 ms]}. 그룹은 total_ms 와 같은 순서(번호 순 · 겹치지 않음).
     upto 가 없으면 레시피 전체, 있으면 {"block", "step"(표 전체 기준 번호), "cycle", "group_pass"} 위치의 스텝까지
-    (그 스텝 포함). ★ 반복이 커도(블록 1,000,000 · 그룹 32,767) 하나씩 펼치지 않고 곱으로 센다."""
+    (그 스텝 포함). upto["before_block"] 이 참이면 그 블록(그 그룹 회차)에 들어가기 전까지 — 블록 준비 중 끝남(v0.7.1 M3).
+    ★ 반복이 커도(블록 1,000,000 · 그룹 32,767) 하나씩 펼치지 않고 곱으로 센다."""
     vmin, _prep = _prm(cfg)
     blocks = (recipe or {}).get("blocks") or []
     acc = {}
@@ -520,6 +521,7 @@ def valve_usage(cfg: dict, recipe: dict, upto=None) -> dict:
     if upto and not (1 <= ub <= len(blocks)):
         upto, ub = None, 0
     cyc = idx = None
+    before = bool(upto and upto.get("before_block"))
     if upto:
         base = sum(len(b.get("steps") or []) for b in blocks[:ub - 1])
         idx = int(upto.get("step") or base + 1) - base - 1
@@ -536,18 +538,44 @@ def valve_usage(cfg: dict, recipe: dict, upto=None) -> dict:
                     _block_usage(acc, blocks[j - 1], vmin, gp - 1)
                 for j in range(a, ub):
                     _block_usage(acc, blocks[j - 1], vmin)
-                _block_usage(acc, blocks[ub - 1], vmin, 1, cyc, idx)
+                if not before:
+                    _block_usage(acc, blocks[ub - 1], vmin, 1, cyc, idx)
                 return acc
             for j in range(a, b + 1):
                 _block_usage(acc, blocks[j - 1], vmin, r)
             n = b + 1
         else:
             if upto and n == ub:
-                _block_usage(acc, blocks[n - 1], vmin, 1, cyc, idx)
+                if not before:
+                    _block_usage(acc, blocks[n - 1], vmin, 1, cyc, idx)
                 return acc
             _block_usage(acc, blocks[n - 1], vmin)
             n += 1
     return acc
+
+
+def recipe_from_words(words) -> dict:
+    """PLC 표(words) → 밸브 사용량을 셀 만큼의 레시피 {"blocks": [{repeat, steps: [{time_ms, valves}]}], "groups"}.
+    v0.7.1(M3): 표를 되읽어 '(PLC 번호 N)' 으로 이어받은 공정 · 그 공정의 꺼진 동안 끝남 판정을 셀 때 쓴다."""
+    off = A.RCP_SUM_BASE
+
+    def get(addr):
+        i = addr - off
+        return int(words[i]) & 0xFFFF if 0 <= i < len(words) else 0
+    info = from_plc_words(words)
+    ns = min(int(info["step_count"]), A.RCP_STEP_MAX)
+    steps = []
+    for n in range(1, ns + 1):
+        b = A.D_RCP_STEP_BASE + (n - 1) * A.RCP_STEP_STRIDE
+        bits = A.dword(get(b + A.RCP_STEP_VALVE_LO), get(b + A.RCP_STEP_VALVE_LO + 1))
+        steps.append({"time_ms": A.dword(get(b + A.RCP_STEP_TIME_LO), get(b + A.RCP_STEP_TIME_LO + 1)),
+                      "valves": [v["tag"] for v in DEV.VALVES if (bits >> v["bit"]) & 1]})
+    blocks = []
+    for bl in info["blocks"]:
+        a, z = int(bl["first_step"]), int(bl["last_step"])
+        blocks.append({"repeat": int(bl["repeat"] or 1),
+                       "steps": steps[a - 1:z] if 1 <= a <= z <= ns else []})
+    return {"blocks": blocks, "groups": [dict(g) for g in info["groups"]]}
 
 
 def summarize(cfg: dict, recipe: dict) -> dict:

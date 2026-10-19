@@ -375,7 +375,9 @@ def validate(cfg: dict) -> list:
     for key, lo, hi in (("press_high_torr", 0, 1000), ("press_high_s", 0, 3600),
                         ("heater_dev_c", 0, 1000), ("heater_dev_s", 0, 86400)):
         if not _in_range(pr.get(key), lo, hi):
-            p.append(("err", f"process.{key} 는 {lo}~{hi} 여야 합니다: {pr.get(key)!r} (0 = 끔)"))
+            # v0.7.1(W4): 한계 값(_torr · _c)은 0 = 끔, 지속 시간(_s)은 0 = 넘는 즉시
+            p.append(("err", f"process.{key} 는 {lo}~{hi} 여야 합니다: {pr.get(key)!r} "
+                             + ("(0 = 넘는 즉시)" if key.endswith("_s") else "(0 = 끔)")))
     if not isinstance(pr.get("press_high_abort", False), bool):
         p.append(("err", "process.press_high_abort 는 true 또는 false 여야 합니다"))
     # v0.7.0(A3): 누설률 점검

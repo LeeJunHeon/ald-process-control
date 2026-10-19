@@ -303,7 +303,6 @@ class State:
             "alarm_defs": {f"{tag}-{d['bit']:02d}": {"name": d["name"], "crit": d["crit"],
                                                      "cause": d.get("cause", ""), "check": d.get("check", "")}
                            for tag, defs in (("A0", DEV.ALARMS0), ("A1", DEV.ALARMS1)) for d in defs},
-            "maint_hours": DEV.MAINT_HOURS,
         }
 
     def live(self) -> dict:
@@ -461,9 +460,19 @@ class State:
             if conn and A.bit(link.status[A.D_ALARM0], A.ALM0_PC_LINK):
                 st = link.status[A.D_STATE]
                 if st in (A.STATE_READY, A.STATE_RUN, A.STATE_PAUSE, A.STATE_STOPPING):
-                    out.append(["warn", TRIP_RUN_TEXT])
+                    out.append(["warn", TRIP_RUN_TEXT, "plc"])         # 'plc' — PLC 값으로 만든 알림(멈춤이면 화면이 뺀다)
                 elif st == A.STATE_SAFE_STOP:
-                    out.append(["err", TRIP_STOP_TEXT])
+                    # ★ v0.7.1(P6): '[Alarm Reset] 으로 풀립니다' 는 트립만이 원인일 때만 — 비상정지 · 중대 알람이
+                    #   같이 있으면 그 원인을 적는다(공정 밸브 허가 상세와 같은 판정)
+                    from .process import trip_only, crit_names_of
+                    s = link.status
+                    if trip_only(s):
+                        out.append(["err", TRIP_STOP_TEXT, "plc"])
+                    else:
+                        cause = crit_names_of(s)
+                        out.append(["err", "PC 끊김 트립도 남아 있지만 PLC 안전 정지 원인은 "
+                                           + (" · ".join(cause) or "중대 알람") + " 입니다 — 원인을 없앤 뒤 [Alarm Reset]",
+                                    "plc"])
             if self.runner is not None:
                 out += [list(x) for x in getattr(self.runner, "watch_notices", [])]
             from .maintenance import maint
@@ -475,7 +484,7 @@ class State:
     def _leak_status(self):
         try:
             from .leakcheck import leak
-            return leak.status(self.cfg)
+            return leak.status(self.cfg, self)
         except Exception:  # noqa: BLE001
             return {}
 

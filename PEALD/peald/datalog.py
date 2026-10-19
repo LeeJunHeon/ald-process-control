@@ -66,12 +66,13 @@ class DataLog:
         return self.fp is not None
 
     # ===================== 시작 · 끝 =====================
-    def start(self, recipe_name: str, recipe: dict, table: dict, total_ms: int, adopted: bool = False):
+    def start(self, recipe_name: str, recipe: dict, table: dict, total_ms: int, adopted: bool = False,
+              may_resume: bool = True):
         if self.fp:
             self.close()
         self.error = ""
         self._down_since = 0.0
-        if adopted and self._resume(table):
+        if adopted and may_resume and self._resume(table):
             return
         try:
             os.makedirs(paths.DATALOG_DIR, exist_ok=True)
@@ -116,6 +117,10 @@ class DataLog:
             return False
         name, meta = latest_meta()
         if not name or judged(meta) or meta.get("number") != num or meta.get("checksum") != chk:
+            return False
+        if not resume_window_ok(meta):
+            logger.write("info", f"이어받기 — 데이터 로그 {name} 은(는) 시작 시각 · 예상 시간으로 보아 이 공정이 아니어서 "
+                                 "새 파일로 씁니다")
             return False
         path = os.path.join(paths.DATALOG_DIR, name + ".csv")
         try:
@@ -369,6 +374,17 @@ def table_id(table):
         except Exception:  # noqa: BLE001
             pass
     return t.get("number"), t.get("checksum")
+
+
+def resume_window_ok(meta, now=None) -> bool:
+    """v0.7.1(P2): 메타의 시작 시각 + 예상 시간 + max(1 시간, 예상 시간의 50 %) 안인가(시작 시각을 못 읽으면 아니다)."""
+    try:
+        t0 = time.mktime(time.strptime(str(meta.get("started") or ""), "%Y-%m-%d %H:%M:%S"))
+    except (TypeError, ValueError, OverflowError):
+        return False
+    est = max(0.0, float(meta.get("estimated_ms") or 0) / 1000.0)
+    now = time.time() if now is None else now
+    return t0 - 60 <= now <= t0 + est + max(3600.0, est * 0.5)
 
 
 def judged(meta) -> bool:

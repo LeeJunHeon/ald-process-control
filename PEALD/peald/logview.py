@@ -177,6 +177,7 @@ def _guess_meta(path: str) -> dict:
 
 _WARN_RE = re.compile(r"중단|알 수 없음|기록 중단|사이클 후 정지")
 _PC_TAIL_RE = re.compile(r" · PC (끊긴|꺼진) 동안 끝남.*$")
+_TRIP_TAIL_RE = re.compile(r" · 끝난 뒤 안전 정지: .*$")
 
 
 def result_level(result: str) -> str:
@@ -185,6 +186,7 @@ def result_level(result: str) -> str:
     '정상 종료 (끝난 뒤 안전 정지: …)' 와 중단 · 사이클 후 정지 · 알 수 없음 = warn, 그 밖(기록 중 등) = off.
     ★ v0.7.0(P3): 붙인 꼬리(' · PC 끊긴 동안 끝남' · ' · PC 꺼진 동안 끝남(…)')는 떼고 판정한다 — 정상 종료면 ok."""
     r = _PC_TAIL_RE.sub("", result or "")
+    r = _TRIP_TAIL_RE.sub("", r)            # v0.7.1(P1): ' · 끝난 뒤 안전 정지: …' 꼬리도 떼고 본다
     if r.startswith("정상 종료 (끝난 뒤 안전 정지"):
         return "warn"
     if r in ("정상 종료", "정상 종료(추정)") or r.startswith("정상 종료 (사이클 후 정지와 겹침)"):

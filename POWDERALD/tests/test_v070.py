@@ -356,13 +356,14 @@ def test_p7_pc_notices_by_state(clean_state):
     link = FakeLink(_s(4, st=A.STATE_RUN, a0=1 << A.ALM0_PC_LINK))
     state.link = link
     n = state.pc_notices(True)
-    assert ["warn", P_TRIP_RUN] in n
+    assert ["warn", P_TRIP_RUN, "plc"] in n                  # v0.7.1(U2): 'plc' — PLC 값으로 만든 알림 표시
     link.status = _s(6, st=A.STATE_SAFE_STOP, a0=1 << A.ALM0_PC_LINK)
-    assert ["err", "PC 끊김 트립이 남아 PLC 가 안전 정지 상태입니다 — [Alarm Reset] 으로 풀립니다."] in state.pc_notices(True)
+    assert ["err", "PC 끊김 트립이 남아 PLC 가 안전 정지 상태입니다 — [Alarm Reset] 으로 풀립니다.", "plc"] in \
+        state.pc_notices(True)
     link.status = _s(1)
     assert not [x for x in state.pc_notices(True) if "PC 끊김" in x[1] or "PC 연결" in x[1]]
     main = _src("frontend", "js", "views", "main.js")
-    assert "t.plc.pc_trip" in main and "'PC Trip'" in main
+    assert "t.plc.pc_trip" in main and "core.chip('Trip', 'warn', 'PC Trip — " in main      # v0.7.1(U4): 짧은 글
     assert "(t.pc_notices || [])" in _src("frontend", "js", "views", "alarm.js")
 
 
@@ -535,9 +536,8 @@ def test_a1_alarm_cause_check_everywhere(clean_state):
     assert 'tabindex="0" role="button" aria-expanded="' in alarm and "almhelp" in alarm and "title=\"' + core.esc(tip)" in alarm
     core = _src("frontend", "js", "core.js")
     assert "'<div class=\"am-check\">확인: '" in core
-    out = _node(_fn(core, "firstSentence") + r'''
-      console.log(JSON.stringify([firstSentence('a b. c d'), firstSentence('x — y'), firstSentence('one')]));''')
-    assert out == ["a b.", "x", "one"]
+    # v0.7.1(U1): 첫 문장으로 자르지 않는다(' — ' 뒤의 안전 문구가 빠졌다) — 전부 보인다
+    assert "var ck = (defs[a.code] || {}).check || '';" in core and "firstSentence" not in core
 
 
 # ===================== A2. 실행 정보 =====================
@@ -877,6 +877,7 @@ def test_a5_press_high_and_heater_dev(clean_state, monkeypatch):
     st[A.D_HEATER_PV] = 1000                                       # 100.0 ℃
     link = FakeLink(st)
     link.cmd[A.D_HEATER_SV] = 2000                                  # 설정 200.0 ℃
+    link.cmd[A.D_HEATER_POWER] = 1                                  # v0.7.1(W1): 전원이 켜진 채널만 본다
     state.link = link
     logs = []
 
@@ -896,7 +897,16 @@ def test_a5_press_high_and_heater_dev(clean_state, monkeypatch):
     paused = list(st)
     paused[A.D_STATE] = A.STATE_PAUSE
     clk[0] = 7.0
-    r._watch_limits(paused, lg)                                     # 일시정지는 보지 않는다 — 해제
+    r._watch_limits(paused, lg)
+    # v0.7.1(W2): 일시정지는 타이머를 멈추기만 한다 — '해제' 로 끝내지 않고, 재개 뒤 다시 경고 · 토스트하지 않는다
+    assert "공정 중 압력 상한 해제" not in logs and [n for n in r.watch_notices if "일시정지 중" in n[1]]
+    clk[0] = 8.0
+    r._watch_limits(st, lg)
+    assert len([m for m in logs if m.startswith("공정 중 압력 상한 —")]) == 1
+    assert len([t for t in r.pending_toasts if "압력 상한" in t[1]]) == 1
+    low = list(st)
+    low[A.D_CVG_RAW] = state.conv.cvg.to_raw(0.1)
+    r._watch_limits(low, lg)
     assert "공정 중 압력 상한 해제" in logs and not [n for n in r.watch_notices if "압력" in n[1]]
     clk[0] = 130.0
     r._watch_limits(st, lg)
@@ -917,8 +927,9 @@ def test_a5_press_high_and_heater_dev(clean_state, monkeypatch):
     for t in (200.0, 206.0, 207.0):
         clk[0] = t
         r2._watch_limits(st, lg)
-    assert spawned == [1] and r2._abort_why == "압력 상한 — PC 가 즉시 중단"
-    assert P.judge_end(_s(8, blk=1), None, _recipe(), abort_sent=True, abort_why=r2._abort_why) == \
+    # v0.7.1(W3): 이유는 즉시 중단을 실제로 보낼 때(_press_abort 안)만 세운다 — 띄우기만 한 지금은 비어 있다
+    assert spawned == [1] and r2._abort_why == ""
+    assert P.judge_end(_s(8, blk=1), None, _recipe(), abort_sent=True, abort_why="압력 상한 — PC 가 즉시 중단") == \
         "중단 (압력 상한 — PC 가 즉시 중단)"
     # 0 = 끔
     cfg["process"].update({"press_high_torr": 0, "heater_dev_c": 0})

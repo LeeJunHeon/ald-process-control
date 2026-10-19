@@ -786,9 +786,14 @@ header .chip.alarm { border-color: var(--stop-line); color: var(--stop); }
 /* ===================== v0.7.0 ===================== */
 /* B1 — 설정 탭 PLC Parameters 표: Match 칸이 'Ma' 로 잘리던 것. 이름 칸만 줄바꿈을 허용하고(주소 · 값 · 일치 칸은
  *   그대로 한 줄), 그래도 넘치면 표만 가로 스크롤(.tblx) — 768 · 1280 · 1920 폭 모두 Match 칸이 다 보인다 */
-.prmtbl td.l, .prmtbl th.l { white-space: normal; overflow-wrap: anywhere; min-width: 7em; }
+.prmtbl td.l, .prmtbl th.l { white-space: normal; overflow-wrap: anywhere; min-width: 6em; }
 .prmtbl td:last-child, .prmtbl th:last-child { white-space: nowrap; width: 1%; }
-.panel-body > .tblx, .panel-body .tblx { max-width: 100%; overflow-x: auto; }
+/* v0.7.1(U3): Mismatch 칩이 뜨는 줄이 있어도 Match 칸이 다 보이게 — 칸 여백을 좁히고(8 → 4 px) 머리 글은 줄바꿈 허용.
+ * #app 은 960 px 고정 캔버스를 zoom 으로 키우므로 768 · 1280 · 1920 이 같은 배치다(겹친 '.panel-body .tblx' 규칙은 뺐다 —
+ * .tblx 하나로 가로 스크롤) */
+.prmtbl td, .prmtbl th { padding-left: 4px; padding-right: 4px; }
+.prmtbl th { white-space: normal; }
+.prmtbl td:last-child .chip { padding: 2px 6px; }
 /* A1 — 현재 알람 행 펼침(원인 · 확인) · 알람 창 '확인:' 줄 */
 .tbl tbody tr.almrow { cursor: pointer; }
 .tbl tbody tr.almrow:focus-visible { outline: 2px solid var(--primary); outline-offset: -2px; }
@@ -800,7 +805,10 @@ header .chip.alarm { border-color: var(--stop-line); color: var(--stop); }
 .runinfo label { display: grid; grid-template-columns: 6em 1fr; align-items: center; gap: 6px; }
 .runinfo .inp { width: 100%; box-sizing: border-box; }
 .dl-run { margin-top: 2px; font-size: var(--fs-sm); }
-.dl-run .dl-memo { white-space: pre-wrap; overflow-wrap: anywhere; }
+.dl-run .dl-memo { white-space: pre-wrap; overflow-wrap: anywhere; display: -webkit-box; -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2; line-clamp: 2; overflow: hidden; }   /* v0.7.1(U5): 두 줄까지, 전체는 title */
+.dl-item .b .dl-who { flex: 0 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.dl-item .b .right { flex: 0 0 auto; white-space: nowrap; }
 /* A3 · A4 — Maintenance 패널 */
 .sub-h { font-weight: 700; margin: 2px 0 4px; }
 .lctbl td, .lctbl th, .mttbl td, .mttbl th { white-space: nowrap; }

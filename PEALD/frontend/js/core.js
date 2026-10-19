@@ -114,7 +114,10 @@
     });
     return { clock: t.clock, date: t.date, alarm_popup_seq: t.alarm_popup_seq, alarm_hist_ver: t.alarm_hist_ver,
              datalog: t.datalog, loop: t.loop,
-             plc: Object.assign({}, p, { connected: false, stalled: true, prm: prm, prm_mismatch: [] }),
+             // v0.7.1(U2): PC 쪽 값(누설률 점검 · 정비 카운터 · 서버 알림)은 그대로 — PLC 값으로 만든 트립 알림만 뺀다
+             leakcheck: t.leakcheck, maintenance: t.maintenance,
+             pc_notices: (t.pc_notices || []).filter(function (n) { return n[2] !== 'plc'; }),
+             plc: Object.assign({}, p, { connected: false, stalled: true, prm: prm, prm_mismatch: [], pc_trip: false }),
              alarms: [], heaters: [], mfc: [], process: {}, manual: {}, seq: {}, extra: {}, pressure: {} };
   }
 
@@ -446,23 +449,15 @@
     }
   }
 
-  /** 글의 첫 문장 — '. ' 또는 ' — ' 앞까지(마침표는 남긴다). */
-  function firstSentence(s) {
-    s = String(s || '');
-    var i = s.indexOf('. ');
-    var j = s.indexOf(' — ');
-    var cut = [i >= 0 ? i + 1 : -1, j].filter(function (x) { return x > 0; });
-    return cut.length ? s.slice(0, Math.min.apply(null, cut)) : s;
-  }
-
   function renderAlarmModal() {
     var t = (lastState || {}).live || {};
     var tbl = bind('amTbl');
     if (!tbl) return;
     var defs = ((lastState || {}).structure || {}).alarm_defs || {};
     var rows = (t.alarms || []).map(function (a) {
-      // v0.7.0(A1): 이름 아래 작게 '확인: …' 첫 문장(전체는 알람 · 로그 탭에서 행을 눌러)
-      var ck = firstSentence((defs[a.code] || {}).check || '');
+      // v0.7.0(A1): 이름 아래 작게 '확인: …'. ★ v0.7.1(U1): 자르지 않는다 — ' — ' 뒤에 안전 문구(원인을 찾기 전에 다시
+      //   시작하지 않는다 · 출입을 막는다 · 공정 중에는 열지 않는다)가 있다. 길면 줄바꿈
+      var ck = (defs[a.code] || {}).check || '';
       return '<tr><td>' + chip(a.crit ? T('s.critical') : T('s.warning'), a.crit ? 'stop' : 'warn') + '</td>' +
         '<td class="mono">' + esc(a.since) + '</td>' +
         '<td class="l">' + esc(a.name) + (ck ? '<div class="am-check">확인: ' + esc(ck) + '</div>' : '') +

@@ -95,6 +95,8 @@ def create_app(config_path: str = "", single_instance: bool = True,
     from .maintenance import maint
     from .leakcheck import leak
     maint.load()                        # v0.7.0(A4) — data/maintenance.json
+    if maint.problem:
+        state.add_log("err", maint.problem)  # v0.7.1(M2) — 이벤트 로그(접속하면 보인다) · Program Notices
     leak.recent = None                  # v0.7.0(A3) — 최근 기록은 처음 볼 때 CSV 에서
     trendlog_mod.cleanup((cfg.get("log") or {}).get("trend_keep_days", 90))
     low = trendlog_mod.disk_warning()
