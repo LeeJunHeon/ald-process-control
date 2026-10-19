@@ -210,7 +210,7 @@
     return panel('Maintenance', '<span data-bind="lcChip"></span>',
       '<div class="sub-h">Leak Check (압력 상승률)</div>' +
       '<div class="adm-row"><span class="dim" data-bind="lcProg">—</span><span class="right">' +
-      '<button class="btn sm primary" data-lc="start"' + (op ? '' : ' disabled title="이 PC 에서만 됩니다"') + '>Leak Check</button>' +
+      '<button class="btn sm primary" data-lc="start"' + (op ? '' : ' disabled title="' + core.esc(core.lockReason()) + '"') + '>Leak Check</button>' +
       '<button class="btn sm" data-lc="cancel"' + (op ? '' : ' disabled') + '>' + T('b.cancel') + '</button></span></div>' +
       '<div class="hint">명령 11 로 IV-E 를 닫고(펌프는 그대로) 안정 뒤 압력 상승률을 잽니다. 끝나면 명령 8 로 IV-E 를 다시 엽니다. ' +
       '점검 중 프로그램을 끄면 IV-E 는 닫힌 채 남습니다 — [Pumping Start] 로 여세요.</div>' +
@@ -241,8 +241,10 @@
       : '대기 — 측정 ' + (lc.measure_s || 0) + ' s · 한계 ' + (lc.limit || 0) + ' mTorr/min');
     var st = d.querySelector('[data-lc="start"]'), cn = d.querySelector('[data-lc="cancel"]');
     if (st) {
-      // v0.7.1(L7): 시작할 수 없는 상태(연결 없음 · 멈춤 · 공정 중 · 시작 절차 중)면 흐리게 두고 이유를 툴팁으로
-      var why = !core.canOperate() ? '이 PC 에서만 됩니다' : lc.running ? '누설률 점검 중' : (lc.blocked || '');
+      // v0.7.1(L7): 시작할 수 없는 상태면 흐리게 두고 이유를 툴팁으로. ★ v0.7.2: 이유는 서버의 시작 조건 전체
+      //   (refuse_reasons — 중대 알람 · Pump · Vacuum OK · IV-E 열림 · 레시피 밸브 · MFC 유량 · RF/O3 포함), 조작 잠금은
+      //   core.lockReason()(서버 끊김 · 원격 · 다른 장비 · 멈춤 — 모두 '이 PC 에서만' 이 아니다)
+      var why = core.lockReason() || (lc.running ? '누설률 점검 중' : (lc.blocked || ''));
       st.disabled = !!why;
       if (st.title !== why) st.title = why;
     }

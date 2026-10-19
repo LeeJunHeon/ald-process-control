@@ -872,11 +872,12 @@ class ProcessRunner:
             key = (dl.name if (dl is not None and dl.fp) else "") or f"run-{int(self.started_at or time.time())}"
             msg = maintenance.count_run(self.state.cfg, key, self.active_recipe, s, self._last_pos,
                                         self.last_result.startswith("정상 종료"),
-                                        words=(self.active_table or {}).get("words"), last_seq=self._last_seq)
+                                        words=(self.active_table or {}).get("words"), last_seq=self._last_seq,
+                                        result=self.last_result)
             if msg:
                 push_log_sync("info", msg)
         except Exception as e:  # noqa: BLE001
-            logger.write("warn", f"정비 카운터 세기 실패(계속 진행): {type(e).__name__}: {e}")
+            _maint_failed(e, lambda m: push_log_sync("warn", m))
 
     def _watch_rf(self, s, push_log_sync):
         """공정 중 RF 스텝(500 ms 이상)이 끝날 때까지 RF 출력(보조 b8)이 한 번도 안 켜지면 경고 한 줄.
@@ -1130,11 +1131,13 @@ class ProcessRunner:
         try:
             from . import maintenance
             msg = maintenance.count_run(self.state.cfg, name, meta.get("recipe"), s, None, res.startswith("정상 종료"),
-                                        words=list(words))
+                                        words=list(words), result=res)
             if msg:
                 await push_log(msg, "info")
         except Exception as e:  # noqa: BLE001
-            logger.write("warn", f"정비 카운터 세기 실패(계속 진행): {e}")
+            fail = []
+            _maint_failed(e, fail.append)
+            await push_log(fail[0], "warn")
         return res
 
     async def adopt_running(self, push_log) -> bool:
@@ -1216,6 +1219,9 @@ class ProcessRunner:
         self.last_result = ""
         self._rf_watch = None
         self._rf_warned = set()
+        # ★ v0.7.2: 이어받았으면 꺼진 동안 끝난 공정 판정 기회는 끝 — 다음 루프(최대 3 s)까지 미루면 그 사이 이어받은
+        #   공정이 끝났을 때 아직 열린 메타를 'PC 꺼진 동안 끝남' 으로 판정할 수 있었다
+        self.offline_checked = True
         await push_log(msg, "warn")
         return True
 
@@ -1355,8 +1361,32 @@ def judge_end(s, table=None, recipe=None, *, crit_text=None, stop_reserved=False
         if not res.startswith("정상 종료") and "끝난 뒤 안전 정지" not in res:
             res += f" · 끝난 뒤 안전 정지: {crit}"
         return res
-    return _judge(s, table, recipe, crit, False, stop_reserved, stopping_seen, b13_rose, abort_sent,
-                  abort_unknown, abort_why)
+    res = _judge(s, table, recipe, crit, False, stop_reserved, stopping_seen, b13_rose, abort_sent,
+                 abort_unknown, abort_why)
+    if trip_pending(s) and not res.startswith("정상 종료") and "끝난 뒤 안전 정지" not in res:
+        # ★ v0.7.2: 끝 스냅샷이 안전 정지 직전 한 스캔(시퀀서 8 · 장비 상태 ≠ 6 · b6 · 중대 알람 없음) — PLC 는 다음
+        #   스캔에 안전 정지한다. 시퀀서 6 갈래(after_stop)와 같게 꼬리를 붙인다(원인은 스냅샷 그대로 트립)
+        res += f" · 끝난 뒤 안전 정지: {TRIP_LEFT_TEXT}"
+    return res
+
+
+def _maint_failed(e, log):
+    """v0.7.2: 정비 카운터 세기 실패 — 이벤트 로그(log — 파일 로그도 거기서)와 Program Notices 경고(다음에 세면 지운다).
+    예전에는 파일 로그 한 줄로만 묻혀 v0.7.1 에서 하나도 세지 않는 것을 놓쳤다."""
+    msg = f"정비 카운터 세기 실패(공정 결과와 무관 — 이번 공정의 밸브 열림을 세지 못함): {type(e).__name__}: {logger.clean(e, 160)}"
+    try:
+        from . import maintenance
+        maintenance.note_count_error(msg)
+    except Exception:  # noqa: BLE001
+        pass
+    log(msg)
+
+
+def trip_pending(s) -> bool:
+    """v0.7.2: 시퀀서 8 로 끝났고 PC 끊김 트립(b6)이 남았는데 아직 안전 정지 전(장비 상태 ≠ 6) · 중대 알람 없음 —
+    다음 스캔에 트립만으로 안전 정지한다."""
+    return (s[A.D_SEQ_STATE] == 8 and s[A.D_STATE] != A.STATE_SAFE_STOP and A.bit(s[A.D_ALARM0], A.ALM0_PC_LINK)
+            and not ((s[A.D_ALARM0] & DEV.CRITICAL_MASK0) or s[A.D_ALARM1]))
 
 
 def trip_only(s) -> bool:

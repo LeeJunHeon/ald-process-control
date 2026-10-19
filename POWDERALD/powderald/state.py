@@ -333,6 +333,8 @@ class State:
                 "config_error": getattr(link, "config_error", "") if link else "",
                 # v0.7.0(P7): 남은 PC 끊김 트립(알람0 b6) — 공정 중이면 끝난 뒤 안전 정지
                 "pc_trip": bool(conn and A.bit(link.status[A.D_ALARM0], A.ALM0_PC_LINK)),
+                # v0.7.2: 운전 탭 'Trip' 칩 툴팁 — 트립만 원인인지 · 아니면 안전 정지 원인 이름(P6 규칙)
+                **self._trip_cause(conn),
             },
             "pc_notices": self.pc_notices(conn),
             "leakcheck": self._leak_status(),
@@ -480,6 +482,20 @@ class State:
         except Exception:  # noqa: BLE001
             pass
         return out
+
+    def _trip_cause(self, conn: bool) -> dict:
+        """{pc_trip_only, pc_trip_cause} — 남은 PC 끊김 트립이 안전 정지(또는 다음 안전 정지)의 유일한 원인인가, 아니면 그
+        원인(중대 알람 이름). Program Notices 의 P6 판정과 같은 규칙."""
+        try:
+            s = self.link.status
+            if not (conn and A.bit(s[A.D_ALARM0], A.ALM0_PC_LINK)):
+                return {"pc_trip_only": False, "pc_trip_cause": ""}
+            from .process import crit_names_of
+            only = not ((s[A.D_ALARM0] & DEV.CRITICAL_MASK0) or s[A.D_ALARM1])     # process.trip_only 와 같은 조건
+            return {"pc_trip_only": only,
+                    "pc_trip_cause": "" if only else (" · ".join(crit_names_of(s)) or "중대 알람")}
+        except Exception:  # noqa: BLE001
+            return {"pc_trip_only": False, "pc_trip_cause": ""}
 
     def _leak_status(self):
         try:

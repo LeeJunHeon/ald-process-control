@@ -321,8 +321,14 @@ def test_l7_start_checks_and_button(clean_state, monkeypatch):
     monkeypatch.setattr(LC.leak, "task", None)
     assert not any(c["key"] == "leakcheck" for c in r.start_checks())
     lk = LC.LeakCheck()
+    # v0.7.2(6): 단추 이유가 시작 조건 전체(refuse_reasons)라 IV-E 열림 입력도 켠 상태로 준비한다(기대값은 그대로)
+    st[A.D_INPUT0] = 1 << A.IN0_IVE_OPEN
+    state.link.status = st
+    state.alarms.clear_all()
     assert lk.blocked(state) == ""
-    state.link.status = _s(4, st=A.STATE_RUN)
+    run = list(st)
+    run[A.D_STATE] = A.STATE_RUN
+    state.link.status = run
     assert lk.blocked(state) == "공정 중입니다"
     state.link.connected = False
     assert lk.blocked(state) == "PLC 에 연결되어 있지 않습니다"

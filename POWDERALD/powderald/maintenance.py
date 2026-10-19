@@ -11,7 +11,7 @@ data/maintenance.json(원자적 저장)에 남긴다:
 한계(maintenance.valve_opens_warn · pump_hours_warn · rf_hours_warn / o3_hours_warn, 0 = 끔)를 넘으면 Program Notices 에
 '정비 한계 — …'. [Reset] 은 관리자 PIN · 확인 창, 이벤트 로그에 이전 값.
 
-★ 기록 실패가 공정 · 화면을 멈추지 않게 한다 — 실패는 로그로만 알린다.
+★ 기록 실패가 공정 · 화면을 멈추지 않게 한다 — 실패는 로그로 알린다(끝 판정 때 세기 실패는 Program Notices 에도 — v0.7.2).
 """
 
 import os
@@ -27,6 +27,7 @@ from .storage import atomic_write_json
 
 SAVE_S = 60.0
 COUNTED_KEEP = 300          # 센 데이터 로그 이름을 이만큼 기억한다
+READ_RETRY_S = 0.5          # 파일 읽기가 일시 오류(PermissionError 등)면 이만큼 뒤 한 번 더(v0.7.2)
 
 
 def path() -> str:
@@ -45,6 +46,7 @@ class Maintenance:
         self.dirty = False
         self.problem = ""           # 파일을 읽지 못했을 때의 알림(Program Notices · 이벤트 로그)
         self._no_save = False       # 읽지 못한 파일을 옮기지도 못했다 — 덮어쓰지 않는다
+        self.count_error = ""       # 끝 판정 때 세기 실패(Program Notices 경고 — v0.7.2)
 
     # ===================== 파일 =====================
     def _read(self) -> dict:
@@ -54,14 +56,25 @@ class Maintenance:
         self.problem, self._no_save = "", False
         if not os.path.isfile(p):
             return {}
-        try:
-            with open(p, encoding="utf-8-sig") as f:
-                d = json.load(f)
-            if not isinstance(d, dict):
-                raise ValueError("JSON 객체가 아님")
-            return d
-        except Exception as e:  # noqa: BLE001
-            why = f"{type(e).__name__}: {logger.clean(e, 120)}"
+        why = ""
+        for i in range(2):
+            try:
+                with open(p, encoding="utf-8-sig") as f:
+                    d = json.load(f)
+                if not isinstance(d, dict):
+                    raise ValueError("JSON 객체가 아님")
+                return d
+            except FileNotFoundError:
+                return {}
+            except OSError as e:
+                # ★ v0.7.2: 권한 · 잠금(백신 · 동기화 프로그램) 같은 일시 오류 — 0.5 s 뒤 한 번 더 읽는다
+                why = f"{type(e).__name__}: {logger.clean(e, 120)}"
+                if i == 0:
+                    time.sleep(READ_RETRY_S)
+                    continue
+            except Exception as e:  # noqa: BLE001
+                why = f"{type(e).__name__}: {logger.clean(e, 120)}"
+            break
         bad = os.path.join(os.path.dirname(p), f"maintenance.bad-{time.strftime('%Y%m%d_%H%M%S')}.json")
         try:
             os.replace(p, bad)
@@ -115,11 +128,13 @@ class Maintenance:
             v["open_ms"] += int(ms)
         self.dirty = True
 
-    def count_run(self, cfg, key: str, recipe, s, last_pos, normal: bool, words=None, last_seq=4) -> str:
+    def count_run(self, cfg, key: str, recipe, s, last_pos, normal: bool, words=None, last_seq=4,
+                  result: str = "") -> str:
         """끝 판정 때 — 밸브 사용량을 더하고 이벤트 로그 글을 돌려준다(이미 센 것 · 표 없음이면 그 글).
         last_pos: 공정 중 마지막으로 본 (블록, 스텝, 사이클, 그룹 회차). words: 되읽은 PLC 표(레시피가 없으면 이것으로 —
         v0.7.1 M3). last_seq: 공정 중 마지막으로 본 시퀀서 상태(3 = 블록 준비 · None = 스텝을 본 적 없음이면 그 블록은
-        세지 않는다 — 시작하지 않은 스텝)."""
+        세지 않는다 — 시작하지 않은 스텝). result: 끝 결과 — 레시피 표 오류(b13)면 그 블록은 세지 않는다(v0.7.2 —
+        블록 n 적재가 거절되면 래더는 블록 n 첫 스텝 · 사이클 1 을 쓴 뒤 끝낸다)."""
         d = self._d()
         if key in d["counted"]:
             return ""
@@ -127,7 +142,7 @@ class Maintenance:
             recipe = R.recipe_from_words(words)
         if not (isinstance(recipe, dict) and recipe.get("blocks")):
             return "정비 카운터: 레시피(표) 없이 이어받은 공정이라 밸브 열림을 세지 않았습니다"
-        before = not normal and last_seq in (None, 3)
+        before = not normal and (last_seq in (None, 3) or "레시피 표 오류" in (result or ""))
         if normal:
             upto, where = None, "레시피 전체"
         elif s is not None and s[A.D_SEQ_STATE] in (6, 8) and s[A.D_SEQ_BLOCK]:
@@ -150,6 +165,7 @@ class Maintenance:
         d["counted"] = (d["counted"] + [key])[-COUNTED_KEEP:]
         self.save(force=True)
         n = sum(v[0] for v in usage.values())
+        self.count_error = ""
         return f"정비 카운터: 밸브 열림 {n} 회 더함({where})"
 
     def manual_open(self, tag: str):
@@ -198,7 +214,8 @@ class Maintenance:
         return out
 
     def notices(self, cfg) -> list:
-        return ([("err", self.problem)] if self.problem else []) + [("warn", f"정비 한계 — {r['label']} {r['value']}{(' ' + r['unit']) if r['unit'] else ''} "
+        return (([("err", self.problem)] if self.problem else [])
+                + ([("warn", self.count_error)] if self.count_error else [])) + [("warn", f"정비 한계 — {r['label']} {r['value']}{(' ' + r['unit']) if r['unit'] else ''} "
                          f"≥ 한계 {r['limit']:g}")
                 for r in self.rows(cfg) if r["over"]]
 
@@ -238,5 +255,11 @@ def _float(v) -> float:
 maint = Maintenance()
 
 
-def count_run(cfg, key, recipe, s, last_pos, normal) -> str:
-    return maint.count_run(cfg, key, recipe, s, last_pos, normal)
+def count_run(cfg, key, recipe, s, last_pos, normal, **kw) -> str:
+    # ★ v0.7.2: 이름 인자(words · last_seq · result)도 그대로 넘긴다 — 예전에는 받지 않아 TypeError 로 하나도 세지 않았다
+    return maint.count_run(cfg, key, recipe, s, last_pos, normal, **kw)
+
+
+def note_count_error(text: str):
+    """끝 판정 때 세기 실패 — 이벤트 로그와 함께 Program Notices 에 경고로 한 번(다음에 세면 지운다)."""
+    maint.count_error = text

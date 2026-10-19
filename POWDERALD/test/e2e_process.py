@@ -1112,7 +1112,9 @@ class Run:
         await self.ready()
         name = "E2E Adopt Trip"
         before = self.datalog_names()
-        started, _ = await self.run_recipe(name, long_recipe(name, 40, 100), wait_end=False)
+        adopt_rec = long_recipe(name, 40, 100)
+        rows0 = self._maint_rows()
+        started, _ = await self.run_recipe(name, adopt_rec, wait_end=False)
         if started:
             await asyncio.sleep(2)
             await op.close()
@@ -1131,6 +1133,11 @@ class Run:
                        and meta.get("result") == res and bool(meta.get("resumed")),
                        "'정상 종료 (끝난 뒤 안전 정지: PC Link Lost …)' · 새 파일 1 개(resumed) · 메타 결과 같음",
                        f"{res} · {len(new)} 개 · 메타 {meta.get('result')} · resumed {len(meta.get('resumed') or [])}")
+            # v0.7.2(8): 이어받은 공정의 끝 판정에서도 정비 카운터가 셈 함수 값만큼 는다(실제 끝 판정 경로)
+            await op.wait(lambda: self._maint_rows() != rows0, 10)
+            want = R_usage(self.h.cfg, adopt_rec)
+            got = self._maint_delta(rows0)
+            self.check("이어받은 공정 끝 → 정비 카운터 = 셈 함수(recipe.valve_usage)", got == want, want, got)
             await op.send("alarm_reset")
             await op.wait(lambda: not self._trip(), 5)
         # (4) 공정 중 프로그램 재시작 → 이어받기 → 같은 데이터 로그 파일 · 끝 결과가 그 메타에
@@ -1159,6 +1166,15 @@ class Run:
                        f"{len(new)} 개 · 메타 {meta.get('result')} · resumed {len(meta.get('resumed') or [])} · {res}")
 
     # ---------- v0.7.0(A) 운영 기능 — 누설률 점검 · 정비 카운터 · 압력 상한 · 실행 정보 ----------
+    def _maint_rows(self):
+        return {r["key"]: r["value"] for r in self.op.live.get("maintenance") or []}
+
+    def _maint_delta(self, rows0):
+        """정비 카운터 밸브 열림의 늘어난 값 {태그: 늘어난 횟수}(0 은 뺀다)."""
+        rows1 = self._maint_rows()
+        got = {k.split(":", 1)[1]: rows1.get(k, 0) - rows0.get(k, 0) for k in rows1 if k.startswith("valve:")}
+        return {k: v for k, v in got.items() if v}
+
     async def _leak(self, label, want, cancel=False):
         op = self.op
         t0 = time.monotonic()
@@ -1193,18 +1209,23 @@ class Run:
         await self.ready()
         rec = recipes(2)
         name = [k for k in sorted(rec) if "Group" not in k and "Plasma" not in k][0]     # TMA-H2O / TMA-O3
-        rows0 = {r["key"]: r["value"] for r in op.live.get("maintenance") or []}
+        rows0 = self._maint_rows()
         before = self.datalog_names()
         info = {"operator": "E2E 작업자", "sample": "Si\t(100)", "memo": "e2e 메모"}
+        t0 = time.monotonic()
         started, res = await self.run_recipe(name, rec[name], info=info)
         if started:
-            await op.wait(lambda: {r["key"]: r["value"] for r in op.live.get("maintenance") or []} != rows0, 10)
-            rows1 = {r["key"]: r["value"] for r in op.live.get("maintenance") or []}
+            await op.wait(lambda: self._maint_rows() != rows0, 10)
             want = R_usage(self.h.cfg, rec[name])
-            got = {k.split(":", 1)[1]: rows1.get(k, 0) - rows0.get(k, 0) for k in rows1 if k.startswith("valve:")}
-            got = {k: v for k, v in got.items() if v}
-            self.check("짧은 레시피 뒤 정비 카운터 = 셈 함수(recipe.valve_usage)", res.startswith("정상 종료") and got == want,
-                       want, got)
+            got = self._maint_delta(rows0)
+            # ★ v0.7.2(8): 끝 판정 경로(_finish → 정비 카운터)를 거쳤는지 — 이벤트 로그 '정비 카운터: 밸브 열림 …' 이 있고
+            #   '세기 실패' 가 없다(v0.7.1 은 TypeError 로 세지 않았다)
+            lines = [m for t, _lv, m in op.logs if t >= t0]
+            path_ok = (any(m.startswith("정비 카운터: 밸브 열림") for m in lines)
+                       and not any("정비 카운터 세기 실패" in m for m in lines))
+            self.check("짧은 레시피 뒤 정비 카운터 = 셈 함수(recipe.valve_usage) · 끝 판정 경로",
+                       res.startswith("정상 종료") and got == want and path_ok, want,
+                       f"{got} · 로그 {[m for m in lines if '정비 카운터' in m][:2]}")
             await self.new_datalog(before)
             new = [n for n in self.datalog_names() if n not in before]
             meta = self._meta(new[0]) if new else {}

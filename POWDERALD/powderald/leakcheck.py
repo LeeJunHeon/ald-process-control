@@ -31,6 +31,7 @@ RUNNING_STATES = (A.STATE_READY, A.STATE_RUN, A.STATE_PAUSE, A.STATE_STOPPING)
 REOPEN_TEXT = "[Pumping Start] 로 IV-E 를 다시 여세요"
 RELINK_WAIT_S = 10.0            # 되돌리기 전에 짧은 링크 끊김이 다시 붙기를 기다리는 시간(v0.7.1 L5)
 MEASURE_MIN_S = 10.0            # leakcheck.measure_s 최소(설정 검사와 같게 — v0.7.1 W4)
+RANGE_BAD_N = 3                 # 게이지 범위 밖이 이만큼 이어져야 멈춘다(한 번 튄 값으로 멈추지 않게 — v0.7.2)
 
 
 def csv_path() -> str:
@@ -69,9 +70,9 @@ def pick_gauge(state, s) -> str:
     ★ v0.7.1(L3): 측정 시작 때 한 번 정하고 끝까지 그것으로 잰다(한 회귀에 CM · CVG 가 섞이지 않게)."""
     c = state.conv
     raw = s[A.D_CM_RAW]
-    if c.cm.installed and c.cm.confirmed and 0 < raw < c.raw_max and c.cm.to_torr(raw) is not None:
-        return "CM"
-    return "CVG"
+    # ★ v0.7.2: 값이 0 Torr 이하(영점 · 선형 환산의 0 V 값)인 CM 도 고르지 않는다 — 측정 시작 때 CM 이 0 이면 CVG
+    v = c.cm.to_torr(raw) if (c.cm.installed and c.cm.confirmed and 0 < raw < c.raw_max) else None
+    return "CM" if (v is not None and v > 0) else "CVG"
 
 
 def read_gauge(state, s, name: str):
@@ -81,7 +82,7 @@ def read_gauge(state, s, name: str):
     if raw >= c.raw_max:
         return None, "high"
     v = sc.to_torr(raw) if raw > 0 else None
-    if v is None:
+    if v is None or v <= 0:
         return None, "low"
     return float(v), "ok"
 
@@ -251,7 +252,15 @@ class LeakCheck:
             # --- 되돌리기(명령 8) — ★ v0.7.1(L4): try 안 — 종료 · 예외에도 CSV 한 줄 · 이벤트 로그가 남게 ---
             self.phase = "restore"
             if self._closed:
-                await self._restore(state, rec, push_log, push_notice)
+                try:
+                    await self._restore(state, rec, push_log, push_notice)
+                except asyncio.CancelledError:
+                    raise
+                except Exception as e:  # noqa: BLE001
+                    # ★ v0.7.2: 되돌리기 안의 예외도 아래 _finish 를 거쳐 CSV 한 줄 · 이벤트 로그가 남게
+                    rec.update(result=rec["result"] or "ABORT",
+                               why=_join(rec["why"], f"되돌리기 오류 — {type(e).__name__}: {logger.clean(e, 120)}"))
+                    await push_notice(f"누설률 점검 되돌리기 중 오류 — {REOPEN_TEXT}", "warn")
         except asyncio.CancelledError:
             # 프로그램 종료 — 보낼 수 없다. 명령 11 을 보낸 뒤면 IV-E 는 닫힌 채 남는다
             rec.update(result=rec["result"] or "ABORT",
@@ -285,11 +294,13 @@ class LeakCheck:
         """닫기 → 안정 → 측정. 멈추면 rec 에 결과 · 이유를 적고 돌아온다(되돌리기는 _run 이)."""
         link = state.link
         await push_log("누설률 점검 시작 — 명령 11(모두 닫기)로 IV-E 를 닫습니다", "info")
+        # ★ v0.7.2: 명령 11 을 보내기 직전부터 '닫혔을 수 있음' — 보내는 중 끊김 · 종료 · 예외에도 되돌리기(명령 8)를 하고
+        #   'IV-E 는 닫힌 채' 를 적는다. 거절(처리 안 됨)이 확실할 때만 거둔다
+        self._closed = True
         result, text = await link.send_command(A.CMD_ALL_CLOSE)
         logger.command("모두 닫기(누설률 점검)", link._cmd_no, text, "local")
         if result is None:
             # ★ v0.7.1(L2): 결과 모름(응답 없음 · 받았을 수 있음) — 닫혔을 수 있다. 닫힘 입력을 10 s 본다
-            self._closed = True             # 되돌리기(명령 8)는 한다
             res, why, ok = await self._wait_closed(state, link)
             if res:
                 rec.update(result=res, why=_join(f"모두 닫기 결과 모름({text})", why))
@@ -301,10 +312,10 @@ class LeakCheck:
                 return
             await push_log(f"누설률 점검 — 모두 닫기 결과는 몰랐지만({text}) IV-E 닫힘 입력이 켜져 계속합니다", "warn")
         elif result != A.RESULT_OK:
+            self._closed = False            # 거절 — 닫지 않았다
             rec.update(result="ABORT", why=f"모두 닫기 거절 — {text}")
             return
         else:
-            self._closed = True
             res, why, ok = await self._wait_closed(state, link)
             if res:
                 rec.update(result=res, why=why)
@@ -322,6 +333,7 @@ class LeakCheck:
         g = pick_gauge(state, link.status)
         rec["gauge"] = g
         pts = []
+        bad = 0                             # 범위 밖이 이어진 횟수
         t0 = time.monotonic()
         nxt = t0
         while True:
@@ -335,12 +347,19 @@ class LeakCheck:
             now = time.monotonic()
             if now >= nxt:
                 pv, where = read_gauge(state, link.status, g)
-                if where == "high":
-                    rec.update(result="FAIL", why=f"{g} 범위 위로 넘음(큰 누설) — 측정을 멈춤")
-                    break
-                if where == "low":
-                    rec.update(result="ABORT", why=f"{g} 범위 밖(아래) — 측정을 멈춤")
-                    break
+                if where != "ok":
+                    # ★ v0.7.2: 범위 밖은 RANGE_BAD_N 번 이어질 때만 멈춘다(그 사이 점은 버린다)
+                    bad += 1
+                    nxt += 1.0
+                    if bad >= RANGE_BAD_N and where == "high":
+                        rec.update(result="FAIL", why=f"{g} 범위 위로 넘음(큰 누설) — 측정을 멈춤")
+                        break
+                    if bad >= RANGE_BAD_N:
+                        rec.update(result="ABORT", why=f"{g} 범위 밖(아래) — 측정을 멈춤")
+                        break
+                    await asyncio.sleep(0.1)
+                    continue
+                bad = 0
                 pts.append((now - t0, pv))
                 rec["p0"] = rec["p0"] if rec["p0"] is not None else pv
                 rec["p1"] = pv
@@ -390,6 +409,7 @@ class LeakCheck:
             await push_notice(f"누설률 점검 뒤 펌핑 시작이 처리되지 않았습니다({text}) — {REOPEN_TEXT}", "warn")
             rec["why"] = _join(rec["why"], "IV-E 다시 열기 실패")
             return
+        self._closed = False                # ★ v0.7.2: 명령 8 처리됨 — 이제 'IV-E 는 닫힌 채' 가 아니다
         end = time.monotonic() + OPEN_WAIT_S
         while time.monotonic() < end:
             if not self._cancel_restore:
@@ -439,20 +459,12 @@ class LeakCheck:
         return self.recent
 
     def blocked(self, state) -> str:
-        """★ v0.7.1(L7): [Leak Check] 단추를 흐리게 둘 이유(연결 없음 · 멈춤 · ID 막힘 · 공정 중 · 시작 절차 중), 없으면 ''."""
+        """★ v0.7.1(L7): [Leak Check] 단추를 흐리게 둘 이유, 없으면 ''. ★ v0.7.2: 시작 조건 전체(refuse_reasons — 중대
+        알람 · Pump · Vacuum OK · IV-E 열림 · 레시피 밸브 · MFC 유량 · RF/O3 포함) — 눌러 본 뒤에야 거절되지 않게."""
         link = getattr(state, "link", None) if state is not None else None
         if not (link and link.connected):
             return "PLC 에 연결되어 있지 않습니다"
-        if getattr(link, "plc_hb_stalled", False):
-            return "PLC 하트비트 멈춤"
-        if hasattr(link, "id_block_text") and link.id_block_text():
-            return link.id_block_text()
-        if link.status[A.D_STATE] in RUNNING_STATES:
-            return "공정 중입니다"
-        runner = getattr(state, "runner", None)
-        if runner is not None and getattr(runner, "busy", False):
-            return "공정 시작 절차가 진행 중입니다"
-        return ""
+        return " · ".join(self.refuse_reasons(state))
 
     def status(self, cfg, state=None) -> dict:
         p = params(cfg)

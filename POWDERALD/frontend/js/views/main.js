@@ -176,9 +176,7 @@
       var trip = conn && t.plc && t.plc.pc_trip;
       core.html(chip, conn && t.state
         // v0.7.1(U4): '사이클 후 정지 예약' · 시퀀서 칩과 같이 떠도 잘리지 않게 짧은 글 'Trip'(자세한 것은 툴팁)
-        ? (trip ? core.chip('Trip', 'warn', 'PC Trip — PC 연결이 끊겼던 기록(PC Link Lost)이 남아 있습니다. ' +
-            (t.state.code === ST_SAFE_STOP ? 'PLC 가 안전 정지 상태입니다. ' : '공정이 끝나면 PLC 가 안전 정지합니다. ') +
-            '[Alarm Reset] 으로 풀립니다') + ' ' : '') +
+        ? (trip ? core.chip('Trip', 'warn', 'PC Trip — ' + tripTip(t.plc, t.state.code === ST_SAFE_STOP)) + ' ' : '') +
           (qn && qn !== t.state.name ? core.chip(qn, 'off') + ' ' : '') +
           core.chip(t.state.name, stateLevel(t.state.code))
         : '');
@@ -284,6 +282,18 @@
   }
 
   var ST_SAFE_STOP = 6;     // 장비 상태 코드 — 안전 정지(addresses.STATE_SAFE_STOP)
+
+  /** v0.7.2: 'Trip' 칩 툴팁 — Program Notices 와 같은 규칙(v0.7.1 P6). '[Alarm Reset] 으로 풀립니다' 는 트립만이 원인일
+   *  때만, 비상정지 · 중대 알람이 같이 있으면 그 원인을 적는다 */
+  function tripTip(plc, safeStop) {
+    var head = 'PC 연결이 끊겼던 기록(PC Link Lost)이 남아 있습니다. ';
+    if (!plc.pc_trip_only) {
+      return head + (safeStop ? 'PC 끊김 트립도 남아 있지만 PLC 안전 정지 원인은 ' : 'PLC 안전 정지 원인 ') +
+        (plc.pc_trip_cause || '중대 알람') + (safeStop ? ' 입니다' : '') + ' — 원인을 없앤 뒤 [Alarm Reset]';
+    }
+    return head + (safeStop ? 'PLC 가 안전 정지 상태입니다. ' : '공정이 끝나면 PLC 가 안전 정지합니다. ') +
+      '[Alarm Reset] 으로 풀립니다';
+  }
 
   function stateLevel(code) {
     return ({ 2: 'ok', 3: 'ok', 4: 'warn', 5: 'warn', 6: 'stop' })[code] || 'off';
