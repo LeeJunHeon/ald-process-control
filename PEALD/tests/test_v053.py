@@ -19,49 +19,67 @@ def _src(*parts):
     return open(os.path.join(ROOT, "frontend", *parts), encoding="utf-8").read()
 
 
-# ===================== 2. 상태 목록 — 알람 → 경고 → 그 밖, 문제 항목은 늘 보임 =====================
+# ===================== 2. 램프판 — 항목마다 칸 하나 · 레벨 클래스(v0.8.0) =====================
+# ★ v0.8.0: 옛 '문제 항목 먼저' 상태 목록(stiOrder · stiList)은 고정 램프판(panels.js)으로 바꿨다 — 순서는 장비 구조 그대로이고
+#   문제 항목은 색으로 말한다(모든 항목이 늘 보이므로 앞으로 모을 필요가 없다). 같은 의도(문제 항목이 늘 보임)를 램프판 렌더로 본다
+_ANN = r'''
+  global.window = global; global.T = require(%s); global.UI = require(%s);
+  global.core = { esc: s => String(s), bind: () => null, html: () => {}, setTab() {} };
+  global.document = { addEventListener() {} };
+  require(%s);
+  const S = %s;
+  const lamps = [];
+  const root = { set innerHTML(v) { this.h = v; }, classList: { toggle() {} },
+    querySelectorAll() { (this.h.match(/data-lamp="/g) || []).forEach(() => lamps.push({ className: '' })); return lamps; } };
+  Panels.ann.build(root, S, { cols: %d });
+  Panels.ann.update(root, S, %s);
+  console.log(JSON.stringify({ keys: (root.h.match(/data-lamp="([^"]+)"/g) || []).map(x => x.slice(11, -1)),
+                               cls: lamps.map(l => l.className), html: root.h }));
+'''
+
+
+def _ann(cols, live):
+    st = {"structure": {"annunciator": DEV.ANNUNCIATOR, "inputs0": DEV.INPUTS0, "inputs1": DEV.INPUTS1,
+                        "interlocks": DEV.INTERLOCKS}}
+    return _node(_ANN % (json.dumps(os.path.join(JS, "terms.js")), json.dumps(os.path.join(JS, "uimodel.js")),
+                         json.dumps(os.path.join(JS, "views", "panels.js")), json.dumps(st), cols, json.dumps(live)))
+
+
 def test_2_status_list_problems_first():
-    items = [{"name": "A", "lvl": "ok"}, {"name": "B", "lvl": ""}, {"name": "C", "lvl": "warn"},
-             {"name": "D", "lvl": "stop"}, {"name": "E", "lvl": "ok"}, {"name": "F", "lvl": "stop"},
-             {"name": "G", "lvl": "warn"}]
-    out = _node("const T = require(%s); console.log(JSON.stringify(T.stiOrder(%s).map(i => i.name)));" % (
-        json.dumps(os.path.join(JS, "terms.js")), json.dumps(items)))
-    assert out == ["D", "F", "C", "G", "A", "B", "E"]          # 같은 수준 안에서는 원래 순서
+    """모든 항목이 칸 하나씩 — 알람 · 경고가 몇 개든 숨지 않는다(빨강 · 노랑 클래스)."""
+    bad = _ann(8, {"plc": {"connected": True}, "inputs0": 0, "inputs1": 0xFFFF, "interlock": 0})
+    items = [k for r in DEV.ANNUNCIATOR for k in r["items"]]
+    assert bad["keys"] == items and len(bad["cls"]) == len(items)
+    lv = dict(zip(items, bad["cls"]))
+    assert lv["in0:EMO"] == "lamp alarm" and lv["ilk:Basic"] == "lamp warn" and lv["ilk:Safe Stop Request"] == "lamp off"
+    assert not re.search(r"\+\d+ (OK|more)", bad["html"])                      # 묶음 칸 없음
 
 
 def test_2_all_status_lists_use_order_and_keep_problems():
+    """RF(PEALD) / O3(Powder) 상태도 같은 램프판 한 곳(장비 전용 칸의 칩 목록 · 인터락 목록 중복 없음)."""
+    ok = _ann(6, {"plc": {"connected": True}, "inputs0": 0, "inputs1": 0, "interlock": 0xFFFF})
+    keys = ok["keys"]
+    tag = "ilk:RF Permit" if DEV.HAS_RF else "ilk:O3 Permit"
+    assert keys.count(tag) == 1 and dict(zip(keys, ok["cls"]))[tag] == "lamp ok"
     main = _src("js", "views", "main.js")
-    # 인터락 목록 · RF(PEALD) / O3(Powder) 목록 모두 같은 규칙
-    # v0.6.2(A2): v0.6.1 B2 부터 인터락 목록은 잰 줄 · 열 수를 넘긴다(stiList(out, rows, cols)) — 글자 수 대신
-    #   두 목록 모두 stiList 를 쓰는지와 인터락 목록이 snapIlks · stlCols 로 잰 값을 넘기는지를 본다
-    from test_v054 import _fn
-    vac, dev = _fn(main, "updateVac"), _fn(main, "updateDev")
-    assert "stiList(out, ilkFit.rows, ilkFit.cols)" in vac and "stiList(out, rows, cols)" in vac
-    assert "var rows = snapIlks(box), cols = stlCols(box);" in vac
-    assert "core.html(chips, stiList(out));" in dev
-    # v0.5.4: 인터락 목록은 높이 고정 칸이라 keepProblems 로 늘 수 없다 — 문제 항목만 + '+N OK'(stiList) 와 snapIlks 로
-    assert "keepProblems" not in vac
-    assert "chips.style.maxHeight = '';\n    core.html(chips, stiList(out));\n    keepProblems(chips);" in main
-    # v0.5.4: 순서는 T.stiCompact 안의 T.stiOrder 가 정한다(알람 → 경고 → 그 밖)
-    assert "var c = T.stiCompact(items);" in main
-    # 문제 항목(빨강 · 노랑)이 차지하는 줄 수만큼은 줄 수 제한(max-height)보다 높이를 늘린다
-    assert "box.querySelectorAll('.sti.stop, .sti.warn')" in main and "box.style.maxHeight = need + 'px'" in main
-    assert "out.push(sti(" not in main and "return sti(k.name" not in main
+    assert "buildDevPanel" not in main and "rfChips" not in main and "o3Chips" not in main
 
 
-# ===================== 3. 인터락 상자 높이 = 줄 높이(18)의 배수 =====================
+# ===================== 3. 램프판 높이 = 줄 수 × 22 + 사이(장비 구조로만) =====================
 def test_3_interlock_box_height_is_row_multiple():
     css = _src("css", "style.css")
-    m = re.search(r"#view-main \.ilks\.stl \{[^}]*grid-auto-rows: (\d+)px;\s*min-height: (\d+)px;[^}]*row-gap: 0;", css)
-    assert m, "인터락 목록 규칙"
-    row, minh = int(m.group(1)), int(m.group(2))
-    assert minh % row == 0 and minh // row >= 1, (row, minh)    # v0.6.2(A1): v0.6.1 B1 — 최소 한 줄, 줄 수는 snapIlks
-    m = re.search(r"\[data-bind=\"devPanelBody\"\] \.stl \{[^}]*grid-auto-rows: (\d+)px; max-height: (\d+)px;[^}]*row-gap: 0;", css)
-    assert m and int(m.group(2)) % int(m.group(1)) == 0, m and m.groups()
+    m = re.search(r"\.anngrid \{ display: grid; grid-auto-rows: (\d+)px; row-gap: (\d+)px;", css)
+    assert m and (int(m.group(1)), int(m.group(2))) == (22, 4), m and m.groups()
+    assert ".ann-body { padding: 6px var(--sp-3); overflow: hidden; }" in css           # 칸 안 스크롤 없음
+    from test_v054 import _fn
     main = _src("js", "views", "main.js")
-    # v0.5.4: 자르는 높이는 늘(넘칠 때만이 아니라) 18 의 배수 — snapRows
-    assert "function snapRows(h) { return Math.max(STI_ROW, Math.floor(h / STI_ROW) * STI_ROW); }" in main
-    assert "var STI_ROW = 18;" in main
+    out = _node("const w = { UI: require(%s) }; var LAMP_H = 22, LAMP_GAP = 4, PANEL_HEAD = 30, PANEL_PAD = 12, BORDER = 2;\n%s\n"
+                "const s = { structure: { annunciator: %s } };"
+                "console.log(JSON.stringify([annH(s, 8), annH(s, 6), w.UI.annRows(s.structure, 8), w.UI.annRows(s.structure, 6)]));"
+                % (json.dumps(os.path.join(JS, "uimodel.js")), _fn(main, "annH"), json.dumps(DEV.ANNUNCIATOR)))
+    h8, h6, r8, r6 = out
+    assert (r8, r6) == (4, 6)                                                            # 좁은 4 줄 · 넓은 6 줄(두 장비)
+    assert h8 == 30 + 2 + 12 + r8 * 22 + (r8 - 1) * 4 and h6 == 30 + 2 + 12 + r6 * 22 + (r6 - 1) * 4
 
 
 # ===================== 4. Heater 칸 메모는 영문 라벨 =====================
@@ -84,47 +102,17 @@ def test_5_h2o_box_single_line():
         assert "H2O" in out["shown"] and "H2O Canister R" in out["titles"]
 
 
-# ===================== 6. 긴 창(768 폭)에서 늘어난 높이는 아래 줄이 받는다 =====================
-# ★ v0.6.1(A2): v0.5.4 에서 일부러 바꾼 옛 구현 글자(maxHeight · flexGrow · 'if (hh <= CANVAS_H + 1) return;')를 찾지
-#   않고, core.js 의 fit · rowFlex · fitMainRows · setTab 을 그대로 떼어 가짜 DOM 위에서 돌려 동작을 본다.
-_FIT = r'''
-  var CANVAS_W = 960, CANVAS_H = 1000, lastScale = 0, VIEWS = {}, lastState = null, curTab = 'main';
-  function requestAnimationFrame() {}
-  const mk = () => ({ style: {}, attrs: {}, classList: { toggle() {} },
-    getAttribute(k) { return k in this.attrs ? this.attrs[k] : null; }, setAttribute(k, v) { this.attrs[k] = String(v); } });
-  const app = mk(), main = mk(), bottom = mk();
-  bottom.style.flex = '0 0 auto';                       // index.html 의 아래 줄
-  // 위 줄 높이 — 기본 높이 캔버스(1000)에서 재면 616, 늘어난 캔버스에서는 flex 가 나눈 값(다르게)
-  Object.defineProperty(main, 'offsetHeight', { get() { return parseFloat(app.style.height) <= 1000 ? 616 : 777; } });
-  var w = { innerWidth: 1280, innerHeight: 900 };
-  var d = { getElementById: () => app, querySelectorAll: () => [],
-            querySelector: s => s.indexOf(':not(.grow)') >= 0 ? bottom : main };
-  %s
-  %s
-  %s
-  %s
-  const snap = () => ({ main: main.style.flex, bottom: bottom.style.flex, h: app.style.height });
-  const out = {};
-  fit(); out.base = snap();                                         // 1280×900 — 기본 높이
-  w.innerWidth = 768; w.innerHeight = 1024; fit(); out.tall = snap(); // 768×1024 — 긴 캔버스
-  // 다른 탭에 있는 동안 창이 바뀌었다가(옛 flex 가 남음) 운전 탭으로 돌아오면 다시 맞춘다
-  w.innerWidth = 1280; w.innerHeight = 900; main.style.flex = 'stale'; bottom.style.flex = 'stale';
-  curTab = 'trend'; setTab('main'); out.back = snap();
-  console.log(JSON.stringify(out));
-'''
-
-
+# ===================== 6. 긴 창(768 폭) — v0.8.0: 두 배치 fit =====================
+# ★ v0.8.0: 운전 탭의 '위 줄 고정 · 아래 줄 늘림'(rowFlex · fitMainRows)은 없앴다 — 칸은 고정 격자이고 남는 높이는
+#   Heater | MFC 줄(좁은) · Recent Events(넓은)가 받는다(CSS minmax(0, 1fr)). 같은 의도(긴 창에서 위 칸 높이가 그대로)를 본다
 def test_6_tall_canvas_gives_extra_height_to_bottom_row():
-    from test_v054 import _fn
-    core = _src("js", "core.js")
-    out = _node(_FIT % tuple(_fn(core, n) for n in ("rowFlex", "fitMainRows", "fit", "setTab")))
-    # 기본 높이(1280×900 등): 두 줄 flex 를 비운다(위 '' · 아래는 HTML 의 원래 값)
-    assert out["base"] == {"main": "", "bottom": "0 0 auto", "h": "1000px"}, out
-    # 긴 창: 위 줄은 기본 높이일 때의 높이(h0 = 616)로 고정, 아래 줄만 는다
-    assert out["tall"] == {"main": "0 0 616px", "bottom": "1 1 auto", "h": "1280px"}, out
-    # 운전 탭으로 돌아오면 다시 맞춘다
-    assert out["back"] == {"main": "", "bottom": "0 0 auto", "h": "1000px"}, out
-    assert '<svg id="schemSvg" preserveAspectRatio="xMidYMin meet">' in _src("index.html")   # 배관도 위 붙임
+    css = _src("css", "style.css")
+    assert ".opgrid.narrow { grid-template-rows: 270px var(--ann-h) 64px minmax(0, 1fr);" in css
+    out = _node("const UI = require(%s); console.log(JSON.stringify([UI.layoutBox('narrow', 768, 1024), UI.layoutBox('narrow', 1280, 900)]));"
+                % json.dumps(os.path.join(JS, "uimodel.js")))
+    assert out[0]["w"] == 960 and out[0]["h"] == 1280 and abs(out[0]["s"] - 0.8) < 1e-9     # 768×1024 — 긴 캔버스
+    assert out[1]["w"] == 1200 and out[1]["h"] == 1000
+    assert '<svg id="schemSvg" viewBox="0 0 920 680" preserveAspectRatio="xMidYMid meet">' in _src("index.html")
 
 
 # ===================== 7. 'PV-B (PLC Auto)' — PV-B 이름 줄에 =====================

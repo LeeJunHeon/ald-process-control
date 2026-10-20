@@ -236,19 +236,11 @@ class ProcessRunner:
                 self._hr_since.pop(ch, None)
 
     def _valve_ok_detail(self, s) -> str:
-        miss = []
-        i0 = s[A.D_INPUT0]
-        if not A.bit(i0, A.IN0_IVE_OPEN):
-            miss.append("IV-E 열림")
-        if A.bit(i0, A.IN0_ATM):
-            miss.append("대기압 아님")
-        if A.bit(s[A.D_INTERLOCK], A.ILK_SAFE_STOP_REQ):
-            # ★ v0.7.0(P3): 안전 정지 요구가 공정 뒤 남은 PC 끊김 트립 때문이면(비상정지 · 중대 알람 없음) 할 일을 적는다
-            trip_only = (A.bit(s[A.D_ALARM0], A.ALM0_PC_LINK) and A.bit(s[A.D_INPUT0], A.IN0_EMO)
-                         and not ((s[A.D_ALARM0] & DEV.CRITICAL_MASK0) or s[A.D_ALARM1]))
-            miss.append("PC 끊김 트립 — Alarm Reset" if trip_only else "안전 정지 요구 해제")
-        if not A.bit(s[A.D_INTERLOCK], A.ILK_BASIC):
-            miss.append("기본 인터락")
+        """시작 조건 'Valve Permit' 글 — v0.8.0: valve_permit_missing 하나로(순서 · 문구는 예전 그대로: Pump 는 시작 조건에
+        따로 칸이 있어 빼고, 기본 인터락은 맨 뒤)."""
+        miss = [m for m in valve_permit_missing(s) if m not in ("Pump 운전", "PLC 허가 조건 확인")]
+        if "기본 인터락" in miss:
+            miss = [m for m in miss if m != "기본 인터락"] + ["기본 인터락"]
         return "필요: " + " · ".join(miss) if miss else "허가됨"
 
     def can_start(self):
@@ -1034,10 +1026,12 @@ class ProcessRunner:
             "stop_reserved": running and (code == A.STATE_STOPPING or self._stop_reserved),
             "elapsed_s": int(time.time() - self.started_at) if self.started_at else 0,
         }
+        # 시작 조건은 화면이 아니라 서버가 판정한다 — 화면은 항목과 이유만 그린다.
+        # ★ v0.8.0: 공정 중에도 checks 를 보낸다(화면의 시작 조건 칸은 흐리게 '다음 시작 때 확인') —
+        #   can_start · blocking 은 공정이 아닐 때만
+        ok, blocking, checks = self.can_start()
+        out["checks"] = checks
         if not running:
-            # 시작 조건은 화면이 아니라 서버가 판정한다 — 화면은 항목과 이유만 그린다.
-            ok, blocking, checks = self.can_start()
-            out["checks"] = checks
             out["can_start"] = ok
             out["blocking"] = [c["label"] for c in blocking]
             if self.recipe:
@@ -1380,6 +1374,29 @@ def _maint_failed(e, log):
     except Exception:  # noqa: BLE001
         pass
     log(msg)
+
+
+def valve_permit_missing(s) -> list:
+    """v0.8.0: 공정 밸브 허가(인터락 b4)에 빠진 조건 — 래더와 같은 조건(기본 인터락 · 펌프 · IV-E 열림 · 대기압 아님 ·
+    안전 정지 요구 없음). 허가가 있으면 []. 허가가 없는데 위가 다 맞으면 ['PLC 허가 조건 확인']."""
+    ilk, i0 = s[A.D_INTERLOCK], s[A.D_INPUT0]
+    if A.bit(ilk, A.ILK_VALVE_OK):
+        return []
+    miss = []
+    if not A.bit(ilk, A.ILK_BASIC):
+        miss.append("기본 인터락")
+    if not A.bit(ilk, A.ILK_PUMP):
+        miss.append("Pump 운전")
+    if not A.bit(i0, A.IN0_IVE_OPEN):
+        miss.append("IV-E 열림")
+    if A.bit(i0, A.IN0_ATM):
+        miss.append("대기압 아님")
+    if A.bit(ilk, A.ILK_SAFE_STOP_REQ):
+        # ★ v0.7.0(P3): 안전 정지 요구가 공정 뒤 남은 PC 끊김 트립 때문이면(비상정지 · 중대 알람 없음) 할 일을 적는다
+        only = (A.bit(s[A.D_ALARM0], A.ALM0_PC_LINK) and A.bit(i0, A.IN0_EMO)
+                and not ((s[A.D_ALARM0] & DEV.CRITICAL_MASK0) or s[A.D_ALARM1]))
+        miss.append("PC 끊김 트립 — Alarm Reset" if only else "안전 정지 요구 해제")
+    return miss or ["PLC 허가 조건 확인"]
 
 
 def trip_pending(s) -> bool:

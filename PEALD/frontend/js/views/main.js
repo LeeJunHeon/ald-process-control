@@ -1,14 +1,17 @@
 /* ============================================================
- * views/main.js — 운전 탭.
+ * views/main.js — 운전 탭 (v0.8.0 다시 짬).
  *
- * 공정 진행 / 압력·배기·인터락 / 장비 전용(RF·PCV) / 히터 표 / MFC 표 / 명령줄
+ *   좁은 배치(960×1000 기준): [Process | Start Conditions] · Interlock · Input · Valves · [Heater | MFC…]
+ *   넓은 배치(1600×840 기준): 왼쪽 [Process · Valves · Heater | MFC…] · 오른쪽 [Start Conditions · Interlock · Input · Recent Events]
+ *   명령줄 · 상단 상태 띠는 #app 에(이 탭과 P&ID 탭에서만 보인다).
  *
- * ★ PLC 연결이 끊기면 모든 값은 '—' 이고 명령 버튼은 잠근다. 마지막 값을 계속
- *   보여 주면 운전자가 현재 상태로 오해한다.
+ * ★ 칸 크기 · 자리는 배치와 장비 구조로만 정해진다(고정 격자) — 값이 바뀌어도, 알람이 몇 개든, 끊겨도 어느 칸의 상자도
+ *   움직이지 않는다. 모든 항목이 늘 보인다(묶음 표시 없음).
+ * ★ PLC 연결이 끊기면 모든 값은 '—' 이고 명령 단추는 잠근다. 마지막 값을 보여 주면 운전자가 현재 상태로 오해한다.
  * ★ 위험하거나 되돌리기 어려운 명령은 확인 창을 거친다(제목에 장비 이름).
- * ★ 5 Hz 갱신은 바뀐 칸만 고친다(core.html) — 칩을 매번 다시 만들면 이유 툴팁이 뜨지 않는다.
- * ★ v0.5.0(A4): 인터락 · 입력 · 시작 조건 · RF/O3 상태는 이름 + 작은 상태 점 목록(.stl/.sti). 문제인 항목만
- *   노랑 · 빨강 점과 글자, 정상은 회색 글자 + 초록 점. 용어는 영문(terms.js · 서버 device 정의).
+ * ★ 5 Hz 갱신은 글자 · 클래스만 바꾼다(core.html — 같으면 안 씀). DOM 은 render(배치 · 구조가 바뀔 때)만 새로 만든다.
+ * ★ 한 번 누르면 한 번 — 보낸 명령은 응답(done)이 올 때까지 같은 단추를 막는다(core.busy, 최대 8 s).
+ * ★ Process 칸 부품(viewMain.process)은 P&ID 탭 넓은 배치도 쓴다 — 바인드는 그 칸(root) 안에서만.
  * ============================================================ */
 (function (w, d) {
   'use strict';
@@ -23,68 +26,91 @@
     alarm_reset: { t: '알람을 리셋할까요?', b: '원인이 사라진 알람만 지웁니다. 원인이 남아 있으면 즉시 다시 걸립니다.<br>PC 통신 끊김 알람도 이것으로 풀립니다.', ok: T('b.reset') }
   };
 
-  var built = false;
+  // 배치 치수(px, 캔버스 기준) — 칸 높이는 이것과 장비 구조로만 정해진다
+  var FRAME_H = 259, VIEW_PAD = 16, GAP = 6;
+  var NARROW = { r1: 270, valves: 64, annCols: 8, chips: 4 };
+  var WIDE = { proc: 200, start: 132, valves: 64, annCols: 6, chips: 7 };
+  var LAMP_H = 22, LAMP_GAP = 4, PANEL_HEAD = 30, PANEL_PAD = 12, BORDER = 2;
+  var HROW = 26, HROW_DENSE = 22, THEAD = 24;
+
+  /** 램프판 칸 높이 = 머리 + 줄 수 × 22 + 사이 4 + 여백(장비 구조 · 열 수로만) */
+  function annH(s, cols) {
+    var rows = w.UI.annRows((s || {}).structure, cols);
+    return PANEL_HEAD + BORDER + PANEL_PAD + rows * LAMP_H + Math.max(0, rows - 1) * LAMP_GAP;
+  }
+  function viewsH() { var b = core.box; return (b ? b.h : 1000) - FRAME_H - VIEW_PAD; }
+
+  var builtSig = '';
+  var parts = { process: [], start: [], ann: [], valves: [], events: [] };
 
   /* ===================== render ===================== */
   function render(s) {
-    buildStatic(s);
-    buildHeaters(s);
-    buildMfc(s);
-    buildDevPanel(s);
+    var sig = JSON.stringify([core.layout, (core.box || {}).h, (s.device || {}).key, (s.structure || {}).heaters,
+                              (s.structure || {}).mfc, (s.structure || {}).annunciator, (s.recipe_limits || {}).recipe_valves]);
+    if (sig !== builtSig) {
+      builtSig = sig;
+      buildLayout(s);
+    }
     update(s.live || {});
   }
 
-  function buildStatic(s) {
-    if (built) return;
-    built = true;
-    var seq = core.bind('seqBody');
-    if (seq) {
-      seq.innerHTML =
-        '<div class="kv"><span class="k">' + T('v.recipe') + ' <span data-bind="sqRcpChip"></span></span>' +
-        '<span class="v" data-bind="sqRec">—</span></div>' +
-        '<div class="kv"><span class="k">' + T('v.block') + ' / ' + T('v.step') + '</span><span class="v" data-bind="sqBS">—</span></div>' +
-        '<div class="kv"><span class="k">' + T('v.elapsed') + ' / ' + T('v.remaining') + ' / ' + T('v.planned') +
-        '</span><span class="v" data-bind="sqTime">—</span></div>' +
-        '<div class="bar"><span data-bind="sqBar"></span></div>' +
-        '<div class="steplist" data-bind="sqSteps"></div>' +
-        '<div class="stl c2" data-bind="sqChecks"></div>' +
-        '<div class="procmsg" data-bind="seqMsg" hidden></div>' +
-        '<div class="procbar">' +
-        '<button class="btn sm start" data-cmd="process_start">' + T('b.start') + '</button>' +
-        '<button class="btn sm" data-cmd="process_pause">' + T('b.pause') + '</button>' +
-        '<button class="btn sm" data-cmd="process_resume">' + T('b.resume') + '</button>' +
-        '<button class="btn sm" data-cmd="process_stop_after_cycle">' + T('b.stopAfterCycle') + '</button>' +
-        '<button class="btn sm abort" data-cmd="process_abort">' + T('b.abort') + '</button>' +
-        '<button class="btn sm" data-cmd="process_cancel_wait" data-bind="sqCancel" hidden>' + T('b.cancelWait') + '</button>' +
-        '<button class="btn sm" data-bind="mnOpen">' + T('b.manual') + '</button>' +
-        '</div>';
+  function panel(cls, extra) { return '<div class="panel ' + cls + '"' + (extra || '') + '></div>'; }
+
+  function buildLayout(s) {
+    var grid = core.bind('opGrid');
+    if (!grid) return;
+    var wide = core.layout === 'wide', vh = viewsH();
+    var cols = wide ? WIDE.annCols : NARROW.annCols, ah = annH(s, cols);
+    var dev = s.device || {};
+    var mfcHead = dev.has_o3 ? T('panel.mfcO3') : dev.has_rf ? T('panel.mfcRf') : T('panel.mfc');
+    var tables = '<div class="oprow r4" data-bind="opTables">' +
+      '<div class="panel p-heater"><div class="panel-head"><span data-t="panel.heater">' + T('panel.heater') + '</span>' +
+      '<span class="note" data-bind="tcNote"></span></div><div class="panel-body tight"><table class="tbl" data-bind="heaterTbl"></table></div></div>' +
+      '<div class="panel p-mfc"><div class="panel-head">' + mfcHead + '</div>' +
+      '<div class="panel-body tight"><table class="tbl" data-bind="mfcTbl"></table></div></div></div>';
+    var bottom;
+    if (wide) {
+      grid.className = 'opgrid wide';
+      grid.style.setProperty('--ann-h', ah + 'px');
+      grid.innerHTML = '<div class="opcol cl">' + panel('p-proc', ' data-part="process"') + panel('p-valves', ' data-part="valves"') +
+        tables + '</div><div class="opcol cr">' + panel('p-start', ' data-part="start"') + panel('p-ann', ' data-part="ann"') +
+        panel('p-events', ' data-part="events"') + '</div>';
+      bottom = vh - WIDE.proc - WIDE.valves - 2 * GAP;
+    } else {
+      grid.className = 'opgrid narrow';
+      grid.style.setProperty('--ann-h', ah + 'px');
+      grid.innerHTML = '<div class="oprow r1">' + panel('p-proc', ' data-part="process"') + panel('p-start', ' data-part="start"') +
+        '</div>' + panel('p-ann', ' data-part="ann"') + panel('p-valves', ' data-part="valves"') + tables;
+      bottom = vh - NARROW.r1 - ah - NARROW.valves - 3 * GAP;
     }
-    var vac = core.bind('vacBody');
-    if (vac) {
-      vac.innerHTML =
-        '<div class="gauges">' +
-        '<div class="gauge"><div class="k">CVG<span class="unconf" data-bind="cvgUnconf" hidden>' + T('s.unconfirmed') + '</span></div>' +
-        '<div class="v"><span data-bind="gCvg">—</span><span class="u">Torr</span></div></div>' +
-        '<div class="gauge" data-bind="gCmBox" hidden><div class="k">CM</div>' +
-        '<div class="v"><span data-bind="gCm">—</span><span class="u">Torr</span></div></div>' +
-        '</div>' +
-        '<div class="kv"><span class="k">Pump / Exhaust</span><span class="v" data-bind="vPump">—</span></div>' +
-        '<div class="kv"><span class="k">IV-E / VV</span><span class="v" data-bind="vIve">—</span></div>' +
-        '<div class="hint" style="margin-top:2px">Interlock / Input</div>' +
-        '<div class="ilks stl" data-bind="ilks"></div>';
-    }
+    parts = { process: [], start: [], ann: [], valves: [], events: [] };
+    Array.prototype.forEach.call(grid.querySelectorAll('[data-part]'), function (root) {
+      var k = root.getAttribute('data-part');
+      if (k === 'process') processPart.build(root, s, core.layout);
+      else if (k === 'ann') w.Panels.ann.build(root, s, { cols: cols });
+      else if (k === 'events') w.Panels.events.build(root, s, { rows: Math.floor((vh - WIDE.start - ah - 2 * GAP - PANEL_HEAD - BORDER - 8) / 25) });
+      else w.Panels[k].build(root, s);
+      parts[k].push(root);
+    });
+    buildHeaters(s, bottom);
+    buildMfc(s);
   }
 
   /* ---------- 히터 표 ---------- */
-  function buildHeaters(s) {
+  function buildHeaters(s, room) {
     var tbl = core.bind('heaterTbl');
     if (!tbl) return;
     var heaters = (s.structure || {}).heaters || [];
-    var html = '<thead><tr><th>' + T('v.channel') + '</th><th>' + T('v.setpoint') + '</th><th>' + T('v.actual') +
-      '</th><th>' + T('v.output') + '</th><th>' + T('v.power') + '</th><th>' + T('v.status') + '</th></tr></thead><tbody>';
+    var n = heaters.filter(function (h) { return h.enabled; }).length;
+    // 기본 설정(PEALD 6 · Powder 5 채널)에서 넘치지 않게 — 채널을 더 켜 넘치면 줄 높이를 22 로(구조가 바뀔 때 한 번)
+    var dense = room > 0 && PANEL_HEAD + BORDER + 8 + THEAD + n * HROW > room;
+    tbl.classList.toggle('dense', dense);
+    var html = '<thead><tr><th>' + T('v.channel') + '</th><th>' + T('v.setpoint') + ' ℃</th><th>' + T('v.actual') +
+      ' ℃</th><th>' + T('v.output') + '</th><th>' + T('v.power') + '</th><th>' + T('v.status') + '</th></tr></thead><tbody>';
     heaters.forEach(function (h) {
       if (!h.enabled) return;   // 사용 채널만 보여 준다
-      html += '<tr data-hrow="' + h.ch + '">' +
+      html += '<tr data-hrow="' + h.ch + '" data-fp="heater:' + h.ch + '" tabindex="0" role="button" title="CH' + core.esc(h.ch) +
+        ' ' + core.esc(h.name) + ' — 누르면 조작 창">' +
         '<td>CH' + core.esc(h.ch) + ' ' + core.esc(h.name) + '</td>' +
         '<td class="sv" data-hsv="' + h.ch + '">—</td>' +
         '<td class="pv" data-hpv="' + h.ch + '">—</td>' +
@@ -99,15 +125,17 @@
     if (tn) tn.title = miss.length ? 'PLC 한계에 0 을 써서 막습니다' : '';
   }
 
-  /* ---------- MFC 표 ---------- */
+  /* ---------- MFC 표 + 장비 전용 줄(PEALD: RF · PCV / Powder: O3) ---------- */
   function buildMfc(s) {
     var tbl = core.bind('mfcTbl');
     if (!tbl) return;
     var mfc = (s.structure || {}).mfc || [];
+    var dev = s.device || {};
     var html = '<thead><tr><th>MFC</th><th>' + T('v.gas') + '</th><th>' + T('v.fullScale') + '</th><th>' +
       T('v.setpoint') + '</th><th>' + T('v.actual') + '</th></tr></thead><tbody>';
     mfc.forEach(function (m) {
-      html += '<tr><td>' + core.esc(m.no) + ' ' + core.esc(m.name) + '</td>' +
+      html += '<tr data-fp="mfc:' + core.esc(m.no) + '" tabindex="0" role="button" title="MFC' + core.esc(m.no) + ' ' +
+        core.esc(m.name) + ' — 누르면 조작 창"><td>' + core.esc(m.no) + ' ' + core.esc(m.name) + '</td>' +
         '<td>' + core.esc(m.gas || fmt.DASH) + '</td>' +
         '<td>' + (m.full_scale_sccm == null
           ? '<span class="unconf">Unset</span>'
@@ -115,153 +143,141 @@
         '<td class="sv" data-msv="' + m.no + '">—</td>' +
         '<td class="pv" data-mpv="' + m.no + '">—</td></tr>';
     });
+    var xrow = function (key, name, fp) {
+      return '<tr class="xrow"' + (fp ? ' data-fp="' + fp + '" tabindex="0" role="button"' : '') + '><td colspan="3">' + name +
+        '</td><td colspan="2" class="pv" data-mx="' + key + '">—</td></tr>';
+    };
+    if (dev.has_rf) html += xrow('rf', 'RF Forward / Reflected', 'rf:RF');
+    if (dev.has_pcv) html += xrow('pcv', 'PCV Target / Position', 'pcv:PCV');
+    if (dev.has_o3) {
+      html += xrow('o3', 'O3 Setpoint / Actual', 'o3:O3') + xrow('o3line', 'Generator · Bypass Pump · IV-B', 'o3:O3') +
+        xrow('o3off', T('v.offDelay'), '');
+    }
     core.html(tbl, html + '</tbody>');
   }
 
-  /* ---------- 장비 전용 패널 (PEALD: RF · PCV) ---------- */
-  function buildDevPanel(s) {
-    var dev = s.device || {};
-    var panel = core.bind('devPanel');
-    if (!panel) return;
-    if (!dev.has_rf && !dev.has_o3) { panel.hidden = true; return; }
-    panel.hidden = false;
-    core.setText('devPanelHead', dev.has_rf ? T('panel.rfpcv') : T('panel.o3'));
-    var body = core.bind('devPanelBody');
-    if (!body) return;
-    if (dev.has_rf) {
-      body.innerHTML =
-        '<div class="kv"><span class="k">RF Forward / Reflected</span><span class="v" data-bind="rfFwd">—</span></div>' +
-        '<div class="kv"><span class="k">RF Setpoint (Output)</span><span class="v" data-bind="rfSv">—</span></div>' +
-        '<div class="kv"><span class="k">PCV Target / Position</span><span class="v" data-bind="pcvV">—</span></div>' +
-        '<div class="stl" data-bind="rfChips"></div>';
-    }
-  }
+  /* ===================== Process 칸 부품 ===================== */
+  var KV = [['Block', 'v.block'], ['Step', 'v.step'], ['Cycle', 'v.cycle'], ['Group', 'v.group'], ['Elapsed', 'v.elapsed'],
+            ['Remaining', 'v.remaining'], ['PlannedEnd', 'v.plannedEnd']];
+  var processPart = {
+    build: function (root, s, layout) {
+      root._chips = layout === 'wide' ? WIDE.chips : NARROW.chips;
+      root.innerHTML =
+        '<div class="panel-head"><span data-t="panel.process">' + T('panel.process') + '</span>' +
+        '<span class="pq-chips"><span data-bind="pqSeq"></span><span data-bind="pqTrip"></span></span>' +
+        '<span class="note"><span data-bind="sqRcpChip"></span><button class="btn sm" data-bind="mnOpen">' + T('b.manual') +
+        '</button></span></div>' +
+        '<div class="panel-body pq">' +
+        '<div class="pq-kv ' + (layout === 'wide' ? 'k7' : 'k43') + '">' + KV.map(function (k) {
+          return '<div class="kvc"><span class="k">' + T(k[1]) + '</span><span class="v mono" data-bind="pq' + k[0] + '">—</span></div>';
+        }).join('') + '</div>' +
+        '<div class="pq-bar"><div class="bar"><span data-bind="sqBar"></span></div><span class="pct mono" data-bind="pqPct">—</span></div>' +
+        '<div class="pq-steps" data-bind="sqSteps"></div>' +
+        '<div class="procbar">' +
+        '<button class="btn sm start" data-cmd="process_start">' + T('b.start') + '</button>' +
+        '<button class="btn sm" data-cmd="process_pause">' + T('b.pause') + '</button>' +
+        '<button class="btn sm" data-cmd="process_resume">' + T('b.resume') + '</button>' +
+        '<button class="btn sm" data-cmd="process_stop_after_cycle">' + T('b.stopAfterCycle') + '</button>' +
+        '<span class="pq-last"><button class="btn sm abort" data-cmd="process_abort">' + T('b.abort') + '</button>' +
+        '<button class="btn sm" data-cmd="process_cancel_wait" data-bind="sqCancel" hidden>' + T('b.cancelWait') + '</button></span>' +
+        '</div></div>';
+    },
+    update: function (root, t, conn) { updateProcess(root, t, conn); }
+  };
 
   /* ===================== update ===================== */
   function update(t) {
     var s = core.state;
     if (!s) return;
     var conn = !!(t.plc && t.plc.connected);
-
-    updateSeq(t, conn);
-    // ★ v0.6.2(B3): 인터락 목록(updateVac)은 칸 몸통을 재어 줄 수를 정한다 — 같은 줄의 칸 높이를 바꾸는 것
-    //   (RF/O3 목록 — updateDev)을 먼저 그린 뒤 맨 끝에 잰다. 거꾸로면 새 알람이 뜬 2 프레임 동안 마지막 줄이 반만 보인다
+    parts.process.forEach(function (r) { updateProcess(r, t, conn); });
+    ['start', 'ann', 'valves', 'events'].forEach(function (k) {
+      parts[k].forEach(function (r) { w.Panels[k].update(r, s, t); });
+    });
     updateHeaters(s, t, conn);
     updateMfc(s, t, conn);
-    updateDev(s, t, conn);
     updateLocks(s, t, conn);
-    updateVac(s, t, conn);
   }
 
-  function updateSeq(t, conn) {
+  function setIn(root, name, v) {
+    var e = core.bind(name, root);
+    if (e && e.textContent !== v) e.textContent = v;
+  }
+
+  function updateProcess(root, t, conn) {
     var q = t.seq || {};
-    core.setText('sqBS', conn
-      ? (q.block || 0) + ' / ' + (q.step || 0) + ' · ' + T('v.cycle') + ' ' + (q.block_pass || 0) +
-        ' · ' + T('v.group') + ' ' + (q.group_pass || 0)
-      : fmt.DASH);
-    // 스텝 경과와 레시피 표 통과는 위 두 줄에 붙여 보여 준다(패널을 낮게 유지한다).
-    var bs = core.bind('sqBS');
-    if (bs && conn) {
-      bs.textContent = bs.textContent + ' · ' + T('v.step') + ' ' + fmt.ms(q.step_ms) + ' s';
-    }
-    var rc = core.bind('sqRcpChip');
+    var rc = core.bind('sqRcpChip', root);
     if (rc) {
       core.html(rc, !conn ? '' : core.chip(q.recipe_ok ? T('s.tableOk') : '✕ ' + T('s.tableNg'),
         q.recipe_ok ? 'ok' : 'off', 'PLC Sum ' + fmt.hex16(q.recipe_sum)));
     }
-    var chip = core.bind('seqChip');
-    if (chip) {
-      // 시퀀서 상태는 장비 상태와 다를 때만 함께 보여 준다(같은 말이 두 번 보이면 읽지 않는다).
-      var qn = (t.seq || {}).name || '';
-      // v0.7.0(P7): 남은 PC 끊김 트립 — 작은 표시(자세한 글은 알람 · 로그 탭 Program Notices)
-      var trip = conn && t.plc && t.plc.pc_trip;
-      core.html(chip, conn && t.state
-        // v0.7.1(U4): '사이클 후 정지 예약' · 시퀀서 칩과 같이 떠도 잘리지 않게 짧은 글 'Trip'(자세한 것은 툴팁)
-        ? (trip ? core.chip('Trip', 'warn', 'PC Trip — ' + tripTip(t.plc, t.state.code === ST_SAFE_STOP)) + ' ' : '') +
-          (qn && qn !== t.state.name ? core.chip(qn, 'off') + ' ' : '') +
-          core.chip(t.state.name, stateLevel(t.state.code))
-        : '');
-    }
-    updateProcess(t, conn);
-  }
+    // 시퀀서 상태는 장비 상태와 다를 때만(같은 말이 두 번 보이면 읽지 않는다). 장비 상태는 상단 띠에
+    var qn = q.name || '';
+    core.html(core.bind('pqSeq', root), conn && t.state && qn && qn !== t.state.name ? core.chip(qn, 'off', 'Sequencer') : '');
+    // v0.7.0(P7): 남은 PC 끊김 트립 — 작은 표시. v0.7.1(U4): 짧은 글 'Trip'(자세한 것은 툴팁)
+    var trip = conn && t.plc && t.plc.pc_trip;
+    core.html(core.bind('pqTrip', root), trip && t.state
+      ? core.chip('Trip', 'warn', 'PC Trip — ' + tripTip(t.plc, t.state.code === ST_SAFE_STOP)) : '');
 
-  /* ---------- 공정 진행 ---------- */
-  function updateProcess(t, conn) {
-    var p = t.process || {};
+    var p = conn ? (t.process || {}) : {};
     var run = !!p.running;
+    var D = fmt.DASH;
+    var steps = p.steps || [];
+    setIn(root, 'pqBlock', run ? (p.block || 0) + ' / ' + (p.block_count || D) : D);
+    setIn(root, 'pqStep', run ? (p.step_in_block || D) + ' / ' + (steps.length || D) : D);
+    setIn(root, 'pqCycle', run ? (p.cycle || 0) + ' / ' + (p.block_repeat || D) : D);
+    setIn(root, 'pqGroup', run && p.group ? (p.group_pass || 0) + ' / ' + p.group.repeat : D);
+    // v0.4.15: 이어받은 공정은 시작 시각을 모른다 — 경과는 이어받은 뒤부터('+')
+    setIn(root, 'pqElapsed', run ? (p.adopted ? '+' : '') + fmt.hms(p.elapsed_s) : D);
+    setIn(root, 'pqRemaining', run && p.total_ms ? fmt.hms((p.remaining_ms || 0) / 1000)
+      : (!run && p.estimate && p.estimate.total_ms ? T('v.estimate') + ' ' + fmt.hms(p.estimate.total_ms / 1000) : D));
+    setIn(root, 'pqPlannedEnd', run ? (p.eta || D) : D);
 
-    core.setText('sqRec', !conn ? fmt.DASH
-      : (p.recipe || 'Select a recipe') + (p.number ? ' · No. ' + p.number : ''));
-    if (!conn) p = {};
-
-    if (run && p.total_ms) {
-      // v0.4.15: 이어받은 공정은 시작 시각을 모른다 — 경과는 이어받은 뒤부터(v0.4.16 앞말을 짧게 — 1280 폭에서 두 줄로 넘었다)
-      core.setText('sqTime', (p.adopted ? 'Adopted +' : '') + fmt.hms(p.elapsed_s) + ' / ' + fmt.hms((p.remaining_ms || 0) / 1000) +
-        ' / ' + (p.eta || fmt.DASH));
-    } else if (p.estimate && p.estimate.total_ms) {
-      core.setText('sqTime', T('v.estimate') + ' ' + fmt.hms(p.estimate.total_ms / 1000));
-    } else {
-      core.setText('sqTime', fmt.DASH);
-    }
-
-    var bar = core.bind('sqBar');
+    var done = (run && p.total_ms) ? (1 - (p.remaining_ms || 0) / p.total_ms) : 0;
+    var bar = core.bind('sqBar', root);
     if (bar) {
-      var done = (run && p.total_ms) ? (1 - (p.remaining_ms || 0) / p.total_ms) : 0;
-      bar.style.width = Math.max(0, Math.min(100, done * 100)).toFixed(1) + '%';
-      bar.className = p.paused ? 'warn' : '';
+      var wd = Math.max(0, Math.min(100, done * 100)).toFixed(1) + '%';
+      if (bar.style.width !== wd) bar.style.width = wd;
+      var bc = (p.paused || p.stop_reserved) ? 'warn' : '';
+      if (bar.className !== bc) bar.className = bc;
     }
+    setIn(root, 'pqPct', run && p.total_ms ? Math.floor(done * 100) + ' %' : D);
 
-    // 스텝 목록 — 지금 스텝을 굵게. 열리는 밸브 이름을 함께 보여 준다.
-    var sl = core.bind('sqSteps');
+    // 스텝 줄(높이 고정) — 공정 중이면 그 블록 스텝 칩(폭 고정, 지금 스텝이 늘 보이게 앞뒤를 고른다 — 전체 수는 Step 칸).
+    // 공정이 아니면 같은 자리에 시작 흐름 문구 또는 'Last' 칩 + 끝 결과(★ v0.5.1(A3): 결과 수준으로 색)
+    var sl = core.bind('sqSteps', root);
     if (sl) {
-      var steps = p.steps || [];
-      core.html(sl, (run && steps.length)
-        ? steps.map(function (x, i) {
-            var on = (i + 1) === p.step_in_block;
-            return '<span class="st' + (on ? ' on' : '') + '">' + core.esc(x.name || (i + 1)) +
-              '<i>' + core.esc(fmt.ms(x.ms)) + 's</i></span>';
-          }).join('')
-        : '');
+      var html, cls = 'pq-steps';
+      if (run && steps.length) {
+        var n = root._chips || 4, cur = Math.max(1, p.step_in_block || 1);
+        var a = Math.max(0, Math.min(steps.length - n, cur - 1 - Math.floor(n / 2)));
+        html = steps.slice(a, a + n).map(function (x, i) {
+          var no = a + i + 1, on = no === cur;
+          return '<span class="st' + (on ? ' on' : '') + '" title="' + core.esc((x.name || no) + ' · ' + fmt.ms(x.ms) + ' s') +
+            '"><b>' + no + '</b> <span class="nm">' + core.esc(x.name || '') + '</span><i>' +
+            (on ? core.esc(fmt.ms(p.step_ms)) + ' / ' : '') + core.esc(fmt.ms(x.ms)) + ' s</i></span>';
+        }).join('');
+      } else {
+        var msg = p.message || '', last = false;
+        if (p.last_result && !run && !msg) { msg = p.last_result; last = true; }
+        if (!msg && conn && !p.recipe) msg = 'Select a recipe';
+        var lv = T.resultLevel(msg);
+        html = msg ? '<span class="procmsg' + (lv ? ' ' + lv : '') + '" title="' + core.esc(msg) + '">' +
+          (last ? '<span class="chip">Last</span> ' : '') + core.esc(msg) + '</span>' : '';
+        cls += ' msg';
+      }
+      core.html(sl, html);
+      if (sl.className !== cls) sl.className = cls;
     }
-
-    // 시작 조건 — 판정은 서버가 했고 여기서는 안 된 것만 보여 준다.
-    var cl = core.bind('sqChecks');
-    if (cl) {
-      var bad = (p.checks || []).filter(function (c) { return !c.ok; });
-      // ★ 안 된 것만, 그것도 앞 셋만 보여 준다 — 패널이 넘치면 아무것도 안 읽힌다.
-      //   전체 목록은 시작을 누를 때 확인 창에서 다시 보여 준다.
-      // ★ v0.5.0(A4): 같은 모양의 짧은 목록 — 이름 + 상태 점, 설명은 툴팁
-      core.html(cl, (!run && bad.length)
-        ? bad.slice(0, 3).map(function (c) {
-            var det = checkDetail(c);
-            return sti(c.label, c.key === 'base' ? 'warn' : 'stop', c.label + (det ? ' — ' + det : ''));
-          }).join('') + (bad.length > 3 ? sti('+' + (bad.length - 3) + ' more', 'stop',
-            bad.slice(3).map(function (c) { var det = checkDetail(c); return c.label + (det ? ' — ' + det : ''); })
-              .join('\n')) : '') +
-          // O3 허가·발생기가 빠졌으면 수동 창의 O3 라인 켜기로 바로 간다(설정값은 거기서 확인)
-          (bad.some(function (c) { return c.action === 'o3_on'; })
-            ? ' <button class="btn sm" data-mnopen="o3">' + T('b.o3On') + '</button>' : '')
-        : '');
-    }
-
-    // ★ v0.5.1(A3 · D4): 결과 수준으로 색(정상 = 회색 · 중단 등 = 노랑 · 실패 = 빨강). 'Last' 는 영문 칩, 문장은 한글 그대로
-    var msg = p.message || '', last = false;
-    if (p.last_result && !run && !msg) { msg = p.last_result; last = true; }
-    var pm = core.bind('seqMsg');
-    if (pm) {
-      var lv = T.resultLevel(msg);
-      var html = msg ? (last ? '<span class="chip">Last</span> ' : '') + core.esc(msg) : '';
-      if (pm.innerHTML !== html) pm.innerHTML = html;
-      pm.className = 'procmsg' + (lv ? ' ' + lv : '');
-      pm.hidden = !msg;
-    }
-    var cancel = core.bind('sqCancel');
+    var cancel = core.bind('sqCancel', root);
+    var abort = root.querySelector('[data-cmd="process_abort"]');
     if (cancel) cancel.hidden = (p.phase !== 'base_wait');
+    if (abort) abort.hidden = (p.phase === 'base_wait');
 
     // 상태에 맞는 단추만 살린다 — 누를 수 없는 단추를 눌러 보게 두지 않는다.
     var local = core.canOperate();
-    var busy = p.phase && p.phase !== 'idle';
-    en('process_start', local && conn && !run && !busy && !!p.can_start);
+    var flow = p.phase && p.phase !== 'idle';
+    en('process_start', local && conn && !run && !flow && !!p.can_start);
     en('process_pause', local && conn && run && !p.paused);
     en('process_resume', local && conn && !!p.paused);
     en('process_stop_after_cycle', local && conn && run && !p.paused);
@@ -269,23 +285,21 @@
     en('process_cancel_wait', local && p.phase === 'base_wait');
   }
 
-  /** 시작 조건 글자 — 베이스 압력은 게이지와 같은 규칙(fmt.torr)으로 여기서 만든다. */
-  function checkDetail(c) {
-    if (c.key === 'base' && ('cur' in c || 'target' in c)) {
-      return 'Actual ' + fmt.torr(c.cur) + ' / Target ' + fmt.torr(c.target) + ' Torr';
-    }
-    return c.detail || '';
-  }
-
+  /** 공정 단추 — 두 탭(운전 · P&ID 넓은 배치)의 같은 단추를 모두. 진행 중(응답 기다림)이면 막고 이유 */
   function en(cmd, ok) {
-    var b = d.querySelector('.procbar [data-cmd="' + cmd + '"]');
-    if (b) b.disabled = !ok;
+    var busy = core.busy.has('cmd:' + cmd);
+    Array.prototype.forEach.call(d.querySelectorAll('.procbar [data-cmd="' + cmd + '"]'), function (b) {
+      var off = !ok || busy;
+      if (b.disabled !== off) b.disabled = off;
+      var tip = busy ? core.BUSY_TIP : '';
+      if (b.title !== tip) b.title = tip;
+    });
   }
 
   var ST_SAFE_STOP = 6;     // 장비 상태 코드 — 안전 정지(addresses.STATE_SAFE_STOP)
 
   /** v0.7.2: 'Trip' 칩 툴팁 — Program Notices 와 같은 규칙(v0.7.1 P6). '[Alarm Reset] 으로 풀립니다' 는 트립만이 원인일
-   *  때만, 비상정지 · 중대 알람이 같이 있으면 그 원인을 적는다 */
+   *  때만, 비상정지 · 중대 알람이 같이 있으면 그 원인을 적는다. v0.8.0: 상단 띠(strip.js)도 이 규칙을 쓴다 */
   function tripTip(plc, safeStop) {
     var head = 'PC 연결이 끊겼던 기록(PC Link Lost)이 남아 있습니다. ';
     if (!plc.pc_trip_only) {
@@ -294,179 +308,6 @@
     }
     return head + (safeStop ? 'PLC 가 안전 정지 상태입니다. ' : '공정이 끝나면 PLC 가 안전 정지합니다. ') +
       '[Alarm Reset] 으로 풀립니다';
-  }
-
-  function stateLevel(code) {
-    return ({ 2: 'ok', 3: 'ok', 4: 'warn', 5: 'warn', 6: 'stop' })[code] || 'off';
-  }
-
-  function updateVac(s, t, conn) {
-    var p = t.pressure || {};
-    core.setText('gCvg', conn ? fmt.torr(p.cvg) : fmt.DASH);
-    var un = core.bind('cvgUnconf');
-    if (un) un.hidden = ((s.unconfirmed || []).indexOf('CVG Pressure') < 0);
-    var cmBox = core.bind('gCmBox');
-    if (cmBox) cmBox.hidden = !(p && p.cm_installed);
-    core.setText('gCm', conn ? fmt.torr(p.cm) : fmt.DASH);
-
-    var aux = auxMap(s, t, conn);
-    var i0 = t.inputs0;
-    core.setText('vPump', !conn ? fmt.DASH
-      : 'Pump ' + (aux['PMP'] ? T('s.on') : T('s.off')) + ' · ' +
-        (core.bit(i0, 7) ? T('s.feedbackOk') : T('s.noFeedback')));
-    core.setText('vIve', !conn ? fmt.DASH
-      : 'IV-E ' + (aux['IV-E'] ? T('s.open') : T('s.closed')) + ' · VV ' + (aux['VV'] ? T('s.open') : T('s.closed')));
-
-    var box = core.bind('ilks');
-    if (!box) return;
-    if (!conn) { core.html(box, sti(core.downText(), '')); return; }
-    var str = s.structure || {};
-    var out = [];
-    (str.interlocks || []).forEach(function (k) {
-      var on = core.bit(t.interlock, k.bit);
-      // bad:true 인 비트는 '켜져 있으면 이상'이다(동시 요청·안전 정지 요구).
-      var lvl = k.bad ? (on ? 'stop' : '') : (on ? 'ok' : 'warn');
-      if (k.bad && !on) return;      // 이상이 없으면 굳이 보여 주지 않는다
-      // ★ v0.6.2(B4): 상태가 이름에 든 것('Vacuum OK')은 짧은 이름(short — 점 색이 상태). 툴팁 · 기록 이름은 그대로
-      out.push({ name: k.short || k.tag, lvl: lvl, why: k.why });
-    });
-    // 위 kv 줄에서 이미 보여 준 입력은 칩으로 또 내지 않는다(패널이 넘친다).
-    var SHOWN = { 'IVE-O': 1, 'IVE-C': 1, 'PMP-RUN': 1, 'ATM': 1 };
-    (str.inputs0 || []).forEach(function (k) {
-      if (k.unused || k.momentary || SHOWN[k.tag]) return;
-      out.push(inputChip(t.inputs0, k, 'Input0 b' + k.bit));
-    });
-    // 입력 워드1(RF·O3 관련)은 아래 장비 전용 패널에서 이미 보여 준다 —
-    // 같은 칩을 두 번 그리면 인터락 패널이 넘친다.
-    // ★ v0.6.1(B2): 들어가는 줄 수에 맞춰 그린다 — 지난번 잰 줄 · 열 수로 그리고, 재어 보아 달라졌으면 한 번 더
-    box.classList.toggle('ordered', out.some(function (i) { return T.stiRank(i.lvl) < 2; }));
-    core.html(box, stiList(out, ilkFit.rows, ilkFit.cols));
-    var rows = snapIlks(box), cols = stlCols(box);
-    if (rows && cols && (rows !== ilkFit.rows || cols !== ilkFit.cols)) {
-      ilkFit = { rows: rows, cols: cols };
-      core.html(box, stiList(out, rows, cols));
-    }
-    var tt = okHidTitle(out, ilkFit.rows, ilkFit.cols);
-    if (box.title !== tt) box.title = tt;
-  }
-  var ilkFit = { rows: 0, cols: 0 };
-
-  /** 상태 점 목록 상자의 열 수(grid-template-columns 가 계산된 값). 못 재면 0 */
-  function stlCols(box) {
-    if (!w.getComputedStyle) return 0;
-    return String(w.getComputedStyle(box).gridTemplateColumns || '').split(' ').filter(Boolean).length;
-  }
-
-  /** ★ v0.6.1(B1): 상자 위 ~ 칸(panel-body) 몸통 아래까지 실제로 남은 높이(CSS px, 창 배율 zoom 을 나눈 값).
-   *  Process 칸 목록이 길어지면 Pressure 칸 몸통이 줄어 칸이 상자를 자른다 — 상자 높이(clientHeight)만 보면
-   *  잘린 줄이 반만 보인다. 못 재면 0 */
-  function ilkRoom(box) {
-    var body = box.closest && box.closest('.panel-body');
-    if (!body || !box.offsetHeight) return 0;
-    var br = box.getBoundingClientRect(), pr = body.getBoundingClientRect();
-    var zoom = br.height / box.offsetHeight || 1;
-    var pad = w.getComputedStyle ? parseFloat(w.getComputedStyle(body).paddingBottom) || 0 : 0;
-    return Math.max(0, (pr.bottom - br.top) / zoom - pad - 2);
-  }
-
-  /** 인터락 목록 칸 높이를 줄 높이의 배수로 — 줄이 반쯤 잘리지 않게(넘치는 줄은 스크롤로 본다).
-   *  ★ v0.5.4: 넘칠 때만이 아니라 늘 — 상자의 실제 높이(clientHeight)를 18 의 배수로 내려 맞춘다 */
-  function snapIlks(box) {
-    box.style.maxHeight = '';
-    var h = box.clientHeight;
-    if (!h) return 0;
-    var room = ilkRoom(box);              // ★ v0.6.1(B1): 칸 몸통이 자르는 높이까지
-    if (room > 0 && room < h) h = room;
-    box.style.maxHeight = snapRows(h) + 'px';
-    return snapRows(h) / STI_ROW;
-  }
-
-  function snapRows(h) { return Math.max(STI_ROW, Math.floor(h / STI_ROW) * STI_ROW); }
-
-  /** 입력 한 줄(상태 점).
-   *  ★ ok_when=false 인 입력(펌프 알람·가스 누출·과온·RF 알람)은 '이상일 때 1'이다 —
-   *    v0.5.1(A3): 이름이 알람이라 '정상 = 초록 점'이면 '알람이 켜짐'으로 읽힌다 — 정상(0)이면 회색 점,
-   *    이상(1)일 때만 빨강. ok_when=true 는 1 이 정상(초록).
-   *    ok_when 이 없는 입력(운전 · 리미트)은 켜짐 = 초록 점, 꺼짐 = 회색 점(이상 아님). */
-  function inputChip(word, k, why) {
-    var on = core.bit(word, k.bit);
-    var lvl;
-    if (k.ok_when === false) lvl = on ? 'stop' : '';
-    else if (k.ok_when === true) lvl = on ? 'ok' : 'stop';
-    else lvl = on ? 'ok' : '';
-    // ★ v0.6.1(B4): 허가 · 정상 조건 입력은 상태가 들어가지 않은 이름(short — 'Air OK' → 'Air')으로, 점 색이 상태를 말한다
-    return { name: (k.ok_when === true && k.short) || k.name, lvl: lvl, why: why };
-  }
-
-  /** ★ v0.5.3: 상태 목록은 알람(빨강) → 경고(노랑) → 그 밖 순(T.stiOrder) — 문제 항목이 위로.
-   *  ★ v0.5.4: 알람이나 경고가 있으면 문제 항목만 그리고, 정상 항목은 회색 '+N OK' 한 칸(올리면 툴팁 · 누르면 알림에
-   *  전체 이름) — 칸이 좁아도 문제 항목이 스크롤 아래로 숨지 않게(T.stiCompact) */
-  function stiList(items, rows, cols) {
-    var c = T.stiCompact(items);
-    // ★ v0.6.1(B2): 줄 · 열 수를 알면 그 안에 맞춘다 — 넘치면 마지막 칸은 '+N more'(숨은 문제 중 가장 나쁜 수준의 색)
-    if (rows && cols) c = T.stiFit(c, rows, cols);
-    var h = c.items.map(function (i) { return sti(i.name, i.lvl, i.why); }).join('');
-    if (c.ok.length) {
-      var names = c.ok.map(function (i) { return i.name; }).join(' · ');
-      h += '<span class="sti more" tabindex="0" role="button" data-okall="' + core.esc(names) + '" title="' +
-        core.esc(names) + '"><i></i>+' + c.ok.length + ' OK</span>';
-    }
-    if (c.more && c.more.length) {
-      // ★ v0.6.2(B1 · B2): N 은 숨은 문제 항목 수만 — 툴팁은 숨은 문제 이름 + 'OK n'(v0.6.3: 알림과 같은 말), 누르면(Enter 도) 수준별 알림
-      var lv = T.stiWorst(c.more);
-      var hid = c.more.map(function (i) { return i.name; }).join(' · ');
-      var okn = (c.okHid || []).length;
-      h += '<span class="sti more' + (lv ? ' ' + lv : '') + '" tabindex="0" role="button" data-more="' +
-        core.esc(T.stiMoreText(c.more, c.okHid)) + '" data-lvl="' + (lv === 'stop' ? 'err' : lv === 'warn' ? 'warn' : 'info') +
-        '" title="' + core.esc(hid + (okn ? ' · OK ' + okn : '')) + '"><i></i>+' + c.more.length + ' more</span>';
-    }
-    return h;
-  }
-
-  /** ★ v0.6.2(B1): 문제 항목만 겨우 들어가 '+N OK' 칸을 뺐으면 상자 title 에 정상 항목 개수 · 이름(아니면 '') */
-  function okHidTitle(items, rows, cols) {
-    if (!rows || !cols) return '';
-    var oh = T.stiFit(T.stiCompact(items), rows, cols).okHid.map(function (i) { return i.name; });
-    return oh.length ? 'OK ' + oh.length + ' — ' + oh.join(' · ') : '';
-  }
-
-  if (d && d.addEventListener) {
-    d.addEventListener('click', function (ev) {
-      var m = ev.target.closest && ev.target.closest('[data-okall]');
-      if (m) core.toast('OK — ' + m.getAttribute('data-okall'), 'info');
-      // ★ v0.6.2(B2): '+N more' 는 숨은 항목을 수준별 알림으로 — 탭은 옮기지 않는다(허가 · 조건 항목은 Alarm/Log 탭에 없다).
-      //   Enter · Space 는 core.js 의 tabindex="0" 처리가 click 으로 바꾼다
-      var mm = ev.target.closest && ev.target.closest('[data-more]');
-      if (mm) core.toast(mm.getAttribute('data-more'), mm.getAttribute('data-lvl') || 'info');
-    });
-  }
-
-  /** ★ v0.5.3: 알람 · 경고 항목은 줄 수 제한(max-height)과 상관없이 늘 보이게 — 맨 위에 모여 있으니
-   *  그 줄 수만큼은 상자 높이를 늘린다(그 밖 항목은 스크롤). ★ v0.5.4: 높이가 늘 수 있는 장비 전용 칸(RF · O3)에만 쓴다 —
-   *  인터락 목록은 높이 고정 칸 안이라 늘지 않으므로 문제 항목만 + '+N OK' 와 snapIlks 로 맞춘다 */
-  var STI_ROW = 18;
-  function keepProblems(box) {
-    if (!box || !w.getComputedStyle) return;
-    var probs = box.querySelectorAll('.sti.stop, .sti.warn');
-    if (!probs.length) return;
-    var cs = w.getComputedStyle(box);
-    var cols = String(cs.gridTemplateColumns || '').split(' ').filter(Boolean).length || 1;
-    var n = 0, wide = false;
-    Array.prototype.forEach.call(probs, function (p) {
-      var sp = p.classList.contains('w2') ? Math.min(2, cols) : 1;
-      n += sp;
-      if (sp > 1) wide = true;
-    });
-    var need = (Math.ceil(n / cols) + (wide && cols > 2 ? 1 : 0)) * STI_ROW;
-    var cur = parseFloat(box.style.maxHeight) || parseFloat(cs.maxHeight);
-    if (isFinite(cur) && need > cur) box.style.maxHeight = need + 'px';
-  }
-
-  /** 상태 점 목록 한 줄 — 이름 + 점. lvl: ok(초록 점) · warn · stop(점과 글자) · ''(회색 점) */
-  function sti(name, lvl, why) {
-    // ★ v0.5.2(A1): 한 열에 안 들어가는 이름은 두 열을 쓴다(잘리지 않게)
-    return '<span class="sti' + (lvl ? ' ' + lvl : '') + (T.stiSpan(name) > 1 ? ' w2' : '') + '"' + (why ? ' title="' + core.esc(why) + '"' : '') +
-      '><i></i>' + core.esc(name) + '</span>';
   }
 
   function auxMap(s, t, conn) {
@@ -506,35 +347,24 @@
       set('[data-msv="' + def.no + '"]', conn ? fmt.flow(m.sv) : fmt.DASH);
       set('[data-mpv="' + def.no + '"]', conn ? fmt.flow(m.pv) : fmt.DASH);
     });
+    var e = t.extra || {}, D = fmt.DASH;
+    set('[data-mx="rf"]', conn ? fmt.watt(e.rf_fwd) + ' / ' + fmt.watt(e.rf_ref) + ' W' : D);
+    set('[data-mx="pcv"]', conn ? fmt.pct(e.pcv_sv) + ' / ' + fmt.pct(e.pcv_pv) + ' %' : D);
+    var u = e.o3_unit || '';
+    set('[data-mx="o3"]', conn ? fmt.num(e.o3_sv, 1) + ' / ' + fmt.num(e.o3_pv, 1) + ' ' + u : D);
+    var aux = auxMap(s, t, conn);
+    set('[data-mx="o3line"]', conn ? (aux['O3GEN'] ? T('s.on') : T('s.off')) + ' · ' + (aux['BPMP'] ? T('s.on') : T('s.off')) +
+      ' · ' + (aux['IV-B'] ? T('s.open') : T('s.closed')) : D);
+    var left = ((t.manual || {}).o3_off_left_s) || 0;
+    set('[data-mx="o3off"]', conn && left > 0 ? left + ' s' : D);
   }
 
-  function updateDev(s, t, conn) {
-    if (!(s.device || {}).has_rf) return;
-    var e = t.extra || {};
-    core.setText('rfFwd', conn ? fmt.watt(e.rf_fwd) + ' / ' + fmt.watt(e.rf_ref) + ' W' : fmt.DASH);
-    core.setText('rfSv', conn ? fmt.watt(e.rf_sv) + ' W' : fmt.DASH);
-    core.setText('pcvV', conn ? fmt.pct(e.pcv_sv) + ' / ' + fmt.pct(e.pcv_pv) + ' %' : fmt.DASH);
-    var chips = core.bind('rfChips');
-    if (!chips) return;
-    if (!conn) { core.html(chips, ''); return; }
-    var str = s.structure || {};
-    var out = [{ name: 'RF ' + (e.rf_on ? T('s.on') : T('s.off')), lvl: e.rf_on ? 'ok' : '' }];
-    (str.interlocks || []).forEach(function (k) {
-      if (k.tag !== 'RF Permit') return;
-      var ok = core.bit(t.interlock, k.bit);
-      out.push({ name: k.tag, lvl: ok ? 'ok' : 'warn', why: k.why });
-    });
-    // 알람 성격 입력은 정상 회색·알람 빨강 (Powder O3 알람 칩과 같은 규칙)
-    (str.inputs1 || []).forEach(function (k) {
-      out.push(inputChip(t.inputs1, k, 'Input1 b' + k.bit));
-    });
-    chips.style.maxHeight = '';
-    core.html(chips, stiList(out));
-    keepProblems(chips);
-  }
-
-  /* ---------- 잠금 ---------- */
+  /* ---------- 잠금 · 명령줄 ---------- */
   var RUN_LOCKED = { pump_stop: 1, vent: 1, all_close: 1 };
+  var RUN_TIP = '공정 중에는 쓸 수 없습니다 — 먼저 중단하세요';
+
+  /** 이미 그 상태인 명령 — 조작 창과 같은 규칙(UI.alreadyWhy). 막는 이유(한글) 또는 '' */
+  function alreadyWhy(c, s, t, conn) { return conn ? w.UI.alreadyWhy(c, s.structure, t) : ''; }
 
   function updateLocks(s, t, conn) {
     var local = core.canOperate();
@@ -549,7 +379,8 @@
     else if (!conn) msg = '🔒 PLC 연결이 끊겨 명령을 보낼 수 없습니다';
 
     // ★ 공정 단추는 updateProcess 가 상태별로 따로 판단한다 — 여기서 덮어쓰지 않는다.
-    //   명령줄 · 알람 탭의 확인 · 리셋 모두 같은 규칙(원격 · 다른 장비 · 끊김이면 잠금).
+    //   명령줄 · 알람 탭의 확인 · 리셋 모두 같은 규칙(원격 · 다른 장비 · 끊김이면 잠금 · 진행 중이면 잠금).
+    var running = conn && !!(t.process || {}).running;
     Array.prototype.forEach.call(d.querySelectorAll('[data-cmd]'), function (b) {
       if (b.closest('.procbar')) return;
       var c = b.dataset.cmd;
@@ -557,29 +388,31 @@
       //   누를 수 있다 — 끊긴 채 창을 닫는 길(force_close)이 바로 이것이다
       if (c === 'exit') { b.disabled = !core.wasLocal(); return; }
       // ★ 공정 중에는 펌핑 정지 · 벤트 · 전체 닫기를 잠근다(PLC 도 거절하지만 누를 수 있게 두지 않는다)
-      var lockRun = RUN_LOCKED[c] && conn && !!(t.process || {}).running;
-      b.disabled = !local || !conn || lockRun;
-      var tip = lockRun ? '공정 중에는 쓸 수 없습니다 — 먼저 중단하세요' : '';
-      if (b.title !== tip && (lockRun || b.title === '공정 중에는 쓸 수 없습니다 — 먼저 중단하세요')) b.title = tip;
+      var lockRun = RUN_LOCKED[c] && running;
+      var already = alreadyWhy(c, s, t, conn);
+      var busy = core.busy.has('cmd:' + c);
+      var off = !local || !conn || !!lockRun || !!already || busy;
+      if (b.disabled !== off) b.disabled = off;
+      var tip = busy ? core.BUSY_TIP : lockRun ? RUN_TIP : already;
+      if (b.title !== tip) b.title = tip;
+      // 알람 확인 전(부저 울림)이면 Alarm Ack 를 빨간 테두리로
+      if (c === 'alarm_ack') b.classList.toggle('attn', conn && !!t.alarm_new);
     });
     core.setText('lockMsg', msg);
     var lm = core.bind('lockMsg');
-    if (lm && lm.title !== msg) lm.title = msg;           // 줄을 바꿔 다 보인다(툴팁에도 같은 글)
-    // '수동 조작…' — 서버 끊김 · PLC 끊김 · 멈춤이면 잠근다(값도 명령도 없다). 원격은 보기로 연다
-    var mo = core.bind('mnOpen');
-    if (mo) {
-      var why = t.offline ? '서버 연결 끊김' : p.stalled ? 'PLC 하트비트 멈춤' : !conn ? 'PLC 끊김' : '';
+    if (lm && lm.title !== msg) lm.title = msg;           // 두 줄까지(넘치면 말줄임) — 툴팁에 전체 글
+    // '수동 조작…' — 서버 끊김 · PLC 끊김 · 멈춤이면 잠근다(값도 명령도 없다). 원격은 보기로 연다. 두 탭 모두
+    var why = t.offline ? '서버 연결 끊김' : p.stalled ? 'PLC 하트비트 멈춤' : !conn ? 'PLC 끊김' : '';
+    var mt = why ? why + ' — 수동 조작을 열 수 없습니다' : '';
+    Array.prototype.forEach.call(d.querySelectorAll('[data-bind="mnOpen"]'), function (mo) {
       mo.disabled = !!why;
-      var mt = why ? why + ' — 수동 조작을 열 수 없습니다' : '';
       if (mo.title !== mt) mo.title = mt;
-    }
-    core.setText('schemNote', !conn ? core.downText() + ' — No Data'
-      : (t.state ? t.state.name : ''));
+    });
   }
 
   function set(sel, v) {
     var e = d.querySelector(sel);
-    if (e) e.textContent = v;
+    if (e && e.textContent !== v) e.textContent = v;
   }
 
   /* ---------- 명령 ---------- */
@@ -588,25 +421,43 @@
     if (!b || b.disabled) return;
     var c = b.dataset.cmd;
     if (c === 'exit') { core.askExit(); return; }
+    if (core.busy.has('cmd:' + c)) return;             // 한 번 누르면 한 번 — 응답(done)을 기다린다
     if (c === 'process_start') { askStart(); return; }
+    var go = function () { send(c); };
     var cf = confirmFor(c);
-    if (cf) {
-      core.confirmAsk(cf.t, cf.b, cf.ok, function () { w.app.send(c); });
-    } else {
-      w.app.send(c);
-    }
+    if (cf) core.confirmAsk(cf.t, cf.b, cf.ok, go);
+    else go();
   });
 
-  /** 확인 창 문구. Powder 는 O3 라인이 켜져 있으면 전체 닫기가 라인도 한꺼번에 끈다고 알린다. */
+  /** 명령을 보내고 진행 중 잠금(같은 단추를 응답까지 막는다) */
+  function send(c, payload) {
+    var rid = core.sendBusy('cmd:' + c, c, payload);
+    if (core.state && core.state.live) update(core.state.live);
+    return rid;
+  }
+
+  /** 확인 창 문구. Powder 는 O3 라인이 켜져 있으면 전체 닫기가 라인도 한꺼번에 끈다고 알린다.
+   *  ★ v0.8.0: Pumping Start — 수동 밸브 요청이 남아 있는데 Valve Permit 이 없으면, 펌핑으로 허가가 생기는 순간 그 밸브가
+   *  운전자 조작 없이 열린다 — 먼저 묻는다(명령줄 · 조작 창 같은 창). 그 밖에는 확인 없이 */
   function confirmFor(c) {
+    var st = core.state || {};
+    var t = st.live || {};
+    if (c === 'pump_start') {
+      var mn = t.manual || {};
+      if (!mn.valve_request || mn.valve_permit) return null;
+      var names = ((st.structure || {}).valves || []).filter(function (v) { return core.bit(mn.valve_request, v.bit); })
+        .map(function (v) { return v.tag; });
+      if (!names.length) return null;
+      return { t: 'Pumping Start 를 할까요?', ok: T('b.pumpStart'),
+        b: '수동 밸브 요청이 남아 있습니다: <b>' + core.esc(names.join(' · ')) + '</b> — 펌핑으로 Valve Permit 이 생기면 ' +
+           '이 밸브가 바로 열립니다.<br>먼저 그 밸브를 Close 하거나 [Close All Valves] 로 지우세요. 그대로 펌핑할까요?' };
+    }
     var cf = CONFIRM[c];
     if (!cf || c !== 'all_close') return cf;
-    var st = core.state || {};
     if (!(st.device || {}).has_o3) return cf;
-    var t = st.live || {};
     var aux = auxMap(st, t, !!(t.plc && t.plc.connected));
-    var mn = t.manual || {};
-    var o3on = aux['O3GEN'] || aux['IV-B'] || aux['BPMP'] || (mn.aux_request || 0) !== 0;
+    var mn2 = t.manual || {};
+    var o3on = aux['O3GEN'] || aux['IV-B'] || aux['BPMP'] || (mn2.aux_request || 0) !== 0;
     if (!o3on) return cf;
     return { t: cf.t, ok: cf.ok,
       b: cf.b + '<br><br><b>O3 라인(발생기·IV-B·바이패스 펌프)도 한꺼번에 꺼집니다</b> — ' +
@@ -627,10 +478,13 @@
       ((p.checks || []).filter(function (c) { return !c.ok; }).length
         ? '<br><br>아직 안 된 조건:<br>' +
           (p.checks || []).filter(function (c) { return !c.ok; })
-            .map(function (c) { return '· ' + core.esc(c.label) + ' — ' + core.esc(checkDetail(c)); })
+            .map(function (c) { return '· ' + core.esc(c.label) + ' — ' + core.esc(w.UI.checkDetail(c)); })
             .join('<br>')
         : '') + runInfoForm(),
-      T('b.start'), function () { w.app.send('process_start', runInfo()); });
+      T('b.start'), function () {
+        var rid = w.app.send('process_start', runInfo());
+        if (rid) core.busy.start('cmd:process_start', rid);
+      });
   }
 
   /* ---------- v0.7.0(A2) 실행 정보 — 작업자 · 시료 · 메모(모두 선택) ---------- */
@@ -664,6 +518,7 @@
   if (d && d.addEventListener) d.addEventListener('keydown', runInfoKey, true);
 
   core.register('main', { render: render, update: update });
-  // confirmFor — 배관도 조작 창(faceplate)이 펌핑 · 벤트에 같은 확인 창을 쓴다
-  w.viewMain = { render: render, update: update, confirmFor: confirmFor, runInfoKey: runInfoKey };
+  // confirmFor — 조작 창(faceplate)이 펌핑 · 벤트에 같은 확인 창을 쓴다. process — P&ID 탭 넓은 배치가 같은 칸 부품을 쓴다
+  w.viewMain = { render: render, update: update, confirmFor: confirmFor, runInfoKey: runInfoKey, tripTip: tripTip,
+                 process: processPart, annH: annH, viewsH: viewsH, send: send };
 })(window, document);

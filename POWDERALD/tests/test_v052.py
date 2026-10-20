@@ -19,31 +19,37 @@ def _src(*parts):
     return open(os.path.join(ROOT, "frontend", *parts), encoding="utf-8").read()
 
 
-# ===================== A1. 인터락 목록 — 줄 높이 ≥ 글자 높이 · 이름이 안 잘림 =====================
+# ===================== A1. 램프판 — 줄 높이 ≥ 글자 높이 · 이름이 안 잘림(v0.8.0) =====================
 def test_a1_interlock_rows_fit_text():
+    """램프 이름(T.textPx(이름, 12)) + 점 · 여백이 그 열 폭 안 — 좁은 8 열 · 넓은 6 열, 열 폭은 CSS(56 px 묶음 열 + 이름으로
+    정해지는 열) · 배치 폭에서 계산한다. 줄 높이 ≥ 1.4 × 글자."""
     css = _src("css", "style.css")
-    m = re.search(r"#view-main \.ilks\.stl \{ grid-template-columns: repeat\(auto-fill, minmax\((\d+)px, 1fr\)\); "
-                  r"grid-auto-rows: (\d+)px;\s*min-height: (\d+)px; overflow-y: auto;", css)
-    assert m, "인터락 목록 규칙"
-    col, row, minh = (int(x) for x in m.groups())
+    m = re.search(r"\.anngrid \{ display: grid; grid-auto-rows: (\d+)px; row-gap: (\d+)px; column-gap: (\d+)px; \}", css)
+    assert m, "램프판 규칙"
+    row, rgap, cgap = (int(x) for x in m.groups())
     fs = int(re.search(r"--fs-sm:\s*(\d+)px", _src("css", "tokens.css")).group(1))
     assert row >= fs * 1.4, (row, fs)                     # 줄 높이 ≥ 글자 줄 높이(눌려 겹치지 않게)
-    # v0.6.2(A1): v0.6.1 B1 에서 최소 높이는 한 줄(18 px)로 — 줄 수는 snapIlks 가 칸 몸통에 맞춰 정한다.
-    #   알람이 숨지 않는 것은 test_v061 B2 · test_v062 B1 이 본다
-    assert minh % row == 0 and minh >= row, (minh, row)   # 최소 높이 = 줄 높이의 배수
-    assert col <= 100                                     # 3 열을 되찾는다(오른쪽 칸 340 px 이상)
-    out = _node("const T = require(%s); console.log(JSON.stringify({ col: T.STI_COL, r: %s.map(n => [n, T.textPx(n, %d), T.stiSpan(n)]) }));" % (
-        json.dumps(os.path.join(JS, "terms.js")),
-        json.dumps([k["tag"] for k in DEV.INTERLOCKS] +
-                   [k["name"] for k in DEV.INPUTS0 + DEV.INPUTS1 if not k.get("unused")]), fs))
-    assert out["col"] == col
-    gap = 8
-    for name, px, span in out["r"]:
-        room = span * col + (span - 1) * gap - 12            # 점(7) + 사이(5)
-        assert px <= room, (name, px, span, room)            # 어림 폭(굵게 기준)이 칸 안에 든다
-    assert any(s == 2 for _n, _p, s in out["r"])             # 긴 이름은 두 열
-    assert ".stl .sti.w2 { grid-column: span 2; }" in css
-    assert "(T.stiSpan(name) > 1 ? ' w2' : '')" in _src("js", "views", "main.js")
+    lamp = re.search(r"\.lamp \{ display: flex; align-items: center; gap: (\d+)px; height: (\d+)px; padding: 0 (\d+)px 0 (\d+)px;", css)
+    assert lamp and int(lamp.group(2)) == row, "램프 규칙"
+    dot = 8
+    extra = dot + int(lamp.group(1)) + int(lamp.group(3)) + int(lamp.group(4)) + 2          # 점 · 사이 · 좌우 여백 · 테두리
+    names = {r["group"]: [] for r in DEV.ANNUNCIATOR}
+    defs = {("in0:" + k["tag"]): k for k in DEV.INPUTS0}
+    defs.update({("in1:" + k["tag"]): k for k in DEV.INPUTS1})
+    defs.update({("ilk:" + k["tag"]): k for k in DEV.INTERLOCKS})
+    rows = [[defs[i].get("lamp") for i in r["items"]] for r in DEV.ANNUNCIATOR]
+    out = _node("const T = require(%s); console.log(JSON.stringify(%s.map(r => r.map(n => T.textPx(n, %d)))));" % (
+        json.dumps(os.path.join(JS, "terms.js")), json.dumps(rows), fs))
+    # 배치마다 램프판 몸통 폭: 좁은 = 960 − 뷰 여백 32 − 테두리 2 − 몸통 여백 16,
+    #   넓은 = 오른쪽 열((1600 − 32 − 6) × 1 / 2.09) − 2 − 16 (P&ID 넓은 오른쪽 열은 이보다 넓다)
+    for cols, avail in ((8, 960 - 32 - 2 - 16), (6, (1600 - 32 - 6) / 2.09 - 2 - 16)):
+        colw = [0] * cols
+        for r in out:
+            for i, px in enumerate(r):
+                colw[i % cols] = max(colw[i % cols], px + extra)
+        need = 56 + sum(colw) + cols * cgap
+        assert need <= avail, (cols, need, avail)             # 모든 이름이 열 안에 — 말줄임 없음
+    assert ".lamp.alarm { color: var(--stop); background: var(--stop-bg); border-color: var(--stop-line); }" in css
 
 
 def test_a2_a4_a5_tables_and_kv():
@@ -105,13 +111,15 @@ def test_b1_exhaust_title_left_of_pipe():
     out = _schem(_TITLES)
     assert not out["bad"], out["bad"]
     ex = [t for t in out["titles"] if t["s"] == "EXHAUST"]
-    assert ex == [{"s": "EXHAUST", "x": 464, "anchor": "end"}], out["titles"]       # EX_X(472) − 8, 오른쪽 맞춤
+    # v0.8.0: 배기 배관(챔버 아래 x 744) 왼쪽에 오른쪽 맞춤 — 글자 끝이 배관 x 보다 왼쪽
+    exh = _schem(r'''console.log(JSON.stringify(+all.find(e => e.a && e.a['data-pipe'] === 'exh').a.d.match(/M(\d+)/)[1]));''')
+    assert len(ex) == 1 and ex[0]["anchor"] == "end" and ex[0]["x"] < exh, (out["titles"], exh)
 
 
 def test_b12_check_catches_old_exhaust_position():
-    # 옛 자리(400, 360 · 왼쪽 맞춤)면 같은 검사가 배기 배관과 닿음을 잡는다
-    body = _TITLES.replace("  // 무리 제목", "  all.filter(e => e.textContent === 'EXHAUST').forEach(e => { e.a.x = '400'; "
-                           "e.a.y = '252'; e.a['text-anchor'] = 'start'; });\n  // 무리 제목")
+    # 배기 배관 위로 옮기면(배관 x 744 에서 왼쪽 맞춤) 같은 검사가 배기 배관과 닿음을 잡는다
+    body = _TITLES.replace("  // 무리 제목", "  all.filter(e => e.textContent === 'EXHAUST').forEach(e => { e.a.x = '730'; "
+                           "e.a.y = '404'; e.a['text-anchor'] = 'start'; });\n  // 무리 제목")
     out = _schem(body)
     assert any(b.startswith("EXHAUST / exh") for b in out["bad"]), out
 
@@ -136,12 +144,13 @@ def test_b2_b3_o3_generator_dot_and_o2_supply():
     # 점은 제목 줄이 아니라 값 줄 — 값 바로 왼쪽
     assert abs(out["dot"][1] - (out["val"][1] - 4)) <= 1 and out["dot"][1] > out["name"][1] + 10, out
     assert out["dot"][0] < out["val"][0] <= out["dot"][0] + 12, out
-    # O2 는 왼쪽 바깥(x 8)에서 발생기 왼쪽 면으로 가로로 들어온다 + 화살표
+    # O2 는 왼쪽 바깥(모델의 열린 끝 o2)에서 발생기 왼쪽 면으로 가로로 들어온다 + 화살표
     m = re.fullmatch(r"M(\d+),(\d+) H(\d+)", out["o2"])
     assert m, out["o2"]
     x0, y, x1 = (int(v) for v in m.groups())
     bx, by, bw, bh = out["box"]
-    assert x0 == 8 and x1 == bx and by < y < by + bh and out["arrow"], out
+    o2 = _schem("console.log(JSON.stringify(PidModel.terminals.o2));")
+    assert (x0, y) == (o2["x"], o2["y"]) and x1 == bx and by < y < by + bh and out["arrow"], out
 
 
 # ===================== B6. 밸브 누르기 영역은 이름 글자까지 =====================
@@ -183,20 +192,22 @@ def test_b7_tab_order_by_group():
 
 # ===================== B4 · B5 · B8 · B9 · B11 =====================
 def test_b4_b5_b8_b9_b11_details():
-    assert '<svg id="schemSvg" preserveAspectRatio="xMidYMin meet">' in _src("index.html")
+    assert '<svg id="schemSvg" viewBox="0 0 920 680" preserveAspectRatio="xMidYMid meet">' in _src("index.html")
     sch = _src("js", "views", "schematic.js")
-    assert "var CH_L = 392, CH_R = 592, CH_T = 64, CH_B = 232;" in sch                 # 챔버 상자는 내용 높이
-    assert "var NAME_GAP = 12;" in sch and "getComputedTextLength" in sch
+    assert "getComputedTextLength" in sch and "w.PidModel" in sch                       # 그림은 모델에서
     out = _schem(r'''
       const dots = all.filter(e => e.tag === 'circle' && e.a['data-jn'] !== undefined).map(e => [+e.a.cx, +e.a.cy]);
-      const rects = all.filter(e => e.tag === 'rect').map(r => [+r.a.width, +r.a.height]);
-      console.log(JSON.stringify({ dots, rects }));
+      const kinds = {}; PidModel.boxes.forEach(b => { (kinds[b.kind] = kinds[b.kind] || []).push([b.w, b.h]); });
+      // 갈래 하나에 닿는 배관 끝 수(네 갈래 없음)
+      const ends = {}; PidModel.pipes.forEach(p => p.path.forEach((q, i) => { if (typeof q === 'string' && PidModel.junctions[q])
+        ends[q] = (ends[q] || 0) + (i === 0 || i === p.path.length - 1 ? 1 : 2); }));
+      console.log(JSON.stringify({ dots, kinds, ends }));
     ''')
-    if DEV.HAS_RF:
-        assert [176, 400] in out["dots"] and [176, 408] in out["dots"]                   # 세 갈래 둘(네 갈래 아님)
-        assert out["rects"].count([80, 56]) == 5                                         # 캐니스터 3 · H2O · 트랩
-    else:
-        assert out["rects"].count([80, 56]) == 4                                         # 캐니스터 3 · 트랩
+    assert out["dots"] and max(out["ends"].values()) == 3, out["ends"]                  # 세 갈래까지(네 갈래 아님)
+    for kind in ("mfc", "pump"):
+        assert len({tuple(x) for x in out["kinds"][kind]}) == 1, (kind, out["kinds"])   # 같은 종류 상자는 같은 크기
+    cans = [x for x in out["kinds"]["vessel"] if x == [112, 72]]
+    assert len(cans) == 3                                                                # 캐니스터 셋 같은 크기
     tok = _src("css", "tokens.css")
     dark = dict(re.findall(r"--([\w-]+):\s*([^;]+);", tok.split(':root[data-theme="dark"]')[1]))
 

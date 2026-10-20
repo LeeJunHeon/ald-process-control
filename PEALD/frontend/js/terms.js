@@ -12,10 +12,11 @@
 
   var D = {
     // 탭
-    'tab.main': 'Operation', 'tab.recipe': 'Recipe', 'tab.trend': 'Trend', 'tab.datalog': 'Data Log',
+    'tab.main': 'Operation', 'tab.pid': 'P&ID', 'tab.recipe': 'Recipe', 'tab.trend': 'Trend', 'tab.datalog': 'Data Log',
     'tab.alarm': 'Alarm/Log', 'tab.setup': 'Settings',
     // 칸
-    'panel.pid': 'P&ID', 'panel.process': 'Process', 'panel.vac': 'Pressure / Exhaust / Interlock',
+    'panel.pid': 'P&ID', 'panel.process': 'Process', 'panel.start': 'Start Conditions', 'panel.ann': 'Interlock · Input',
+    'panel.valves': 'Valves', 'panel.events': 'Recent Events', 'panel.mfcRf': 'MFC · RF · PCV', 'panel.mfcO3': 'MFC · O3',
     'panel.heater': 'Heater', 'panel.mfc': 'MFC', 'panel.rfpcv': 'RF / PCV', 'panel.o3': 'O3',
     'panel.savedRecipes': 'Saved Recipes', 'panel.edit': 'Edit', 'panel.check': 'Check',
     'panel.datalog': 'Process Data Log', 'panel.table': 'Table', 'panel.recipeCopy': 'Recipe Copy',
@@ -32,10 +33,16 @@
     'eq.hingeLid': 'Hinge Lid', 'eq.assist': 'Assist N2', 'eq.o2': 'O2 Supply', 'eq.exhIso': 'Exhaust Isolation',
     'eq.plcAuto': 'PLC Auto', 'eq.exhaust': 'Exhaust', 'eq.pcv': 'Inline PCV', 'eq.chamberTemp': 'Chamber Temp',
     'eq.precursor': 'Precursor', 'eq.reactant': 'Reactant', 'eq.reactantO3': 'Reactant (O3)', 'eq.pump': 'Pump',
+    'eq.mainPump': 'Main Pump',
+    // 상단 상태 띠 · 램프판 묶음
+    'strip.dev': 'Device State', 'strip.proc': 'Process', 'strip.pr': 'Chamber Pressure', 'strip.exh': 'Pump · Exhaust · Vent',
+    'strip.alm': 'Alarm',
+    'ann.safety': 'Safety', 'ann.permit': 'Permit', 'ann.state': 'State', 'ann.rf': 'RF', 'ann.o3': 'O3',
     // 값
     'v.setpoint': 'Setpoint', 'v.actual': 'Actual', 'v.output': 'Output', 'v.power': 'Power', 'v.status': 'Status',
     'v.fullScale': 'Full Scale', 'v.gas': 'Gas', 'v.block': 'Block', 'v.step': 'Step', 'v.cycle': 'Cycle',
     'v.group': 'Group', 'v.elapsed': 'Elapsed', 'v.remaining': 'Remaining', 'v.planned': 'Planned',
+    'v.plannedEnd': 'Planned End', 'v.offDelay': 'O3 Off Delay', 'v.generator': 'Generator', 'v.request': 'Request',
     'v.recipe': 'Recipe', 'v.channel': 'Channel', 'v.target': 'Target', 'v.position': 'Position',
     'v.forward': 'Forward', 'v.reflected': 'Reflected', 'v.number': 'No.', 'v.estimate': 'Est.',
     'v.severity': 'Severity', 'v.raised': 'Raised', 'v.cleared': 'Cleared', 'v.code': 'Code', 'v.message': 'Message',
@@ -54,6 +61,8 @@
     's.feedbackOk': 'Feedback OK', 's.noFeedback': 'No Feedback', 's.match': 'Match', 's.mismatch': 'Mismatch',
     's.unconfirmed': 'Unconfirmed', 's.thisPc': 'This PC', 's.viewOnly': 'View Only', 's.recording': 'Recording',
     's.locked': 'Locked', 's.unlocked': 'Unlocked', 's.notSaved': 'Not Saved',
+    's.auto': 'Auto', 's.ready': 'Ready', 's.notReady': 'Not ready', 's.yes': 'Yes', 's.no': 'No', 's.none': 'None',
+    's.alarm': 'Alarm', 's.okOn': 'OK · On', 's.offNormal': 'Off · Normal', 's.notReadyLamp': 'Not ready',
     // 단추
     'b.start': 'Start', 'b.pause': 'Pause', 'b.resume': 'Resume', 'b.stopAfterCycle': 'Stop after Cycle',
     'b.abort': 'Abort', 'b.cancelWait': 'Cancel Wait', 'b.manual': 'Manual…', 'b.pumpStart': 'Pumping Start',
@@ -113,7 +122,7 @@
     return '';
   };
 
-  /** ★ v0.5.2(A1): 글자 폭 어림(px, 굵게 기준 — 넉넉히). 상태 점 목록에서 긴 이름이 두 열을 쓸지 정한다 */
+  /** ★ v0.5.2(A1): 글자 폭 어림(px, 굵게 기준 — 넉넉히). v0.8.0: 배관도 검사기(pidcheck.js) · 램프 폭 시험이 쓴다 */
   T.textPx = function (s, px) {
     var w = 0;
     String(s || '').split('').forEach(function (ch) {
@@ -123,75 +132,6 @@
     });
     return w * (px || 12) * 1.05;
   };
-  /** ★ v0.5.3: 상태 목록 순서 — 알람(stop) → 경고(warn) → 그 밖, 같은 수준 안에서는 원래 순서 */
-  T.stiRank = function (lvl) { return lvl === 'stop' ? 0 : lvl === 'warn' ? 1 : 2; };
-  T.stiOrder = function (items) {
-    return (items || []).map(function (it, i) { return [it, i]; })
-      .sort(function (a, b) { return (T.stiRank(a[0].lvl) - T.stiRank(b[0].lvl)) || (a[1] - b[1]); })
-      .map(function (x) { return x[0]; });
-  };
-  /** ★ v0.5.4: 알람이나 경고가 하나라도 있으면 문제 항목만(알람 먼저) + 정상 항목은 '+N OK' 한 칸으로 묶는다.
-   *  { items: 그릴 항목, ok: 묶은 정상 항목(없으면 []) } — 문제가 없으면 전체를 순서대로 */
-  T.stiCompact = function (items) {
-    var ord = T.stiOrder(items);
-    var probs = ord.filter(function (i) { return T.stiRank(i.lvl) < 2; });
-    if (!probs.length) return { items: ord, ok: [] };
-    return { items: probs, ok: ord.slice(probs.length) };
-  };
-  /** ★ v0.6.1(B2): 목록을 rows 줄 × cols 열 안에 맞춘다(stiCompact 결과를 받아). 배치는 순서 그대로(dense 아님 — B3):
-   *  두 열짜리가 줄 끝에 안 들어가면 다음 줄에서 시작한다(style.css 의 .stl.ordered 와 같은 규칙).
-   *  ★ v0.6.2(B1): 정상 묶음 칸 때문에 문제 항목을 숨기지 않는다 —
-   *    ① 문제 항목 + '+N OK' 가 다 들어가면 그대로
-   *    ② 문제 항목만 다 들어가면 문제 항목을 모두 보이고 OK 칸은 뺀다(okHid — 상자 title 에 개수 · 이름)
-   *    ③ 문제 항목도 다 안 들어가면 앞에서부터(알람 먼저) 들어가는 만큼 + '+N more' — more 는 숨은 문제 항목만
-   *  { items, ok: '+N OK' 칸에 묶은 정상 항목, more: '+N more' 로 숨은 항목, okHid: 칸 없이 숨은 정상 항목 } */
-  T.stiFit = function (c, rows, cols) {
-    rows = Math.max(1, rows | 0);
-    cols = Math.max(1, cols | 0);
-    function used(spans) {
-      if (!spans.length) return 0;
-      var r = 1, col = 0;
-      spans.forEach(function (s) {
-        if (col + s > cols) { r++; col = 0; }
-        col += s;
-      });
-      return r;
-    }
-    var spans = c.items.map(function (i) { return Math.min(cols, T.stiSpan(i.name)); });
-    if (used(spans.concat(c.ok.length ? [1] : [])) <= rows) return { items: c.items, ok: c.ok, more: [], okHid: [] };
-    if (used(spans) <= rows) return { items: c.items, ok: [], more: [], okHid: c.ok };
-    var k = c.items.length;
-    while (k > 0 && used(spans.slice(0, k).concat([1])) > rows) k--;
-    return { items: c.items.slice(0, k), ok: [], more: c.items.slice(k), okHid: c.ok };
-  };
-  /** ★ v0.6.2(B2): 숨은 항목을 수준별 글로 — 'Alarm: a · b / Warning: c / OK n'(알림). 알람 · 경고가 아닌
-   *  숨은 항목(문제가 없는 목록이 넘친 경우)과 정상 묶음은 'OK n' 으로 센다
-   *  ★ v0.6.3(B2): 숨은 문제 항목이 없으면(모두 정상인데 넘침) 'OK n — 이름 · …' 으로 이름도 보인다 */
-  T.stiMoreText = function (more, okHid) {
-    var by = { stop: [], warn: [] }, oks = [];
-    (more || []).forEach(function (i) {
-      var r = T.stiRank(i.lvl);
-      if (r === 0) by.stop.push(i.name);
-      else if (r === 1) by.warn.push(i.name);
-      else oks.push(i.name);
-    });
-    (okHid || []).forEach(function (i) { oks.push(i.name); });
-    var out = [];
-    if (by.stop.length) out.push('Alarm: ' + by.stop.join(' · '));
-    if (by.warn.length) out.push('Warning: ' + by.warn.join(' · '));
-    if (oks.length) out.push('OK ' + oks.length + (out.length ? '' : ' — ' + oks.join(' · ')));
-    return out.join(' / ');
-  };
-  /** 항목 중 가장 나쁜 수준('stop' · 'warn' · '') */
-  T.stiWorst = function (items) {
-    var r = Math.min.apply(null, [2].concat((items || []).map(function (i) { return T.stiRank(i.lvl); })));
-    return r === 0 ? 'stop' : r === 1 ? 'warn' : '';
-  };
-  T.STI_COL = 96;          // 상태 점 목록 한 열의 최소 폭(px) — style.css 의 minmax(96px, 1fr) 와 같게
-  T.stiSpan = function (name) {           // 점(7) + 사이(5) + 이름이 한 열을 넘으면 두 열
-    return T.textPx(name, 12) + 12 > T.STI_COL ? 2 : 1;
-  };
-
   if (typeof module !== 'undefined' && module.exports) module.exports = T;
   else root.T = T;
 })(typeof window !== 'undefined' ? window : this);

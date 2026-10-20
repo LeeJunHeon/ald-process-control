@@ -1,8 +1,8 @@
 """v0.6.1 — 옛 시험 2 개 · 알람 많을 때 인터락 목록 · plc_ctl 쓰기 허용 목록 · e2e 프록시 · comm 경쟁 · 배속 범위 ·
 설정 경로 · Windows 정리.
 
-★ 화면의 순수 함수(terms.js 의 stiFit · stiWorst, main.js 의 stiList · snapIlks · inputChip)는 node 로 부른다
-  (node 가 없으면 건너뜀). 브라우저 시험은 없다.
+★ v0.8.0: 인터락 목록의 줄 재기 · '+N more'(B1 · B2 · B3)는 그 기능을 없애 지웠다(고정 램프판 — 모든 항목이 늘 보인다,
+  test_v080). A2 는 새 fit 시험(test_v054 1 번)을, B4 는 램프판 규칙(uimodel.js UI.lamp)을 본다.
 ★ plc_ctl 은 가짜 PLC(별도 프로세스 · 빈 포트)에 대고 돌린다 — 실행 중인 프로그램과 data/ 는 건드리지 않는다.
 """
 import os
@@ -20,7 +20,6 @@ from peald import addresses as A
 from peald import paths
 
 from test_v0411 import _node, JS
-from test_v054 import _fn
 from test_v060 import fake_plc, _ctl, ROOT, TEST, PY, ENV  # noqa: F401 — fake_plc 는 pytest 픽스처
 
 if TEST not in sys.path:
@@ -37,13 +36,13 @@ def _terms():
 
 # ===================== A2. 긴 캔버스 — 구현 글자가 아니라 동작 =====================
 def test_a2_tall_canvas_behaviour():
-    import test_v053
-    src = open(test_v053.__file__, encoding="utf-8").read()
-    body = src[src.index("def test_6_tall_canvas_gives_extra_height_to_bottom_row"):]
+    import test_v054
+    src = open(test_v054.__file__, encoding="utf-8").read()
+    body = src[src.index("def test_1_row_flex_fixes_top_row_and_grows_bottom"):]
     body = body[:body.index("\n\n\n")]
-    for old in ("maxHeight", "flexGrow", "if (hh <= CANVAS_H + 1) return;"):
-        assert old not in body, old                     # 옛 구현 글자를 찾지 않는다
-    test_v053.test_6_tall_canvas_gives_extra_height_to_bottom_row()
+    for old in ("maxHeight", "flexGrow", "if (hh <= CANVAS_H + 1) return;", "rowFlex"):
+        assert old not in body.split('"""')[-1], old                 # 옛 구현 글자를 찾지 않는다(동작을 본다)
+    test_v054.test_1_row_flex_fixes_top_row_and_grows_bottom()
 
 
 def test_a1_version_compare_is_numeric():
@@ -51,129 +50,6 @@ def test_a1_version_compare_is_numeric():
     assert tuple(int(x) for x in version.APP_VERSION.split(".")) >= (0, 6, 1)   # v0.6.2: 버전이 오를 때 깨지지 않게
     src = open(os.path.join(ROOT, "tests", "test_v051.py"), encoding="utf-8").read()
     assert 'APP_VERSION.startswith("0.5.")' not in src
-
-
-# ===================== B1. 인터락 상자 — 칸 몸통이 자르는 높이까지 18 단위로 =====================
-_SNAP = r'''
-  var STI_ROW = 18;
-  var w = { getComputedStyle: el => ({ paddingBottom: el === body ? '4px' : '0px' }) };
-  const zoom = 0.8;
-  const body = { getBoundingClientRect: () => ({ top: 0, bottom: 100 + 60 }) };
-  function mkBox(client) {
-    return { style: {}, clientHeight: client, offsetHeight: client, closest: s => s === '.panel-body' ? body : null,
-             getBoundingClientRect() { return { top: 100, height: this.offsetHeight * zoom }; } };
-  }
-  %s
-  %s
-  %s
-  const a = mkBox(72);          // 상자는 72(4 줄)인데 칸 몸통 아래까지는 60 / 0.8 − 4 − 2 = 69 → 3 줄
-  const ra = snapIlks(a);
-  const b = mkBox(40);          // 상자가 더 작으면 상자 높이(40 → 2 줄)
-  const rb = snapIlks(b);
-  const c = mkBox(0);           // 못 재면(숨은 탭) 손대지 않는다
-  const rc = snapIlks(c);
-  console.log(JSON.stringify({ ra, ma: a.style.maxHeight, rb, mb: b.style.maxHeight, rc, mc: c.style.maxHeight }));
-'''
-
-
-def test_b1_snap_ilks_uses_cell_body_room():
-    main = _src("js", "views", "main.js")
-    out = _node(_SNAP % (_fn(main, "snapRows"), _fn(main, "ilkRoom"), _fn(main, "snapIlks")))
-    assert out == {"ra": 3, "ma": "54px", "rb": 2, "mb": "36px", "rc": 0, "mc": ""}, out
-    css = _src("css", "style.css")
-    rule = css[css.index("#view-main .ilks.stl { grid-template-columns"):]
-    rule = rule[:rule.index("}")]
-    assert "min-height: 18px;" in rule and "min-height: 72px" not in rule
-
-
-# ===================== B2. 줄 수에 맞춘 목록 · '+N more' =====================
-_MANY = ([{"name": n, "lvl": "stop"} for n in ("EMO", "Air", "N2 Pressure", "Cooling Water", "Lid", "Pump Alarm",
-                                              "Gas Leak", "Heater Overtemp Trip", "Safe Stop Request", "Basic")]
-         + [{"name": n, "lvl": "warn"} for n in ("Pump", "Vacuum OK", "Start Permit", "Valve Permit", "Vent Permit")]
-         + [{"name": "Pump Running", "lvl": "ok"}, {"name": "Chamber ATM", "lvl": ""}])
-
-
-def _used(spans, cols):
-    """순서 그대로(dense 아님) 놓을 때 쓰는 줄 수 — 두 열짜리가 줄 끝에 안 들어가면 다음 줄."""
-    if not spans:
-        return 0
-    r, col = 1, 0
-    for s in spans:
-        if col + s > cols:
-            r, col = r + 1, 0
-        col += s
-    return r
-
-
-def test_b2_fit_list_to_rows_with_more_cell():
-    script = _terms() + r'''
-      const items = %s;
-      const out = {};
-      for (const [rows, cols] of [[3, 3], [4, 3], [2, 2], [7, 3]]) {
-        const c = T.stiCompact(items);
-        const f = T.stiFit(c, rows, cols);
-        out[rows + 'x' + cols] = { items: f.items.map(i => i.name), ok: f.ok.map(i => i.name),
-          more: f.more.map(i => i.name), okHid: f.okHid.map(i => i.name), worst: T.stiWorst(f.more),
-          compact: c.items.map(i => i.name), okAll: c.ok.map(i => i.name),
-          spans: c.items.map(i => Math.min(cols, T.stiSpan(i.name))) };
-      }
-      const few = T.stiFit(T.stiCompact(items.slice(0, 2).concat(items.slice(-2))), 3, 3);
-      out.few = { items: few.items.map(i => i.name), ok: few.ok.map(i => i.name), more: few.more.length };
-      out.worstWarn = T.stiWorst([{ lvl: 'ok' }, { lvl: 'warn' }]);
-      out.worstNone = T.stiWorst([{ lvl: 'ok' }, { lvl: '' }]);
-      console.log(JSON.stringify(out));
-    ''' % json.dumps(_MANY)
-    out = _node(script)
-    for key in ("3x3", "4x3", "2x2"):
-        r = out[key]
-        rows, cols = (int(x) for x in key.split("x"))
-        k = len(r["items"])
-        assert r["items"] == r["compact"][:k], r                      # 앞에서부터(알람 먼저)
-        # v0.6.2(B1): '+N more' 는 숨은 문제 항목만 센다 — 정상 묶음은 okHid(툴팁 'OK n 개')
-        assert r["more"] == r["compact"][k:] and r["okHid"] == r["okAll"] and r["ok"] == [], r
-        assert _used(r["spans"][:k] + [1], cols) <= rows, r            # 마지막 칸 '+N more' 까지 들어간다
-        assert _used(r["spans"][:k + 1] + [1], cols) > rows, r         # 하나 더 넣으면 넘친다(들어가는 만큼은 다 보인다)
-        assert r["worst"] == "stop", r                                 # 숨은 것 중 가장 나쁜 수준(알람)
-    # 7 줄 × 3 열이면 문제 항목 15 개 + '+N OK' 가 다 들어간다
-    r = out["7x3"]
-    if _used(r["spans"] + [1], 3) <= 7:
-        assert r["more"] == [] and r["items"] == r["compact"] and r["ok"] == r["okAll"], r
-    assert out["few"] == {"items": ["EMO", "Air"], "ok": ["Pump Running", "Chamber ATM"], "more": 0}, out
-    assert out["worstWarn"] == "warn" and out["worstNone"] == ""
-
-
-def test_b2_render_more_cell_and_opens_alarm_tab():
-    main = _src("js", "views", "main.js")
-    script = _terms() + r'''
-      const core = { esc: s => String(s) };
-      %s
-      %s
-      const html = stiList(%s, 3, 3);
-      const full = stiList(%s);
-      console.log(JSON.stringify({ html, full }));
-    ''' % (_fn(main, "sti"), _fn(main, "stiList"), json.dumps(_MANY), json.dumps(_MANY))
-    out = _node(script)
-    h = out["html"]
-    assert h.count('<span class="sti') >= 3 and h.rstrip().endswith("more</span>"), h
-    last = h[h.rindex('<span class="sti'):]
-    # v0.6.2(B2): data-more 는 수준별 알림 글(누르면 알림 — 탭을 옮기지 않는다)
-    assert 'class="sti more stop"' in last and 'data-more="Alarm: ' in last and "title=" in last, last
-    assert "Basic" in last.split('title="')[1]                       # 툴팁에 숨은 이름
-    assert "more" not in out["full"].replace("sti more", "")         # 줄 수를 모르면 예전처럼('+N OK')
-    assert "closest('[data-more]')" in main and "core.toast(mm.getAttribute('data-more')" in main   # v0.6.2(B2)
-    css = _src("css", "style.css")
-    assert ".sti.more.stop > i { background: var(--stop); }" in css and ".sti.more.warn > i { background: var(--warn); }" in css
-    # 인터락 목록은 잰 줄 · 열 수로 다시 그린다
-    assert "stiList(out, rows, cols)" in main and "var rows = snapIlks(box), cols = stlCols(box);" in main
-
-
-# ===================== B3. 줄인 목록은 dense 끔 =====================
-def test_b3_problem_list_keeps_order():
-    css = _src("css", "style.css")
-    assert ".stl.ordered { grid-auto-flow: row; }" in css
-    assert css.index(".stl.ordered { grid-auto-flow: row; }") > css.index(".stl { grid-auto-flow: row dense; }")
-    main = _src("js", "views", "main.js")
-    assert "box.classList.toggle('ordered', out.some(function (i) { return T.stiRank(i.lvl) < 2; }));" in main
 
 
 # ===================== B4. 허가 · 정상 조건 이름은 상태 없이 =====================
@@ -186,20 +62,18 @@ def test_b4_permit_inputs_use_stateless_names():
     shorts = {k["tag"]: k["short"] for k in oks}
     assert shorts["EMO"] == "EMO" and shorts["AIR"] == "Air" and shorts["N2"] == "N2 Pressure"
     assert shorts["CW"] == "Cooling Water" and shorts["LID"] == "Lid"
-    main = _src("js", "views", "main.js")
-    script = r'''
-      const core = { bit: (w, n) => !!((w >> n) & 1) };
-      %s
+    # v0.8.0: 램프 이름(lamp)도 상태 없이 · 판정은 램프판 규칙 하나(UI.lamp)
+    for k in oks:
+        if not k.get("unused"):                     # SCRUB(쓰지 않음)은 램프판에 없다
+            assert k.get("lamp") == k["short"], k
+    out = _node(r'''
+      const UI = require(%s);
       console.log(JSON.stringify([
-        inputChip(0, { bit: 2, name: 'Air OK', short: 'Air', ok_when: true }, 'x'),
-        inputChip(4, { bit: 2, name: 'Air OK', short: 'Air', ok_when: true }, 'x'),
-        inputChip(1, { bit: 0, name: 'Pump Alarm', ok_when: false }, 'x'),
-        inputChip(0, { bit: 0, name: 'Pump Alarm', ok_when: false }, 'x'),
-        inputChip(1, { bit: 0, name: 'Pump Running', short: 'Pump', ok_when: null }, 'x')]));
-    ''' % _fn(main, "inputChip")
-    out = _node(script)
-    assert [(o["name"], o["lvl"]) for o in out] == [("Air", "stop"), ("Air", "ok"), ("Pump Alarm", "stop"),
-                                                    ("Pump Alarm", ""), ("Pump Running", "ok")], out
+        UI.lamp(0, { bit: 2, ok_when: true }, 'in'), UI.lamp(4, { bit: 2, ok_when: true }, 'in'),
+        UI.lamp(1, { bit: 0, ok_when: false }, 'in'), UI.lamp(0, { bit: 0, ok_when: false }, 'in'),
+        UI.lamp(1, { bit: 0, ok_when: null }, 'in')]));
+    ''' % json.dumps(os.path.join(JS, "uimodel.js")))
+    assert out == ["alarm", "ok", "alarm", "off", "ok"], out
 
 
 # ===================== C1. plc_ctl 쓰기 허용 목록 =====================

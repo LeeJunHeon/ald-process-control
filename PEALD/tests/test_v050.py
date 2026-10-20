@@ -55,7 +55,8 @@ def test_example_config_names_are_english():
 
 def test_index_html_labels_use_dictionary():
     html = open(os.path.join(ROOT, "frontend", "index.html"), encoding="utf-8").read()
-    for k in ("tab.main", "tab.recipe", "tab.trend", "tab.datalog", "tab.alarm", "tab.setup", "panel.pid",
+    # v0.8.0: P&ID 탭(tab.pid) — 배관도 칸 머리는 panel.pid 그대로
+    for k in ("tab.main", "tab.pid", "tab.recipe", "tab.trend", "tab.datalog", "tab.alarm", "tab.setup", "panel.pid",
               "b.pumpStart", "b.closeAll", "b.ack", "b.reset", "b.exit"):
         assert f'data-t="{k}"' in html, k
     for old in (">운전<", ">레시피<", ">트렌드<", ">배관도", ">공정 진행", ">펌핑 시작<", ">알람 리셋<"):
@@ -68,12 +69,13 @@ def _fp(body: str):
       global.window = global; global.document = null;
       global.T = require(%s);
       global.Ops = require(%s);
+      global.UI = require(%s);            // v0.8.0: 이미 그 상태인 펌핑 · 벤트 규칙(UI.alreadyWhy — 명령줄과 같다)
       global.fmt = { flow: v => Number(v).toFixed(1), temp: v => Number(v).toFixed(1), torr: String,
                      pct: v => String(Math.round(v)), watt: v => Number(v).toFixed(1), num: (v, n) => Number(v).toFixed(n) };
       const F = require(%s);
       %s
     ''' % (json.dumps(os.path.join(JS, "terms.js")), json.dumps(os.path.join(JS, "ops.js")),
-           json.dumps(os.path.join(JS, "views", "faceplate.js")), body))
+           json.dumps(os.path.join(JS, "uimodel.js")), json.dumps(os.path.join(JS, "views", "faceplate.js")), body))
 
 
 def test_faceplate_commands_match_manual_window():
@@ -112,7 +114,8 @@ def test_faceplate_commands_match_manual_window():
 
 def test_manual_window_sends_through_ops():
     src = open(os.path.join(JS, "views", "manual.js"), encoding="utf-8").read()
-    assert "w.app.send(" not in src and src.count("Ops.send(") >= 9
+    # v0.8.0: 보내기는 진행 중 잠금을 거는 sendBusy 한 곳(그 안이 Ops.send) — 명령마다 sendBusy(…, Ops.…)
+    assert "w.app.send(" not in src and "var rid = Ops.send(pair);" in src and src.count("sendBusy(") >= 10
 
 
 # ===================== 3. 막힌 상태 — 단추는 막히고 이유가 보인다 =====================
@@ -165,20 +168,27 @@ def test_faceplate_blocked_states_show_reason(change, offline, why):
 
 
 def test_faceplate_normal_state_and_valve_lock():
-    st = _state()
+    # ★ v0.8.0: 밸브 Open 은 Valve Permit 이 있어야 · Close 는 요청이나 출력이 있을 때만 · 이미 멈춘 펌프의 Pumping Stop 은
+    #   막힘(조작 창 판단을 고쳤다 — 7장). '정상 상태면 단추가 살아 있다' 는 허가 있음 · 닫힘 상태로 본다
+    bit = next(k["bit"] for k in DEV.INTERLOCKS if k["tag"] == "Valve Permit")
+    st = _state(live__interlock=1 << bit)
+    opened = _state(live__interlock=1 << bit, live__valves=1, live__manual={"unlocked": True, "valve_request": 1})
     locked = _state(live__manual={"unlocked": False, "valve_request": 0})
     out = _fp(r'''
       const a = F.model('valve', 'PV-1', %s, false), b = F.model('valve', 'PV-1', %s, false);
+      const c = F.model('valve', 'PV-1', %s, false);
       const h = F.model('heater', '4', %s, false), p = F.model('pump', 'PMP', %s, false);
       console.log(JSON.stringify({ a: [a.why, a.buttons.map(x => [x.a, x.on])], b: [b.why, b.buttons.map(x => [x.a, x.on])],
+                                   c: c.buttons.map(x => [x.a, x.on]),
                                    h: h.buttons.map(x => [x.a, x.on]), p: p.buttons.map(x => [x.a, x.on]),
                                    rows: a.rows }));
-    ''' % (json.dumps(st), json.dumps(locked), json.dumps(st), json.dumps(st)))
-    assert out["a"] == ["", [["open", True], ["close", True]]]
+    ''' % (json.dumps(st), json.dumps(locked), json.dumps(opened), json.dumps(st), json.dumps(st)))
+    assert out["a"] == ["", [["open", True], ["close", False]]]
+    assert out["c"] == [["open", False], ["close", True]]
     assert "Unlock" in out["b"][0] and out["b"][1] == [["open", False], ["close", False], ["unlock", True]]
     assert out["h"] == [["apply", True], ["on", True], ["off", True]]
-    assert out["p"] == [["pump_start", True], ["pump_stop", True]]
-    assert ["Status", "Closed"] in out["rows"]
+    assert out["p"] == [["pump_start", True], ["pump_stop", False]]          # 이미 멈춰 있다(PMP · IV-E 꺼짐)
+    assert ["Output", "Closed"] in out["rows"] and ["Valve Permit", "Yes"] in out["rows"]
 
 
 # ===================== 4. 옛 한글 열 이름 데이터 로그가 읽힌다 =====================

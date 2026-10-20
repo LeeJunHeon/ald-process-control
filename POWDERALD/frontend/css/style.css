@@ -4,9 +4,9 @@
  * ★ 색은 전부 tokens.css 의 변수다. 여기에 hex 값을 쓰지 않는다.
  * ★ 공통 컴포넌트(.panel / .btn / .chip / .tbl / .field / .toast / .modal)는
  *   한 번만 정의하고 모든 탭이 같이 쓴다.
+ * ★ v0.8.0: 캔버스(#app)는 두 배치 — 좁은 960×1000(반쪽 창) · 넓은 1600×840(최대화) 기준, core.js fit() 이 창에 맞춰
+ *   배율(zoom)과 크기를 정한다(html[data-layout]). 운전 · P&ID 탭의 칸은 고정 격자 — 값으로 움직이지 않는다.
  *
- * 디자인 캔버스는 960 × 1000 이다(#app) — 화면 가로 절반(1920÷2)에 맞춘 크기.
- * core.js 의 fit() 이 창 크기에 맞춰 비율을 유지한 채 확대·축소한다.
  * ============================================================ */
 
 * { box-sizing: border-box; margin: 0; padding: 0; }
@@ -210,28 +210,9 @@ header {
 }
 
 /* ===================== 운전 탭 ===================== */
-.schem-wrap { flex: 1; min-height: 0; }
-#schemSvg { width: 100%; height: 100%; display: block; }
-.legend {
-  flex: 0 0 auto; display: flex; align-items: center; gap: var(--sp-4);
-  padding: 2px var(--sp-4) var(--sp-2);
-  font-size: var(--fs-xs); color: var(--ink-dim);
-}
-.legend i { display: inline-block; width: 14px; height: 7px; margin-right: 4px; vertical-align: -1px; }
-
 .kv { display: flex; justify-content: space-between; align-items: baseline; margin-bottom: 1px; }
 .kv .k { font-size: var(--fs-md); font-weight: 700; }
 .kv .v { font-size: var(--fs-md); font-weight: 700; font-family: var(--font-mono); }
-.gauges { display: flex; gap: var(--sp-2); margin-bottom: 2px; }
-.gauge {
-  flex: 1; min-width: 0; padding: 2px var(--sp-3);
-  border: 1px solid var(--line); border-radius: var(--r-2); background: var(--panel-2);
-}
-.gauge .k { font-size: var(--fs-sm); color: var(--ink-faint); }
-.gauge .v { font-size: var(--fs-xl); font-weight: 700; color: var(--primary); font-family: var(--font-mono); }
-.gauge .v .u { font-size: var(--fs-sm); color: var(--ink-faint); font-weight: 400; margin-left: 3px; }
-.ilks { display: flex; flex-wrap: wrap; gap: 3px; margin-top: var(--sp-1); }
-.ilks .chip { padding: 0 6px; font-size: var(--fs-xs); }
 
 .cmdbar {
   flex: 0 0 auto; display: flex; align-items: center; gap: var(--sp-2);
@@ -345,20 +326,6 @@ header {
 }
 .bar > span { display: block; height: 100%; width: 0; background: var(--ok); transition: width .3s linear; }
 .bar > span.warn { background: var(--warn); }
-.steplist { display: flex; flex-wrap: wrap; gap: var(--sp-1); margin-bottom: var(--sp-1); }
-/* 비어 있는 줄이 자리를 차지하면 그만큼 아래 패널이 눌린다. */
-.steplist:empty, .ck-list:empty { display: none; }
-.steplist .st {
-  padding: 1px 6px; border: 1px solid var(--line); border-radius: var(--r-1);
-  font-size: var(--fs-xs); color: var(--ink-faint); background: var(--panel-2);
-}
-/* ★ 지금 돌고 있는 스텝만 진하게 — 눈이 한 곳에 가야 한다. */
-.steplist .st.on {
-  color: var(--ok); background: var(--ok-bg); border-color: var(--ok-line); font-weight: 700;
-}
-.steplist .st i { font-style: normal; margin-left: 4px; opacity: .7; }
-.ck-list { display: flex; flex-wrap: wrap; gap: var(--sp-1); }
-.ck-list .chip { padding: 1px 6px; font-size: var(--fs-xs); }
 .procmsg { font-size: var(--fs-sm); color: var(--ink-dim); min-height: 14px; }
 .procbar { display: flex; flex-wrap: wrap; gap: var(--sp-1); margin-top: var(--sp-1); }
 .procbar .btn { padding: 2px 8px; }
@@ -496,12 +463,6 @@ header {
 /* ===================== 상태바 데이터 로그 ===================== */
 .statusbar .rec { color: var(--ok); font-weight: 700; }
 .statusbar .rec.err { color: var(--stop); }
-
-/* ★ 인터락 칩 무리만 스크롤시킨다 — 압력·펌프·IV-E 줄은 언제나 보여야 한다.
-   장비마다 칩 수가 달라(입력·인터락 개수) 패널을 통째로 스크롤시키면
-   가장 중요한 압력이 화면 밖으로 밀린다. */
-#view-main [data-bind="vacBody"] { display: flex; flex-direction: column; }
-#view-main .ilks { flex: 1 1 auto; min-height: 34px; overflow-y: auto; align-content: flex-start; }
 
 /* 수동 창 다듬기 — 태그 이름이 길어도 가로 스크롤이 생기지 않게 한다. */
 .mn-valves { grid-template-columns: 1fr 1fr; }
@@ -654,28 +615,11 @@ header .chip.alarm { border-color: var(--stop-line); color: var(--stop); }
 /* ---- 숫자(A2): 현재값 = 기본 글자색, 설정값 = 흐린 회색, 단위는 작게 흐린 회색. 같은 종류는 같은 크기 · 굵기 ---- */
 .tbl td.pv { color: var(--pv); font-weight: 700; font-family: var(--font-mono); }
 .tbl td.sv { color: var(--sv); font-weight: 700; font-family: var(--font-mono); }
-.gauge .v { color: var(--pv); font-weight: 700; }
 .kv .v { color: var(--pv); font-weight: 700; }
 .kv .v .sv, .num-sv { color: var(--sv); }
 .u, .unit { color: var(--ink-faint); font-size: var(--fs-sm); font-weight: 400; }
 
-/* ---- 상태 점 목록(A4): 이름 + 작은 상태 점, 2~3 열 격자. 문제인 항목만 노랑 · 빨강 ---- */
-.stl { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 1px var(--sp-3); margin-top: var(--sp-1); }
-.stl.c2 { grid-template-columns: repeat(2, minmax(0, 1fr)); }
-.stl:empty { display: none; }
-.sti { display: flex; align-items: center; gap: 5px; min-width: 0; font-size: var(--fs-sm); color: var(--ink-faint);
-  white-space: nowrap; overflow: hidden; text-overflow: ellipsis; line-height: 1.5; }
-.sti > i { flex: 0 0 auto; width: 7px; height: 7px; border-radius: 50%; background: var(--off); }
-.sti.ok > i { background: var(--ok); }
-.sti.warn { color: var(--warn); font-weight: 700; }
-.sti.warn > i { background: var(--warn); }
-.sti.stop { color: var(--stop); font-weight: 700; }
-.sti.stop > i { background: var(--stop); }
-.sti.more { color: var(--ink-faint); }
-#view-main .ilks.stl { display: grid; }
-
 /* ---- 그 밖 무채색으로 ---- */
-.steplist .st.on { color: var(--ink); background: var(--panel); border-color: var(--ink-dim); }
 .rc-item.on, .dl-item.on { background: var(--sel-bg); }
 .rc-btab.on { border-color: var(--ink-dim); }
 .rc-btab.add { color: var(--ink); }
@@ -727,7 +671,6 @@ header .chip.alarm { border-color: var(--stop-line); color: var(--stop); }
 .fp-res { font-size: var(--fs-sm); color: var(--ink-dim); }
 .fp-res.ok { color: var(--ok); }
 .fp-res.err { color: var(--stop); }
-.schem-wrap { position: relative; }
 
 /* ===================== v0.5.1 — 밝은 기본 테마 · 글자 셋 · 칸 넘침 ===================== */
 /* A3: 공정 결과 · 진행 문구 — 정상 = 회색, 중단 등 = 노랑, 실패 = 빨강(T.resultLevel) */
@@ -737,9 +680,6 @@ header .chip.alarm { border-color: var(--stop-line); color: var(--stop); }
 
 /* A1: 칸은 1 px 옅은 회색 테두리로 나눈다(그림자에 기대지 않는다) */
 .panel { border: 1px solid var(--line); box-shadow: none; }
-
-/* C1: 상태 점 목록은 폭에 맞춰 2~3 열 */
-.stl, .stl.c2 { grid-template-columns: repeat(auto-fill, minmax(118px, 1fr)); }
 
 /* C2 · C3: 넓은 표는 칸 안에서 가로 스크롤 — 끝 칸(국번 · Pause OK)이 잘리지 않게 */
 .tblx { max-width: 100%; overflow-x: auto; }
@@ -756,13 +696,6 @@ header .chip.alarm { border-color: var(--stop-line); color: var(--stop); }
   stroke: var(--hmi-hover); }
 
 /* ===================== v0.5.2 — 글자를 키운 뒤의 칸 ===================== */
-/* A1: 인터락 목록 — 줄 높이를 글자에 맞춰 고정(눌려 겹치지 않게), 넘치면 상자 안 스크롤. 열은 3 열을 되찾는다.
-   최소 4 줄은 보이게 — 장비 전용 칸(RF · O3)의 점 목록은 두 줄까지(넘치면 스크롤) */
-#view-main .ilks.stl { grid-template-columns: repeat(auto-fill, minmax(96px, 1fr)); grid-auto-rows: 18px;
-  min-height: 18px; overflow-y: auto; align-content: start; row-gap: 0; }
-#view-main .ilks.stl .sti, #view-main [data-bind="devPanelBody"] .stl .sti { line-height: 18px; }
-#view-main [data-bind="devPanelBody"] .stl { grid-template-columns: repeat(auto-fill, minmax(96px, 1fr));
-  grid-auto-rows: 18px; max-height: 36px; overflow-y: auto; row-gap: 0; }
 /* A3: 그래프 범례는 두 줄까지(넘치면 '+N') */
 .chartpanel .panel-head { height: auto; min-height: 30px; padding-top: 2px; padding-bottom: 2px; }
 .legend-inline { max-height: 30px; line-height: 15px; align-content: center; }
@@ -770,18 +703,6 @@ header .chip.alarm { border-color: var(--stop-line); color: var(--stop); }
 /* A4: 이름 칸(.kv .k)은 줄바꿈 없이 */
 .kv .k { white-space: nowrap; flex: 0 0 auto; margin-right: var(--sp-2); }
 .kv .v { min-width: 0; text-align: right; }
-.stl { grid-auto-flow: row dense; }
-.stl .sti.w2 { grid-column: span 2; }
-/* v0.5.4: 정상 항목 묶음 '+N OK' — 회색, 누를 수 있음 */
-.sti.more { cursor: pointer; }
-.sti.more > i { background: var(--off); }
-/* v0.6.1(B2 · B3): '+N more' — 숨은 것 중 가장 나쁜 수준의 색. 문제 항목이 있으면 순서 그대로(dense 로 빈칸을 메우느라
-   1 칸짜리 경고가 2 칸짜리 알람보다 앞에 오지 않게) */
-.sti.more.warn { color: var(--warn); }
-.sti.more.warn > i { background: var(--warn); }
-.sti.more.stop { color: var(--stop); }
-.sti.more.stop > i { background: var(--stop); }
-.stl.ordered { grid-auto-flow: row; }
 
 /* ===================== v0.7.0 ===================== */
 /* B1 — 설정 탭 PLC Parameters 표: Match 칸이 'Ma' 로 잘리던 것. 이름 칸만 줄바꿈을 허용하고(주소 · 값 · 일치 칸은
@@ -813,3 +734,219 @@ header .chip.alarm { border-color: var(--stop-line); color: var(--stop); }
 .sub-h { font-weight: 700; margin: 2px 0 4px; }
 .lctbl td, .lctbl th, .mttbl td, .mttbl th { white-space: nowrap; }
 .mttbl td.l { white-space: normal; }
+
+/* ===================== v0.8.0 — 두 배치 · 고정 칸 · 상태 띠 · P&ID 탭 · 명령 한 번 ===================== */
+#app { position: relative; }
+/* 상태 띠 · 명령줄은 Operation · P&ID 탭에서만. 그 두 탭에서는 머리의 상태 · 알람 칩을 숨긴다(띠가 같은 것을 크게) */
+#app:not([data-tab="main"]):not([data-tab="pid"]) > .strip,
+#app:not([data-tab="main"]):not([data-tab="pid"]) > .cmdbar { display: none; }
+#app[data-tab="main"] header [data-bind="stateChip"], #app[data-tab="main"] header [data-bind="alarmChip"],
+#app[data-tab="pid"] header [data-bind="stateChip"], #app[data-tab="pid"] header [data-bind="alarmChip"] { display: none; }
+
+/* ---- 상단 상태 띠(높이 84 고정) — 상태가 바뀌어도 글자 굵기 · 자리는 그대로(색 · 점 · 테두리로만) ---- */
+.strip { flex: 0 0 84px; height: 84px; display: grid; gap: var(--sp-2); padding: 6px var(--sp-5) 0;
+  grid-template-columns: 1.05fr 1.45fr 1.15fr 1.25fr 1.1fr; background: var(--bg); }
+[data-layout="wide"] .strip { grid-template-columns: 1fr 1.6fr 1.25fr 1.3fr 1.1fr; }
+.strip .cell { min-width: 0; height: 78px; padding: 4px 10px; display: flex; flex-direction: column; gap: 2px;
+  border: 1px solid var(--line); border-radius: var(--r-3); background: var(--panel); overflow: hidden;
+  text-align: left; color: var(--ink); font: inherit; }
+.strip .sn { font-size: var(--fs-sm); font-weight: 700; color: var(--ink-faint); text-transform: uppercase; letter-spacing: .3px;
+  line-height: 15px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; cursor: help; }
+.strip .sv { display: flex; align-items: center; gap: 8px; min-width: 0; height: 26px; white-space: nowrap; }
+.strip .kpi { font-size: var(--fs-kpi); font-weight: 700; line-height: 26px; white-space: nowrap; color: var(--ink); }
+.strip .kpi.name { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+.strip .kpi.dim { color: var(--ink-faint); }
+.strip .u { font-size: var(--fs-sm); color: var(--ink-faint); white-space: nowrap; }
+.strip .unconf { font-size: var(--fs-sm); }
+.strip .ss { font-size: var(--fs-sm); color: var(--ink-dim); line-height: 16px; min-width: 0;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.strip .ss.warn { color: var(--warn); }
+.strip .ss.alarm { color: var(--stop); }
+.strip .ss .chip { padding: 0 6px; font-size: var(--fs-sm); line-height: 1.3; margin-right: 2px; }
+.strip .dot { flex: 0 0 12px; width: 12px; height: 12px; border-radius: 50%; box-sizing: border-box; background: var(--off); }
+.strip .dot.ok { background: var(--ok); }
+.strip .dot.warn { background: var(--warn); }
+.strip .dot.alarm { background: var(--stop); }
+.strip .dot.off { background: transparent; border: 1.5px solid var(--off); }
+.strip .dot.unknown { background: transparent; border: 1.5px dashed var(--ink-faint); }
+.strip .bar { height: 4px; margin: 0; flex: 0 0 4px; }
+.strip .c-exh { padding-top: 3px; padding-bottom: 3px; gap: 1px; }
+.strip .mini { display: flex; align-items: center; gap: 6px; height: 18px; white-space: nowrap; }
+.strip .mini .mn { flex: 0 0 38px; font-size: var(--fs-sm); color: var(--ink-faint); }
+.strip .mini .dot { flex-basis: 9px; width: 9px; height: 9px; }
+.strip .mini .mv { font-size: var(--fs-md); font-weight: 700; color: var(--ink); }
+.strip .mini .mv.warn { color: var(--warn); }
+.strip .mini .mv.alarm { color: var(--stop); }
+.strip .mini .mv.unknown { color: var(--ink-faint); }
+.strip .c-alm { cursor: pointer; }
+.strip .c-alm:hover { border-color: var(--line-2); }
+/* 확인 전(부저 울림) — 테두리 굵기는 그대로(칸이 흔들리지 않게), 빨강 테두리 + 안쪽 1 px */
+.strip .c-alm.attn { border-color: var(--stop); box-shadow: inset 0 0 0 1px var(--stop); }
+
+/* ---- 명령줄(높이 52 고정) — #app 에. 잠금 문구는 두 줄까지(넘치면 말줄임 · title) ---- */
+.cmdbar { flex: 0 0 52px; height: 52px; margin: 0 var(--sp-5); padding: 0 var(--sp-4); overflow: hidden; }
+.cmdbar .sep { flex: 0 0 1px; width: 1px; height: 24px; background: var(--line-2); margin: 0 var(--sp-1); }
+.cmdbar .lockmsg { max-height: 2.5em; display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2;
+  line-clamp: 2; overflow: hidden; }
+.btn.attn { border-color: var(--stop); color: var(--stop); box-shadow: inset 0 0 0 1px var(--stop); }
+
+/* ---- 운전 탭 고정 격자(칸 크기 = 배치 · 장비 구조) ---- */
+.opgrid { flex: 1; min-height: 0; display: grid; gap: var(--sp-2); }
+.opgrid .panel { min-width: 0; min-height: 0; }
+.opgrid.narrow { grid-template-rows: 270px var(--ann-h) 64px minmax(0, 1fr); grid-template-columns: minmax(0, 1fr); }
+.opgrid .oprow { display: grid; gap: var(--sp-2); min-height: 0; min-width: 0; }
+.opgrid.narrow .r1 { grid-template-columns: 1.05fr 1fr; }
+.opgrid.narrow .r4 { grid-template-columns: 1.3fr 1fr; }
+.opgrid.wide { grid-template-columns: 1.09fr 1fr; grid-template-rows: minmax(0, 1fr); }
+.opgrid.wide .opcol { display: grid; gap: var(--sp-2); min-height: 0; min-width: 0; }
+.opgrid.wide .cl { grid-template-rows: 200px 64px minmax(0, 1fr); }
+.opgrid.wide .cr { grid-template-rows: 132px var(--ann-h) minmax(0, 1fr); }
+.opgrid.wide .r4 { grid-template-columns: 1.15fr 1fr; }
+
+/* ---- Process 칸(운전 · P&ID 넓은 배치 같은 부품) ---- */
+.p-proc .panel-head { gap: var(--sp-2); }
+.p-proc .pq-chips { display: flex; gap: 4px; min-width: 0; overflow: hidden; }
+.p-proc .pq-chips .chip, .p-proc .panel-head .note .chip { padding: 1px 7px; font-size: var(--fs-sm); }
+.pq { display: flex; flex-direction: column; gap: 6px; overflow: hidden; padding: var(--sp-2) var(--sp-3); }
+.pq-kv { display: grid; gap: 4px 8px; }
+.pq-kv.k43 { grid-template-columns: repeat(4, minmax(0, 1fr)); }
+.pq-kv.k7 { grid-template-columns: repeat(7, minmax(0, 1fr)); }
+.kvc { display: flex; flex-direction: column; min-width: 0; line-height: 17px; }
+.kvc .k { font-size: var(--fs-sm); color: var(--ink-faint); white-space: nowrap; }
+.kvc .v { font-size: var(--fs-xl); font-weight: 700; color: var(--pv); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.pq-bar { display: flex; align-items: center; gap: var(--sp-2); }
+.pq-bar .bar { flex: 1; margin: 0; }
+.pq-bar .pct { flex: 0 0 44px; text-align: right; font-size: var(--fs-sm); color: var(--ink-dim); }
+.pq-steps { flex: 0 0 34px; height: 34px; display: flex; gap: 4px; align-items: center; overflow: hidden; }
+.pq-steps .st { flex: 0 0 104px; width: 104px; height: 32px; padding: 1px 6px; overflow: hidden; white-space: nowrap;
+  border: 1px solid var(--line); border-radius: var(--r-1); background: var(--panel-2);
+  font-size: var(--fs-sm); line-height: 14px; color: var(--ink-faint); }
+.pq-steps .st b { font-weight: 700; }
+.pq-steps .st .nm { overflow: hidden; text-overflow: ellipsis; }
+.pq-steps .st i { display: block; font-style: normal; font-family: var(--font-mono); }
+/* 지금 스텝만 초록 바탕 — 굵기는 바꾸지 않는다 */
+.pq-steps .st.on { color: var(--ok); background: var(--ok-bg); border-color: var(--ok-line); }
+.pq-steps.msg .procmsg { flex: 1; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; font-size: var(--fs-md); }
+.p-proc .procbar { flex-wrap: nowrap; margin-top: 0; }
+.p-proc .procbar .btn { padding: 4px 10px; }
+.p-proc .pq-last { display: inline-flex; min-width: 96px; }
+
+/* ---- Start Conditions — 자리 10 개(좁은 2×5 · 넓은 5×2) ---- */
+.sc-body { padding: 6px var(--sp-3); overflow: hidden; }
+.scgrid { display: grid; gap: 4px 10px; height: 100%; }
+html[data-layout="narrow"] .scgrid { grid-template-columns: repeat(2, minmax(0, 1fr)); grid-template-rows: repeat(5, minmax(0, 1fr));
+  grid-auto-flow: column; }
+html[data-layout="wide"] .scgrid { grid-template-columns: repeat(5, minmax(0, 1fr)); grid-template-rows: repeat(2, minmax(0, 1fr)); }
+.sc { display: flex; align-items: center; gap: 6px; min-width: 0; min-height: 0; overflow: hidden; }
+.sci { flex: 0 0 18px; width: 18px; height: 18px; }
+.sci svg { display: block; width: 18px; height: 18px; stroke: currentColor; fill: currentColor; }
+.sci.ok { color: var(--ok); }
+.sci.no { color: var(--stop); }
+.sci.wait { color: var(--warn); }
+.sci.na, .sci.unknown { color: var(--ink-faint); }
+.sct { display: flex; flex-direction: column; min-width: 0; line-height: 16px; }
+.sct b { font-size: var(--fs-md); font-weight: 700; white-space: nowrap; }
+.scd { font-size: var(--fs-sm); color: var(--ink-dim); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.sc-o3 { margin-left: auto; flex: 0 0 auto; }
+.btn.xs { padding: 1px 6px; font-size: var(--fs-sm); }
+.p-start.dimmed .sc-body { opacity: .55; }
+
+/* ---- Interlock · Input 램프판 — 줄 · 자리 고정, 열 폭은 이름(구조)으로만 ---- */
+.ann-body { padding: 6px var(--sp-3); overflow: hidden; }
+.anngrid { display: grid; grid-auto-rows: 22px; row-gap: 4px; column-gap: 4px; }
+.ann-g { grid-column: 1; font-size: var(--fs-sm); font-weight: 700; color: var(--ink-faint); text-transform: uppercase;
+  letter-spacing: .2px; line-height: 22px; white-space: nowrap; cursor: help; }
+.lamp { display: flex; align-items: center; gap: 4px; height: 22px; padding: 0 4px 0 3px; min-width: 0;
+  border: 1px solid transparent; border-radius: var(--r-1); font-size: var(--fs-sm); color: var(--ink-dim); white-space: nowrap; }
+.lamp > i, .lamp-dot { flex: 0 0 8px; width: 8px; height: 8px; border-radius: 50%; box-sizing: border-box; display: inline-block; }
+.lamp.ok > i, .lamp-dot.ok { background: var(--ok); }
+.lamp.warn { color: var(--warn); }
+.lamp.warn > i, .lamp-dot.warn { background: var(--warn); }
+.lamp.alarm { color: var(--stop); background: var(--stop-bg); border-color: var(--stop-line); }
+.lamp.alarm > i, .lamp-dot.alarm { background: var(--stop); }
+.lamp.off > i, .lamp-dot.off { background: transparent; border: 1.5px solid var(--off); }
+.lamp.unknown { color: var(--ink-faint); }
+.lamp.unknown > i { background: transparent; border: 1px dashed var(--ink-faint); }
+.ann-legend { gap: var(--sp-3); }
+.ann-legend > span { display: inline-flex; align-items: center; gap: 4px; cursor: help; white-space: nowrap; }
+
+/* ---- Valves 띠(높이 64) ---- */
+.p-valves { flex-direction: row; align-items: stretch; }
+.vs-name { flex: 0 0 80px; display: flex; flex-direction: column; justify-content: center; gap: 2px; padding: 0 var(--sp-3);
+  border-right: 1px solid var(--line); background: var(--panel-head); }
+.vs-name b { font-size: var(--fs-sm); font-weight: 700; color: var(--ink-faint); text-transform: uppercase; letter-spacing: .3px; cursor: help; }
+.vs-pend { font-size: var(--fs-sm); color: var(--warn); white-space: nowrap; cursor: help; }
+.vs-groups { flex: 1; display: flex; align-items: stretch; min-width: 0; padding: 4px 6px; overflow: hidden; }
+.vs-grp { display: flex; gap: 4px; padding: 0 6px; border-left: 1px solid var(--line); }
+.vs-grp:first-child { border-left: none; padding-left: 0; }
+.vt { flex: 0 0 auto; min-width: 48px; height: 54px; display: flex; flex-direction: column; align-items: center; justify-content: center;
+  gap: 3px; padding: 2px 5px; border: 1px solid transparent; border-radius: var(--r-2); background: transparent;
+  color: var(--ink-dim); font: inherit; cursor: pointer; }
+.vt:hover { border-color: var(--line-2); background: var(--panel-2); }
+.vt .vi { width: 22px; height: 14px; display: block; }
+.vt .vi path { fill: none; stroke: var(--valve-closed); stroke-width: 1.3; }
+.vt .vtag { font-size: var(--fs-sm); line-height: 14px; white-space: nowrap; }
+.vt.open .vi path { fill: var(--valve-open); stroke: var(--valve-open); }
+.vt.open .vtag { color: var(--ok); }
+.vt.pending { background: var(--warn-bg); border: 1px dashed var(--warn-line); }
+.vt.pending .vi path { stroke: var(--warn); stroke-dasharray: 2 1.5; }
+.vt.pending .vtag { color: var(--warn); }
+.vt.unknown .vi path { stroke: var(--ink-faint); stroke-dasharray: 1.5 1.5; }
+.vt.unknown { color: var(--ink-faint); }
+.vt.auto { cursor: default; }
+.vt.auto:hover { border-color: transparent; background: transparent; }
+.vt .vauto { font-size: var(--fs-sm); line-height: 12px; color: var(--ink-faint); }
+.vt.val .vval { font-size: var(--fs-md); font-weight: 700; color: var(--pv); white-space: nowrap; line-height: 18px; }
+.vt.val.open .vval { color: var(--ok); }
+.vt.val.unknown .vval { color: var(--ink-faint); }
+.vt.fp-on, .tbl tr.fp-on td { outline: 1px solid var(--hmi-hover); outline-offset: -1px; }
+
+/* ---- Recent Events(넓은 배치) ---- */
+.ev-body { padding: 2px var(--sp-3); overflow: hidden; }
+.ev { display: flex; align-items: center; gap: var(--sp-2); height: 25px; border-bottom: 1px solid var(--line); min-width: 0;
+  font-size: var(--fs-sm); color: var(--ink-dim); }
+.evd { flex: 0 0 7px; width: 7px; height: 7px; border-radius: 50%; background: var(--off); }
+.ev.ok .evd { background: var(--ok); }
+.ev.warn .evd { background: var(--warn); }
+.ev.err .evd { background: var(--stop); }
+.ev.empty .evd { background: transparent; }
+.ev.warn .evm { color: var(--warn); }
+.ev.err .evm { color: var(--stop); }
+.evt { flex: 0 0 auto; color: var(--ink-faint); }
+.evm { flex: 1; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.ev-link { cursor: pointer; text-decoration: underline; }
+
+/* ---- Heater · MFC 표 — 줄 높이 고정(26 · 채널이 많으면 22) · 줄을 누르면 조작 창 ---- */
+.p-heater .tbl tbody tr, .p-mfc .tbl tbody tr { height: 26px; }
+.p-heater .tbl.dense tbody tr { height: 22px; }
+.tbl tbody tr[data-fp] { cursor: pointer; }
+.tbl tbody tr[data-fp]:hover td { background: var(--panel-2); }
+.tbl tbody tr[data-fp]:focus-visible { outline: 2px solid var(--ink-dim); outline-offset: -2px; }
+.tbl tbody tr.xrow td { color: var(--ink-dim); }
+.tbl tbody tr.xrow td.pv { color: var(--pv); }
+
+/* ---- P&ID 탭 — 좁은: 그림 하나 · 넓은: 그림(폭 = 높이 × 920/680) + 오른쪽 열 ---- */
+.pidgrid { flex: 1; min-height: 0; display: grid; gap: var(--sp-2); grid-template-columns: minmax(0, 1fr); }
+html[data-layout="wide"] .pidgrid { grid-template-columns: var(--pid-w, 720px) minmax(0, 1fr); }
+.pid-side { display: none; }
+html[data-layout="wide"] .pid-side { display: grid; grid-template-rows: 200px var(--ann-h) minmax(0, 1fr); gap: var(--sp-2);
+  min-height: 0; min-width: 0; }
+.p-pid { min-width: 0; min-height: 0; }
+.p-pid .panel-body { position: relative; overflow: hidden; }
+.schem-wrap { position: absolute; inset: 0; }
+#schemSvg { width: 100%; height: 100%; display: block; }
+.panel-head .legend { gap: var(--sp-3); font-size: var(--fs-sm); color: var(--ink-dim); }
+.panel-head .legend > span { display: inline-flex; align-items: center; white-space: nowrap; cursor: help; }
+.legend .lg { display: inline-block; width: 14px; height: 9px; margin-right: 4px; border-radius: 2px; box-sizing: border-box; }
+.legend .lg.valve-open { background: var(--valve-open); }
+.legend .lg.closed { border: 1px solid var(--valve-closed); }
+.legend .lg.pending { border: 1px dashed var(--warn); background: var(--warn-bg); }
+.legend .lg.unknown { border: 1px dashed var(--ink-faint); }
+.legend .lg.flow { height: 3px; background: var(--flow); }
+.legend .lg.auto { border: 1px solid var(--ink-faint); background: var(--panel-2); }
+
+/* ---- 조작 창 — #app 바로 아래(어느 탭 · 어느 요소에서든) ---- */
+.faceplate { width: 260px; }
+.fp-note { font-size: var(--fs-sm); color: var(--ink-faint); }
+.fp-why.note { color: var(--warn); }
+.fp-res.warn { color: var(--warn); }

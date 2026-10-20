@@ -20,6 +20,7 @@ import json
 import time
 import asyncio
 import ipaddress
+import contextvars
 from collections import deque
 from urllib.parse import urlsplit
 
@@ -363,10 +364,19 @@ async def push_log(msg: str, level: str = "info"):
                              "ts": state.logs[-1]["ts"]})
 
 
+# v0.8.0: 지금 처리 중인 화면 명령의 요청 번호(rid) — server.ws_endpoint 가 handle_command 앞뒤로 세운다.
+#   그 연결에 대한 답(ws 를 준 알림)에 붙여, 화면이 '내가 보낸 명령의 결과' 를 시각이 아니라 번호로 고른다
+CURRENT_RID = contextvars.ContextVar("current_rid", default=None)
+
+
 async def push_notice(msg: str, level: str = "info", ws=None):
-    """토스트. 명령을 보낸 사람에게만 알려야 할 때는 ws 를 지정한다."""
+    """토스트. 명령을 보낸 사람에게만 알려야 할 때는 ws 를 지정한다(그 알림에는 요청 번호 rid 를 붙인다).
+    방송 알림에는 rid 가 없다."""
     obj = {"type": "notice", "level": level, "msg": msg}
     if ws is not None:
+        rid = CURRENT_RID.get()
+        if rid is not None:
+            obj["rid"] = rid
         await manager.send_to(ws, obj)
     else:
         await manager.broadcast(obj)

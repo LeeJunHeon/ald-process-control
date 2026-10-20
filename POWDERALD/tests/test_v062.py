@@ -1,7 +1,8 @@
 """v0.6.2 — 옛 시험 4 개 · 시험 경쟁 · '+N more' 규칙 · 숨은 항목 알림 · 갱신 순서 · Vacuum 이름 · config.json BOM ·
 plc_ctl 쓰기 막기(--raw · 히터 · 프로그램 붙음 · ID 0) · e2e MFC 막힘 · 끊김 중 명령 판정 · 제어 파일 · 작은 것.
 
-★ 화면의 순수 함수(terms.js 의 stiFit · stiMoreText, main.js 의 stiList)는 node 로 부른다(node 가 없으면 건너뜀).
+★ v0.8.0: '+N more' 규칙 · 숨은 항목 알림 · 인터락 목록 재기(B1 · B2 · B3)는 그 기능을 없애 지웠다(고정 램프판 — 모든 항목이
+  늘 보인다, test_v080). B2 의 core.js keydown 글자 검사(배관도 g 에 click 없음)는 남긴다. B4 는 램프 이름 규칙.
 ★ plc_ctl 은 가짜 PLC(별도 프로세스 · 빈 포트)에 대고 돌린다 — 실행 중인 프로그램과 data/ 는 건드리지 않는다.
 """
 import os
@@ -18,8 +19,7 @@ from powderald import config as C
 from powderald import settings
 from powderald import storage
 
-from test_v0411 import _node, JS
-from test_v054 import _fn
+from test_v0411 import JS  # noqa: F401
 from test_v060 import fake_plc, _ctl, ROOT, TEST, PY, ENV  # noqa: F401 — fake_plc 는 pytest 픽스처
 
 if TEST not in sys.path:
@@ -64,100 +64,13 @@ def test_a3_hb_stall_test_waits_first_heartbeat():
     assert "\n    assert lk.plc_hb_ok\n" not in body
 
 
-# ===================== B1. '+N more' 는 문제 항목만 센다 =====================
-_PROBS = [{"name": n, "lvl": "stop"} for n in ("EMO", "Air", "Pump Alarm")] + \
-         [{"name": n, "lvl": "warn"} for n in ("RF Permit", "Pump")]
-_OKS = [{"name": f"Ok {i}", "lvl": "ok"} for i in range(11)]
-
-
-def test_b1_fit_hides_ok_cell_before_problems():
-    script = _terms() + r'''
-      const probs = %s, oks = %s;
-      const c = T.stiCompact(probs.concat(oks));
-      const pick = f => ({ items: f.items.map(i => i.name), ok: f.ok.length, more: f.more.map(i => i.name),
-                           okHid: f.okHid.length });
-      console.log(JSON.stringify({
-        all: pick(T.stiFit(c, 3, 3)),        // 문제 5 + OK 칸 = 6 칸 ≤ 9 — 그대로
-        tight: pick(T.stiFit(c, 2, 3)),      // 문제 5 칸 + OK 칸 = 6 칸 = 2 줄 × 3 — 그대로
-        noOk: pick(T.stiFit(c, 1, 5)),       // 문제 5 칸만 1 줄에 — OK 칸을 빼고 문제 모두
-        over: pick(T.stiFit(c, 1, 3)),       // 문제도 다 안 들어감 — 2 개 + '+3 more'
-        text: T.stiMoreText(T.stiFit(c, 1, 3).more, T.stiFit(c, 1, 3).okHid),
-        plain: T.stiMoreText([{ name: 'A', lvl: 'warn' }], []),
-        quiet: pick(T.stiFit(T.stiCompact(oks), 1, 3)),     // 문제가 없는 목록이 넘치면 숨은 정상 항목 수
-      }));
-    ''' % (json.dumps(_PROBS), json.dumps(_OKS))
-    out = _node(script)
-    names = [p["name"] for p in _PROBS]
-    assert out["all"] == {"items": names, "ok": 11, "more": [], "okHid": 0}, out
-    assert out["tight"] == {"items": names, "ok": 11, "more": [], "okHid": 0}, out
-    assert out["noOk"] == {"items": names, "ok": 0, "more": [], "okHid": 11}, out
-    assert out["over"] == {"items": names[:2], "ok": 0, "more": names[2:], "okHid": 11}, out
-    assert out["text"] == "Alarm: Pump Alarm / Warning: RF Permit · Pump / OK 11", out
-    assert out["plain"] == "Warning: A"
-    assert out["quiet"]["items"] == ["Ok 0", "Ok 1"] and len(out["quiet"]["more"]) == 9, out
-
-
-def test_b1_render_counts_hidden_problems_and_box_title():
-    main = _src("js", "views", "main.js")
-    script = _terms() + r'''
-      const core = { esc: s => String(s).replace(/"/g, '&quot;') };
-      %s
-      %s
-      %s
-      const items = %s;
-      const over = stiList(items, 1, 3);
-      const noOk = stiList(items, 1, 5);
-      console.log(JSON.stringify({ over, noOk, t1: okHidTitle(items, 1, 5), t2: okHidTitle(items, 3, 3),
-                                   t0: okHidTitle(items, 0, 0) }));
-    ''' % (_fn(main, "sti"), _fn(main, "stiList"), _fn(main, "okHidTitle"), json.dumps(_PROBS + _OKS))
-    out = _node(script)
-    last = out["over"][out["over"].rindex('<span class="sti'):]
-    assert ">+3 more</span>" in last and 'class="sti more stop"' in last, last          # 숨은 문제 3 개(OK 11 은 빼고)
-    assert 'title="Pump Alarm · RF Permit · Pump · OK 11"' in last, last              # v0.6.3(B2): 알림과 같게 'OK n'
-    assert 'data-lvl="err"' in last
-    assert "more" not in out["noOk"].replace("sti more", "") and "OK</span>" not in out["noOk"], out["noOk"]
-    assert out["t1"].startswith("OK 11 — Ok 0 · Ok 1") and out["t2"] == "" and out["t0"] == "", out
-    vac = _fn(main, "updateVac")
-    assert "var tt = okHidTitle(out, ilkFit.rows, ilkFit.cols);" in vac and "box.title = tt" in vac
-
-
-# ===================== B2. '+N more' 누르면 수준별 알림 · 탭 그대로 =====================
-_CLICK = r'''
-  %s
-  const toasts = [], tabs = [];
-  const core = { esc: s => String(s), toast: (m, l) => toasts.push([m, l]), setTab: t => tabs.push(t) };
-  let handler = null;
-  const d = { addEventListener: (ev, fn) => { if (ev === 'click') handler = fn; } };
-  const w = {};
-  %s
-  const el = attrs => ({ getAttribute: k => attrs[k] === undefined ? null : attrs[k],
-                         closest(sel) { const k = sel.slice(1, -1); return k in attrs ? this : null; } });
-  handler({ target: el({ 'data-more': 'Alarm: Basic / Warning: Vent Permit / OK 4', 'data-lvl': 'err' }) });
-  handler({ target: el({ 'data-okall': 'A · B' }) });
-  console.log(JSON.stringify({ toasts, tabs }));
-'''
-
-
+# ===================== B2. 배관도 요소 Enter · Space — core.js 는 data-fp 를 click 으로 바꾸지 않는다 =====================
 def test_b2_more_click_shows_levels_and_keeps_tab():
-    main = _src("js", "views", "main.js")
-    i = main.index("  if (d && d.addEventListener) {\n    d.addEventListener('click'")
-    block = main[i:main.index("\n  }\n", i) + 4]
-    out = _node(_CLICK % (_terms(), block))
-    assert out["toasts"] == [["Alarm: Basic / Warning: Vent Permit / OK 4", "err"], ["OK — A · B", "info"]], out
-    assert out["tabs"] == [], out                                      # 탭은 옮기지 않는다
-    assert "setTab('alarm')" not in block
-    # Enter · Space 는 core.js 가 tabindex="0" 칸을 click 으로 바꾼다('+N more' 는 tabindex="0" role="button")
     core = _src("js", "core.js")
     assert "ev.target.matches('[tabindex=\"0\"]:not(input):not(button):not(select):not([data-fp])')" in core
-    assert 'tabindex="0" role="button" data-more="' in _fn(main, "stiList")
-
-
-# ===================== B3. 인터락 목록은 RF/O3 목록을 그린 뒤에 잰다 =====================
-def test_b3_update_measures_interlocks_last():
-    up = _fn(_src("js", "views", "main.js"), "update")
-    order = [up.index(f"{n}(s, t, conn);") for n in ("updateDev", "updateLocks", "updateVac")]
-    assert order == sorted(order), up
-    assert up.index("updateSeq(t, conn);") < order[0]
+    assert "typeof ev.target.click === 'function'" in core
+    fp = _src("js", "views", "faceplate.js")
+    assert "g.tagName !== 'BUTTON'" in fp                      # 조작 창이 g · 표 줄의 Enter/Space 를 받는다(단추는 click 만)
 
 
 # ===================== B4. 'Vacuum OK' → 'Vacuum' =====================
@@ -167,8 +80,9 @@ def test_b4_vacuum_short_name():
     for k in DEV.INTERLOCKS:
         nm = k.get("short") or k["tag"]
         assert not nm.endswith(" OK"), k
-    vac = _fn(_src("js", "views", "main.js"), "updateVac")
-    assert "out.push({ name: k.short || k.tag, lvl: lvl, why: k.why });" in vac
+    for k in DEV.INTERLOCKS:
+        assert not (k.get("lamp") or "").endswith(" OK"), k                # v0.8.0: 램프 이름도 상태 없이
+    assert next(k for k in DEV.INTERLOCKS if k["bit"] == A.ILK_VACUUM)["lamp"] == "Vacuum"
 
 
 # ===================== C1. config.json BOM · 못 읽으면 저장 거절 =====================

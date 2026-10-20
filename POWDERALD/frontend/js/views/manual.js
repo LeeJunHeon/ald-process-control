@@ -8,6 +8,10 @@
  *   보여 주면 운전자가 다음 판단을 틀린다.
  * ★ 히터 전원 스위치는 서버가 가진 현재 값 기준으로 목표 상태를 보내고,
  *   응답이 올 때까지 그 스위치를 잠근다(두 번 눌러 되돌아가는 일을 막는다).
+ * ★ v0.8.0: 응답 잠금은 조작 창과 같은 진행 중 잠금(core.busy — key 'valve:태그' · 'heater:채널' · 'mfc' · 'pcv' · 'rf' ·
+ *   'o3' · 'unlock')이다 — 한쪽에서 누르면 다른 쪽 단추도 응답(done)까지 막힌다.
+ *   밸브는 조작 창과 같은 판단: Valve Permit 이 없고 요청도 출력도 없으면 막는다(title 에 빠진 조건). 이미 요청 · 열림이면
+ *   누르면 닫기.
  * ★ 잠금 해제가 없으면 밸브를 못 누른다. 공정이 시작되면 서버가 다시 잠근다.
  * ★ 판정은 서버가 한다 — 여기서 막는 것은 손이 미끄러지는 것을 줄이려는 것뿐이고,
  *   실제로 거절하는 쪽은 PLC 다.
@@ -20,7 +24,15 @@
 
   var built = false;
   var builtSig = '';
-  var heaterBusy = {};     // ch → { target, until } — 응답 전까지 스위치 잠금
+  var BUSY_TIP = '응답을 기다리는 중';
+  function busy(key) { return core.busy.has(key); }
+  /** Ops 로 보내고 진행 중 잠금에 넣는다(keys 여러 개면 같은 rid 로) */
+  function sendBusy(keys, pair) {
+    var rid = Ops.send(pair);
+    if (rid) [].concat(keys).forEach(function (k) { core.busy.start(k, rid); });
+    paint();
+    return rid;
+  }
 
   function open() {
     core.setText('mnDev', ((core.state || {}).device || {}).name || '');
@@ -150,21 +162,29 @@
       if (e.disabled !== off) e.disabled = off;
     });
 
+    var miss = mn.valve_permit_missing || [];
+    var noPermitTip = 'Valve Permit 이 없어 열 수 없습니다 — 필요: ' + (miss.length ? miss.join(' · ') : 'Pump 운전 · IV-E 열림');
     Array.prototype.forEach.call(d.querySelectorAll('[data-mnv]'), function (e) {
       var tag = e.dataset.mnv;
       var vd = ((s.structure || {}).valves || []).filter(function (v) { return v.tag === tag; })[0];
       if (!vd) return;
       var req = conn && core.bit(mn.valve_request, vd.bit);
       var app = conn && core.bit(mn.valve_out, vd.bit);
+      // 열기는 허가가 있어야(없으면 서버도 보내지 않는다). 이미 요청 · 열림이면 누르면 닫기
+      var noPermit = conn && !mn.valve_permit && !req && !app;
+      var wait = busy('valve:' + tag);
+      var off = !can || !mn.unlocked || noPermit || wait;
       e.classList.toggle('on', app);
       e.classList.toggle('req', req && !app);
-      e.classList.toggle('dis', !can || !mn.unlocked);
-      e.tabIndex = (!can || !mn.unlocked) ? -1 : 0;
+      e.classList.toggle('dis', off);
+      e.tabIndex = off ? -1 : 0;
+      var tip = wait ? BUSY_TIP : (can && mn.unlocked && noPermit) ? noPermitTip : '';
+      if (e.title !== tip) e.title = tip;
       var st = d.querySelector('[data-mnvst="' + tag + '"]');
       if (st) {
         core.html(st, !conn ? fmt.DASH
           : app ? core.chip('● ' + T('s.open'), 'ok')
-            : req ? core.chip('◐ ' + T('s.pending'), 'warn', 'PLC 가 아직 허가하지 않았습니다')
+            : req ? core.chip('◐ ' + T('s.pending'), 'warn', 'Valve Permit 이 없어 출력이 꺼져 있습니다 — 허가가 생기면 바로 열립니다')
               : core.chip('○ ' + T('s.closed'), 'off'));
       }
     });
@@ -182,18 +202,14 @@
         ? '온도조절기 통신 없음 — 켤 수 없음(끄기는 됨) · Setpoint ' + fmt.temp(v.sv)
         : 'Actual ' + fmt.temp(v.pv) + ' / Setpoint ' + fmt.temp(v.sv)));
       var p = d.querySelector('[data-mnhpow="' + x.ch + '"]');
-      var busy = heaterBusy[x.ch];
-      if (busy && (!conn || v.power === busy.target || Date.now() > busy.until)) {
-        delete heaterBusy[x.ch];
-        busy = null;
-      }
+      var hb = busy('heater:' + x.ch);
       if (p) {
         p.classList.toggle('on', !!(conn && v.power));
-        p.classList.toggle('busy', !!busy);
+        p.classList.toggle('busy', hb);
         p.classList.toggle('dis', !can);
         p.tabIndex = can ? 0 : -1;
         p.setAttribute('aria-checked', String(!!(conn && v.power)));
-        var tt = busy ? '응답을 기다리는 중' : !can ? '지금은 바꿀 수 없습니다(공정 중 · 원격 · 연결 끊김)'
+        var tt = hb ? BUSY_TIP : !can ? '지금은 바꿀 수 없습니다(공정 중 · 원격 · 연결 끊김)'
           : (conn && v.comm_ok === false ? (v.power_block || '') : '');
         if (p.title !== tt) p.title = tt;
       }
@@ -209,10 +225,17 @@
         : '끄기는 발생기를 먼저 끄고, 배관에 남은 O3 를 뺀 뒤 바이패스 라인을 닫습니다.');
     }
 
+    var BKEY = { mfc: ['mfc'], pcv: ['pcv'], rf_on: ['rf'], rf_off: ['rf'], o3_set: ['o3'], o3_on: ['o3'], o3_off: ['o3'] };
+    var hkeys = ((s.structure || {}).heaters || []).filter(function (x) { return x.enabled; }).map(function (x) { return 'heater:' + x.ch; });
     Array.prototype.forEach.call(d.querySelectorAll('#manualModal [data-mn]'), function (b) {
       if (b.dataset.mn === 'close' || b.dataset.mn === 'unlock') return;
-      b.disabled = !can;
+      var keys = b.dataset.mn === 'heater' ? hkeys : (BKEY[b.dataset.mn] || []);
+      var wait = keys.some(busy);
+      b.disabled = !can || wait;
+      var tip = wait ? BUSY_TIP : '';
+      if (b.title !== tip) b.title = tip;
     });
+    if (sw && busy('unlock')) sw.classList.add('dis');
   }
 
   function setText(sel, v) {
@@ -222,26 +245,24 @@
 
   /* ===================== 조작 ===================== */
   d.addEventListener('click', function (ev) {
-    if (ev.target.closest('[data-bind="mnOpen"]') || ev.target.closest('[data-mnopen]')) { open(); return; }
+    if (ev.target.closest('[data-bind="mnOpen"]')) { open(); return; }
     var v = ev.target.closest('[data-mnv]');
     if (v && !v.classList.contains('dis')) {
       var tag = v.dataset.mnv;
+      if (busy('valve:' + tag)) return;
       var on = !v.classList.contains('on') && !v.classList.contains('req');
-      Ops.send(Ops.valve(tag, on));
+      sendBusy('valve:' + tag, Ops.valve(tag, on));
       return;
     }
     var pw = ev.target.closest('[data-mnhpow]');
     if (pw && pw.classList.contains('dis')) return;
     if (pw) {
       var ch = Number(pw.dataset.mnhpow);
-      if (heaterBusy[ch]) return;
+      if (busy('heater:' + ch)) return;
       // ★ 화면 칠이 아니라 서버가 가진 현재 값(D01010 되읽기) 기준으로 목표를 정한다.
       var cur = (((core.state || {}).live || {}).heaters || [])[ch - 1] || {};
       if (cur.power == null) { core.toast('히터 전원 상태를 아직 읽지 못했습니다', 'warn'); return; }
-      var target = !cur.power;
-      heaterBusy[ch] = { target: target, until: Date.now() + 4000 };
-      pw.classList.add('busy');
-      Ops.send(Ops.heaterPower(ch, target));
+      sendBusy('heater:' + ch, Ops.heaterPower(ch, !cur.power));
       return;
     }
     var b = ev.target.closest('#manualModal [data-mn]');
@@ -253,8 +274,8 @@
     if (what === 'close') { core.hideModal('manualModal'); return; }
     if (what === 'unlock') {
       var sw = core.bind('mnUnlock');
-      if (sw.classList.contains('dis')) return;
-      Ops.send(Ops.unlock(!sw.classList.contains('on')));
+      if (sw.classList.contains('dis') || busy('unlock')) return;
+      sendBusy('unlock', Ops.unlock(!sw.classList.contains('on')));
       return;
     }
     if (what === 'mfc') {
@@ -263,7 +284,7 @@
         if (e.value !== '' && !e.disabled) sc[e.dataset.mnmfc] = Number(e.value);
       });
       if (!Object.keys(sc).length) { core.toast('바꿀 MFC 값을 넣으세요', 'warn'); return; }
-      Ops.send(Ops.mfcMany(sc));
+      sendBusy('mfc', Ops.mfcMany(sc));
       return;
     }
     if (what === 'heater') {
@@ -275,13 +296,15 @@
       core.confirmAsk('히터 설정을 바꿀까요?',
         '설정 온도를 바꿉니다. 과온 한계를 넘는 값은 PLC 가 거절합니다.<br>' +
         '전원이 꺼져 있으면 온도가 오르지 않습니다.',
-        T('b.apply'), function () { Ops.send(Ops.heaterSvMany(sv)); });
+        T('b.apply'), function () {
+          sendBusy(Object.keys(sv).map(function (c) { return 'heater:' + c; }), Ops.heaterSvMany(sv));
+        });
       return;
     }
     if (what === 'pcv') {
       var e1 = d.querySelector('[data-mnpcv]');
       if (!e1 || e1.value === '') { core.toast('PCV 목표를 넣으세요', 'warn'); return; }
-      Ops.send(Ops.pcv(Number(e1.value)));
+      sendBusy('pcv', Ops.pcv(Number(e1.value)));
       return;
     }
     if (what === 'rf_on') {
@@ -292,24 +315,24 @@
       core.confirmAsk('RF 를 켤까요?',
         '<b>' + watt + ' W</b> 로 RF 를 켭니다. 시험 목적이며 대기 중에만 됩니다.<br>' +
         '압력·반사 전력 조건을 PLC 가 확인하고, 조건이 어긋나면 즉시 끕니다.',
-        T('b.rfOn'), function () { Ops.send(Ops.rfOn(watt)); });
+        T('b.rfOn'), function () { sendBusy('rf', Ops.rfOn(watt)); });
       return;
     }
-    if (what === 'rf_off') { Ops.send(Ops.rfOff()); return; }
+    if (what === 'rf_off') { sendBusy('rf', Ops.rfOff()); return; }
     if (what === 'o3_set' || what === 'o3_on') {
       var e3 = d.querySelector('[data-mno3]');
       var val = e3 ? Number(e3.value) : 0;
       if (!val) { core.toast('O3 설정 값을 넣으세요', 'warn'); return; }
-      if (what === 'o3_set') { Ops.send(Ops.o3('set', val)); return; }
+      if (what === 'o3_set') { sendBusy('o3', Ops.o3('set', val)); return; }
       core.confirmAsk('O3 라인을 켤까요?',
         '바이패스 펌프 → IV-B → 발생기 순서로 켭니다.<br>' +
         '실내 O3 감지·발생기 알람이 있으면 PLC 가 막습니다.',
-        T('b.o3On'), function () { Ops.send(Ops.o3('on', val)); });
+        T('b.o3On'), function () { sendBusy('o3', Ops.o3('on', val)); });
       return;
     }
     if (what === 'o3_off') {
       // 발생기를 먼저 끄고, 배관에 남은 O3 를 뺀 뒤 바이패스 라인을 닫는다 — 지연은 서버가 센다.
-      Ops.send(Ops.o3('off'));
+      sendBusy('o3', Ops.o3('off'));
     }
   }
 
@@ -323,8 +346,9 @@
     },
     update: paint
   });
-  /** 명령 응답(알림)이 오면 잠근 스위치를 푼다. */
-  function onNotice() { heaterBusy = {}; paint(); }
+  /** 명령 알림 · 응답 끝(done) — 진행 중 잠금은 core.busy 가 rid 로 푼다. 다시 칠만 한다 */
+  function onNotice() { paint(); }
+  function onDone() { paint(); }
 
-  w.viewManual = { open: open, paint: paint, onNotice: onNotice };
+  w.viewManual = { open: open, paint: paint, onNotice: onNotice, onDone: onDone };
 })(window, document);

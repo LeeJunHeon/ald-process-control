@@ -71,42 +71,92 @@ AUX_CMD_MASK = 0x0F00
 # ok_when: 이 비트가 1이면 정상인가(True) / 1이면 이상인가(False)
 # short: 화면 상태 목록에 쓰는 이름(v0.6.1 B4) — 허가 · 정상 조건 입력은 상태가 들어가지 않은 이름, 점 색이 상태를 말한다
 INPUTS0 = [
-    {"bit": 0,  "tag": "EMO",     "name": "EMO OK",   "ok_when": True, "short": "EMO"},
-    {"bit": 1,  "tag": "RST-SW",  "name": "Panel Reset SW", "ok_when": True, "momentary": True},
-    {"bit": 2,  "tag": "AIR",     "name": "Air OK",       "ok_when": True, "short": "Air"},
-    {"bit": 3,  "tag": "N2",      "name": "N2 Pressure OK",    "ok_when": True, "short": "N2 Pressure"},
-    {"bit": 4,  "tag": "CW",      "name": "Cooling Water OK",     "ok_when": True, "short": "Cooling Water"},
-    {"bit": 5,  "tag": "LID",     "name": "Lid Closed",       "ok_when": True, "short": "Lid"},
-    {"bit": 6,  "tag": "ATM",     "name": "Chamber ATM",     "ok_when": None},
-    {"bit": 7,  "tag": "PMP-RUN", "name": "Pump Running",       "ok_when": None},
-    {"bit": 8,  "tag": "PMP-ALM", "name": "Pump Alarm",       "ok_when": False},
-    {"bit": 9,  "tag": "IVE-O",   "name": "IV-E Open Limit", "ok_when": None},
-    {"bit": 10, "tag": "IVE-C",   "name": "IV-E Closed Limit", "ok_when": None},
-    {"bit": 11, "tag": "LEAK",    "name": "Gas Leak",       "ok_when": False},
-    {"bit": 12, "tag": "SCRUB",   "name": "Scrubber OK", "ok_when": True, "short": "Scrubber", "unused": True},
-    {"bit": 13, "tag": "OT",      "name": "Heater Overtemp Trip",   "ok_when": False},
+    {"bit": 0,  "tag": "EMO",     "name": "EMO OK",   "ok_when": True, "short": "EMO", "lamp": "EMO",
+     "desc": "비상정지 회로 정상(버튼이 눌리지 않음) — 꺼지면 비상정지"},
+    {"bit": 1,  "tag": "RST-SW",  "name": "Panel Reset SW", "ok_when": True, "momentary": True,
+     "desc": "패널 리셋 스위치(누르는 동안만 켜짐) — 램프판에 넣지 않는다"},
+    {"bit": 2,  "tag": "AIR",     "name": "Air OK",       "ok_when": True, "short": "Air", "lamp": "Air",
+     "desc": "공압(압축 공기) 압력 스위치 정상"},
+    {"bit": 3,  "tag": "N2",      "name": "N2 Pressure OK",    "ok_when": True, "short": "N2 Pressure",
+     "lamp": "N2 Pressure", "desc": "N2 공급 압력 스위치 정상"},
+    {"bit": 4,  "tag": "CW",      "name": "Cooling Water OK",     "ok_when": True, "short": "Cooling Water",
+     "lamp": "Cooling Water", "desc": "냉각수 유량 스위치 정상"},
+    {"bit": 5,  "tag": "LID",     "name": "Lid Closed",       "ok_when": True, "short": "Lid", "lamp": "Lid",
+     "desc": "챔버 뚜껑 닫힘 스위치"},
+    {"bit": 6,  "tag": "ATM",     "name": "Chamber ATM",     "ok_when": None, "lamp": "Chamber ATM",
+     "desc": "챔버가 대기압 — 벤트가 끝났다는 표시"},
+    {"bit": 7,  "tag": "PMP-RUN", "name": "Pump Running",       "ok_when": None, "lamp": "Pump Running",
+     "desc": "펌프가 실제로 돌고 있다는 피드백"},
+    {"bit": 8,  "tag": "PMP-ALM", "name": "Pump Alarm",       "ok_when": False, "lamp": "Pump Alarm",
+     "desc": "펌프 알람 — 켜지면 이상"},
+    {"bit": 9,  "tag": "IVE-O",   "name": "IV-E Open Limit", "ok_when": None, "lamp": "IV-E Open",
+     "desc": "IV-E(배기 격리 밸브) 열림 리미트 스위치"},
+    {"bit": 10, "tag": "IVE-C",   "name": "IV-E Closed Limit", "ok_when": None, "lamp": "IV-E Closed",
+     "desc": "IV-E(배기 격리 밸브) 닫힘 리미트 스위치"},
+    {"bit": 11, "tag": "LEAK",    "name": "Gas Leak",       "ok_when": False, "lamp": "Gas Leak",
+     "desc": "가스 누출 감지기 — 켜지면 이상"},
+    {"bit": 12, "tag": "SCRUB",   "name": "Scrubber OK", "ok_when": True, "short": "Scrubber", "unused": True,
+     "desc": "스크러버 정상 입력 — 이 장비는 쓰지 않는다(램프판에 넣지 않는다)"},
+    {"bit": 13, "tag": "OT",      "name": "Heater Overtemp Trip",   "ok_when": False, "lamp": "Heater OT",
+     "desc": "히터 과온 트립(하드웨어 온도 스위치) — 켜지면 이상"},
 ]
 INPUTS1 = [
-    {"bit": 0, "tag": "RF-RDY", "name": "RF Ready", "ok_when": None},
-    {"bit": 1, "tag": "RF-ALM", "name": "RF Alarm", "ok_when": False},
+    {"bit": 0, "tag": "RF-RDY", "name": "RF Ready", "ok_when": None, "lamp": "RF Ready", "desc": "RF 발생기 준비"},
+    {"bit": 1, "tag": "RF-ALM", "name": "RF Alarm", "ok_when": False, "lamp": "RF Alarm",
+     "desc": "RF 발생기 · 매처 알람 — 켜지면 이상"},
 ]
 
 # ===================== 인터락 (D00004) =====================
 # why: 칩에 마우스를 올렸을 때 보여 줄 조건 설명
 INTERLOCKS = [
-    {"bit": 0, "tag": "Basic",        "why": "비상정지·공압·N2·리드·냉각수 정상"},
-    {"bit": 1, "tag": "Pump",        "why": "펌프 운전 중이고 펌프 알람 없음"},
-    {"bit": 2, "tag": "Vacuum OK",        "short": "Vacuum",
+    {"bit": 0, "tag": "Basic",        "lamp": "Basic", "why": "비상정지·공압·N2·리드·냉각수 정상"},
+    {"bit": 1, "tag": "Pump",        "lamp": "Pump", "why": "펌프 운전 중이고 펌프 알람 없음"},
+    {"bit": 2, "tag": "Vacuum OK",        "short": "Vacuum", "lamp": "Vacuum",
      "why": "베이스 압력 설정이 0보다 크고, 현재 압력이 그 이하"},
-    {"bit": 3, "tag": "Start Permit", "why": "공정 밸브 허가 + 진공 + PC 링크 정상 + 레시피 표 통과"},
-    {"bit": 4, "tag": "Valve Permit", "why": "기본 + 펌프 + IV-E 열림 + 안전 정지 요구 없음 + 대기압 아님"},
-    {"bit": 5, "tag": "Vent Permit",    "why": "시퀀서 동작 아님(공정 준비 포함) + IV-E 닫힘 입력 + IV-E 출력 꺼짐 + 비상정지 정상"},
-    {"bit": 6, "tag": "Precursor/Reactant Conflict", "why": "전구체 밸브와 반응물 밸브가 함께 요청됨 (이상)",
+    {"bit": 3, "tag": "Start Permit", "lamp": "Start Permit", "why": "공정 밸브 허가 + 진공 + PC 링크 정상 + 레시피 표 통과"},
+    {"bit": 4, "tag": "Valve Permit", "lamp": "Valve Permit", "why": "기본 + 펌프 + IV-E 열림 + 안전 정지 요구 없음 + 대기압 아님"},
+    {"bit": 5, "tag": "Vent Permit",    "lamp": "Vent Permit", "why": "시퀀서 동작 아님(공정 준비 포함) + IV-E 닫힘 입력 + IV-E 출력 꺼짐 + 비상정지 정상"},
+    {"bit": 6, "tag": "Precursor/Reactant Conflict", "lamp": "P/R Conflict", "why": "전구체 밸브와 반응물 밸브가 함께 요청됨 (이상)",
      "bad": True},
-    {"bit": 7, "tag": "Safe Stop Request", "why": "비상정지 또는 중대 알람 또는 PC 끊김 트립 — 공정 중이면 끝난 뒤", "bad": True},
-    {"bit": 8, "tag": "RF Permit",      "why": "공정 밸브 허가 + RF 준비 + RF·반사 알람 없음 + "
+    {"bit": 7, "tag": "Safe Stop Request", "lamp": "Safe Stop Req", "why": "비상정지 또는 중대 알람 또는 PC 끊김 트립 — 공정 중이면 끝난 뒤", "bad": True},
+    {"bit": 8, "tag": "RF Permit",      "lamp": "RF Permit", "why": "공정 밸브 허가 + RF 준비 + RF·반사 알람 없음 + "
                                             "RF 상한 > 0 + 베이스 압력 < 현재 압력 ≤ RF 허가 최대 압력"},
 ]
+
+# ===================== 운전 화면 배치 (v0.8.0) =====================
+# ★ 칸 · 자리는 여기 장비 구조로만 정해진다 — 실시간 값으로 늘거나 줄지 않는다(모든 항목이 늘 보인다).
+# 램프판(Interlock · Input) — 줄(묶음) · 자리 고정. 항목 'in0:태그' · 'in1:태그' · 'ilk:태그'.
+#   RST-SW(순간 스위치) · SCRUB(쓰지 않음)은 넣지 않는다. 그 밖 입력 · 인터락은 정확히 한 번씩
+ANNUNCIATOR = [
+    {"group": "safety", "items": ["in0:EMO", "in0:AIR", "in0:N2", "in0:CW", "in0:LID", "in0:LEAK", "in0:OT",
+                                  "in0:PMP-ALM"]},
+    {"group": "permit", "items": ["ilk:Basic", "ilk:Pump", "ilk:Vacuum OK", "ilk:Valve Permit", "ilk:Start Permit",
+                                  "ilk:Vent Permit", "ilk:Precursor/Reactant Conflict", "ilk:Safe Stop Request"]},
+    {"group": "state", "items": ["in0:PMP-RUN", "in0:IVE-O", "in0:IVE-C", "in0:ATM"]},
+    {"group": "rf", "items": ["ilk:RF Permit", "in1:RF-RDY", "in1:RF-ALM"]},
+]
+# 밸브 띠 — 묶음 순서 그대로. valve: 공정 밸브(D00010) · aux: 보조 출력(D00014) · value: 값 타일
+VALVE_STRIP = [
+    ["valve:PV-1", "valve:PV-2", "valve:PV-3", "valve:PV-A1", "valve:PV-A2"],
+    ["valve:PV-R1", "valve:PV-R2", "valve:PV-R3", "valve:PV-R"],
+    ["aux:VV", "aux:IV-E"],
+    ["value:PCV", "value:RF"],
+]
+# 시작 조건 자리 10 개 — 자리 이름은 짧게(서버 check 의 label 은 툴팁). keys 의 항목 중 가장 나쁜 것을 그 자리에 그린다.
+#   absent: 그 항목이 없을 때의 글(norecipe: 레시피를 안 골랐을 때)
+START_SLOTS = [
+    {"label": "PLC Link", "keys": ["plc"]},
+    {"label": "Device ID", "keys": ["device_id"]},
+    {"label": "Device State", "keys": ["state", "leakcheck"]},
+    {"label": "Critical Alarm", "keys": ["alarm"]},
+    {"label": "Pump", "keys": ["pump"]},
+    {"label": "Valve Permit", "keys": ["valve_ok"]},
+    {"label": "Base Pressure", "keys": ["base"]},
+    {"label": "Recipe", "keys": ["recipe"]},
+    {"label": "Heater Stable", "keys": ["heater"], "absent": "시작 조건에서 끔 (Settings)"},
+    {"label": "RF Ready", "keys": ["rf"], "absent": "레시피에 RF 스텝 없음", "norecipe": "레시피를 고르면 확인"},
+]
+
 
 # ===================== 알람 =====================
 # crit: 중대(장비를 세우는 알람) / 아니면 경고(표시·기록만)

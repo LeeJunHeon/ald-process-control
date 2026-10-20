@@ -1,10 +1,11 @@
 """v0.5.4 — 768 운전 탭 줄 높이 · 인터락 목록 문제 항목만 + N OK.
 
-★ 화면의 순수 함수(core.js 의 rowFlex · main.js 의 snapRows · terms.js 의 stiCompact)는 node 로 부른다
-  (node 가 없으면 건너뜀). 브라우저 시험은 없다.
+★ v0.8.0: 운전 탭은 두 배치 고정 격자(core.js fit — uimodel.js 의 pickLayout · layoutBox)로 바뀌었다. 1 번은 새 fit 의
+  동작(긴 창 · 처음 state 뒤 다시 fit)으로 옮기고, '+N OK' 묶음(2 번)은 그 기능을 없애 지웠다 — 모든 항목이 늘 보인다는
+  것은 test_v080(test_no_grouping_and_no_measuring_in_operation_parts · 램프판 · 시작 조건 시험)이 본다.
+★ _fn(소스에서 함수 떼기)은 여러 시험이 쓴다 — 그대로 둔다.
 """
 import os
-import re
 import json
 
 from test_v0411 import _node, JS
@@ -26,92 +27,52 @@ def _fn(src, name):
     return src[i:j + 4]
 
 
-# ===================== 1. 긴 캔버스(768 폭) — 위 줄은 기준 높이로 고정, 아래 줄만 는다 =====================
-_FLEX = r'''
+# ===================== 1. 긴 캔버스(768 폭) — v0.8.0: 두 배치 fit =====================
+_FIT = r'''
+  const UI = require(%s);
+  var VIEWS = {}, lastState = null; const renders = [];
+  function requestAnimationFrame() {}
+  const app = { style: { setProperty(k, v) { this[k] = v; } } };
+  const w = { innerWidth: 1280, innerHeight: 900, UI: UI };
+  const d = { getElementById: () => app, documentElement: { a: {}, setAttribute(k, v) { this.a[k] = v; } } };
   %s
-  // 세로 flex 배치 계산(남는 높이를 grow 비율로 나눈다 · 모자라면 shrink) — 브라우저와 같은 규칙의 간단판
-  function layout(H, items) {
-    const p = items.map(it => { const f = (it.flex || it.css).trim().split(/\s+/);
-      const basis = f[2] === 'auto' ? it.content : parseFloat(f[2]);
-      return { g: +f[0], s: +f[1], b: basis, min: it.min || 0 }; });
-    const free = H - p.reduce((a, x) => a + x.b, 0);
-    const gs = p.reduce((a, x) => a + x.g, 0), ss = p.reduce((a, x) => a + x.s * x.b, 0);
-    return p.map(x => Math.max(x.min, free >= 0 ? x.b + (gs ? free * x.g / gs : 0) : x.b + (ss ? free * x.s * x.b / ss : 0)));
-  }
-  const MAIN_CSS = '1 1 0px', BOTTOM0 = '0 0 auto';     // style.css 의 .row.grow · index.html 의 아래 줄
+  %s
+  const snap = () => ({ layout: d.documentElement.a['data-layout'], w: app.style.width, h: app.style.height,
+                        zoom: Math.round(app.style.zoom * 1000) / 1000 });
   const out = {};
-  // 기본 높이(1280×900 · 1024×768 · 1280×720): 손대지 않는다
-  out.base = rowFlex(1000, 1000, 616, BOTTOM0);
-  // 768×900 · 768×1024: 캔버스 1125 · 1280, 위 줄은 기본 높이일 때의 616 으로 고정
-  for (const hh of [1125, 1280]) {
-    const f = rowFlex(hh, 1000, 616, BOTTOM0);
-    const H = hh - 100;                                    // 머리 · 탭 · 여백(어림)
-    const [m, b] = layout(H, [{ flex: f.main, css: MAIN_CSS, content: 616 }, { flex: f.bottom, css: BOTTOM0, content: 250 }]);
-    out['h' + hh] = { f, main: m, bottom: b, H };
-  }
-  // 못 잰 때(운전 탭이 숨어 h0 = 0)는 원래대로
-  out.zero = rowFlex(1125, 1000, 0, BOTTOM0);
+  fit(); out.base = snap();                                        // 1280×900
+  w.innerWidth = 768; w.innerHeight = 1024; fit(); out.tall = snap(); // 768×1024 — 긴 캔버스(좁은 배치)
+  w.innerWidth = 1280; w.innerHeight = 720; fit(); out.wide = snap(); // 1280×720 — 넓은 배치(높이 900 까지 채움)
   console.log(JSON.stringify(out));
 '''
 
 
-def test_1_row_flex_fixes_top_row_and_grows_bottom():
+def _fit_src():
     core = _src("js", "core.js")
-    out = _node(_FLEX % _fn(core, "rowFlex"))
-    assert out["base"] == {"main": "", "bottom": "0 0 auto"}
-    assert out["zero"] == {"main": "", "bottom": "0 0 auto"}
-    for hh in ("h1125", "h1280"):
-        r = out[hh]
-        assert r["f"] == {"main": "0 0 616px", "bottom": "1 1 auto"}, r
-        assert r["main"] == 616 and abs(r["main"] + r["bottom"] - r["H"]) < 1e-6, r      # 늘어난 높이는 아래 줄만
-        assert r["bottom"] > 250, r
+    i = core.index("  var curLayout = '';")
+    return core[i:core.index("  function fit()", i)], _fn(core, "fit")
+
+
+def test_1_row_flex_fixes_top_row_and_grows_bottom():
+    """v0.8.0: 긴 창(768×1024)은 좁은 배치 · 캔버스 높이만 는다(960×1280) — 위 칸(270 · 램프판 · 64)은 고정 px 이라
+    늘어난 높이는 Heater | MFC 줄(minmax(0, 1fr))이 받는다."""
+    head, fit = _fit_src()
+    out = _node(_FIT % (json.dumps(os.path.join(JS, "uimodel.js")), head, fit))
+    assert out["base"] == {"layout": "narrow", "w": "1200px", "h": "1000px", "zoom": 0.9}, out
+    assert out["tall"] == {"layout": "narrow", "w": "960px", "h": "1280px", "zoom": 0.8}, out
+    assert out["wide"] == {"layout": "wide", "w": "1600px", "h": "900px", "zoom": 0.8}, out
+    css = _src("css", "style.css")
+    assert ".opgrid.narrow { grid-template-rows: 270px var(--ann-h) 64px minmax(0, 1fr);" in css
 
 
 def test_1_fit_main_rows_uses_flex_and_refits_after_first_state():
     core = _src("js", "core.js")
-    body = _fn(core, "fitMainRows")
-    assert "main.style.flex = f.main;" in body and "bottom.style.flex = f.bottom;" in body
-    assert "maxHeight" not in body and "flexGrow" not in body          # v0.5.3 방식(max-height · flexGrow)은 없다
-    # 되돌릴 때 아래 줄은 HTML 의 원래 값(0 0 auto)으로 — '' 이면 기본 shrink 1 이 되어 1280 화면이 바뀐다
-    assert "bottom.setAttribute('data-flex0', bottom.style.flex || '')" in body
-    assert '<div class="row" style="flex:0 0 auto">' in _src("index.html")
-    # 첫 상태를 그린 뒤 한 번 더 잰다(표가 그려지기 전 높이가 아니라)
+    assert "fitMainRows" not in core and "rowFlex" not in core                 # v0.8.0: 운전 탭 줄 늘이기는 없앴다
+    # 첫 상태를 그린 뒤 한 번 더 잰다(표가 그려지기 전 높이가 아니라) — 그대로
     assert "if (!fitAfterState) { fitAfterState = true; fit(); }" in core
     i = core.index("function applyState(s)")
     assert core.index("fitAfterState = true; fit();", i) > core.index("VIEWS[k].render(s)", i)
-
-
-# ===================== 2. 문제 항목만 + '+N OK' · 높이 18 의 배수 =====================
-def test_2_compact_list_problems_only_plus_ok():
-    items = [{"name": "EMO OK", "lvl": "ok"}, {"name": "Air", "lvl": "warn"}, {"name": "Lid", "lvl": ""},
-             {"name": "Pump Alarm", "lvl": "stop"}, {"name": "N2", "lvl": "warn"}, {"name": "Heater Overtemp Trip", "lvl": "stop"}]
-    calm = [{"name": "A", "lvl": "ok"}, {"name": "B", "lvl": ""}]
-    out = _node("const T = require(%s); const f = c => ({ items: c.items.map(i => i.name), ok: c.ok.map(i => i.name) });"
-                "console.log(JSON.stringify([f(T.stiCompact(%s)), f(T.stiCompact(%s))]));" % (
-                    json.dumps(os.path.join(JS, "terms.js")), json.dumps(items), json.dumps(calm)))
-    assert out[0] == {"items": ["Pump Alarm", "Heater Overtemp Trip", "Air", "N2"], "ok": ["EMO OK", "Lid"]}
-    assert out[1] == {"items": ["A", "B"], "ok": []}                    # 문제가 없으면 전체
-
-
-def test_2_main_renders_plus_ok_and_snaps_rows():
-    main = _src("js", "views", "main.js")
-    sl = _fn(main, "stiList")
-    assert "var c = T.stiCompact(items);" in sl
-    assert "<i></i>+' + c.ok.length + ' OK</span>'" in sl and 'data-okall="' in sl and 'title="' in sl
-    assert "class=\"sti more\"" in sl                                     # 회색(정상 묶음)
-    assert "core.toast('OK — ' + m.getAttribute('data-okall'), 'info')" in main        # 누르면 전체 이름
-    # 인터락 · RF · O3 목록 모두 같은 stiList — v0.6.2(A2): 인터락 목록은 v0.6.1 B2 부터 잰 줄 · 열 수를 넘긴다
-    vac = _fn(main, "updateVac")
-    assert "core.html(box, stiList(out, rows, cols));" in vac and "var rows = snapIlks(box), cols = stlCols(box);" in vac
-    assert "core.html(chips, stiList(out));" in _fn(main, "updateDev")
-    # 상자의 실제 높이를 18 의 배수로 내려 맞춘다(넘칠 때만이 아니라 늘)
-    out = _node("var STI_ROW = 18;\n%s\nconsole.log(JSON.stringify([10, 18, 45, 72, 100, 191].map(snapRows)));" % _fn(main, "snapRows"))
-    assert out == [18, 18, 36, 72, 90, 180]
-    snap = _fn(main, "snapIlks")
-    assert "var h = box.clientHeight;" in snap and "box.style.maxHeight = snapRows(h) + 'px';" in snap
-    assert "scrollHeight" not in snap
-    css = _src("css", "style.css")
-    assert ".sti.more > i { background: var(--off); }" in css
+    assert "w.UI.pickLayout(w0, h0, curLayout)" in _fn(core, "fit")
 
 
 def test_version_054():

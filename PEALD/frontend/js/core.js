@@ -11,6 +11,8 @@
  * 창(모달) 쌓임 순서: 알람 창 > 확인 창 > 나머지 창(수동 조작 · PIN · 설정 · 시뮬레이터).
  *   Esc 는 맨 위 창을 닫는다(확인 창은 취소). 창이 열리면 포커스가 창 안으로, 닫히면 원래 자리로.
  * 서버(웹소켓)가 끊기면 모든 실시간 값을 '—' 로, 상태 칩 '서버 끊김', 조작 잠금(setOffline).
+ * ★ v0.8.0: 창 크기 → 두 배치(좁은 960×1000 · 넓은 1600×840) + 배율(fit, 계산은 uimodel.js). 배치가 바뀌면 모든 뷰를
+ *   다시 그리고(render) 열린 조작 창을 닫는다. 알림은 같은 글이면 합친다(×n). 명령 진행 중 잠금(busy)은 여기 한 곳.
  * ============================================================ */
 (function (w, d) {
   'use strict';
@@ -70,6 +72,9 @@
   /* ===================== 탭 ===================== */
   function setTab(name) {
     curTab = name;
+    var app = d.getElementById('app');
+    if (app) app.setAttribute('data-tab', name);          // v0.8.0: 상태 띠 · 명령줄은 Operation · P&ID 탭에서만(CSS)
+    if (w.viewFaceplate && w.viewFaceplate.current) w.viewFaceplate.close(false);
     Array.prototype.forEach.call(d.querySelectorAll('.tab'), function (b) {
       b.classList.toggle('on', b.dataset.tab === name);
     });
@@ -77,7 +82,6 @@
       v.classList.toggle('on', v.id === 'view-' + name);
     });
     // 탭을 처음 열 때는 DOM 크기가 0이라 캔버스 계산이 틀어진다 → 전환 직후 한 번 더 그린다.
-    if (name === 'main') fit();          // v0.5.3: 숨어 있을 때 못 잰 배관도 줄 높이를 다시 맞춘다
     var v = VIEWS[name];
     if (v && lastState) { try { v.render(lastState); } catch (e) { console.error(e); } }
   }
@@ -158,6 +162,7 @@
   function setOffline(on) {
     if (on === offline) return;
     offline = on;
+    busy.clear();                   // v0.8.0: 끊김 · 다시 연결 — 기다리던 응답(done)은 오지 않는다
     // ★ 다시 연결됐다 — 서버가 다시 시작됐으면 알람 번호가 처음부터라 옛 기억이 새 알람을 막는다
     if (!on) alarmDismissed = null;
     d.documentElement.classList.toggle('offline', on);
@@ -269,12 +274,36 @@
   }
 
   /* ===================== 토스트 ===================== */
+  /** ★ v0.8.0: 보이는 알림 중 같은 수준 + 같은 글이 있으면 새로 만들지 않고 '×n' 을 붙여 맨 아래로 옮기고 4.2 s 를
+   *  다시 센다. 한 번에 4 개까지 — 넘치면 오래된 것부터(규칙은 UI.toastMerge). */
+  var toastList = [];
+  var TOAST_MS = 4200, TOAST_MAX = 4;
   function toast(msg, level) {
     var box = d.getElementById('toasts');
     if (!box) return;
-    var el = h('div', { cls: 'toast ' + (level || 'info'), text: msg });
-    box.appendChild(el);
-    setTimeout(function () { el.remove(); }, 4200);
+    var r = w.UI.toastMerge(toastList, String(msg == null ? '' : msg), level || 'info', TOAST_MAX);
+    toastList = r.list;
+    r.dropped.forEach(function (it) { clearTimeout(it.timer); if (it.el) it.el.remove(); });
+    var it = r.item;
+    if (!it.el) it.el = h('div', { cls: 'toast ' + it.level });
+    it.el.textContent = w.UI.toastText(it);
+    box.appendChild(it.el);
+    clearTimeout(it.timer);
+    it.timer = setTimeout(function () {
+      if (it.el) it.el.remove();
+      toastList = toastList.filter(function (x) { return x !== it; });
+    }, TOAST_MS);
+  }
+
+  /* ===================== 명령 진행 중 잠금 ===================== */
+  // ★ v0.8.0: 보낸 명령의 응답(done — 같은 rid)이 올 때까지(최대 8 s) 같은 key 의 단추를 막는다. 한 번 누르면 한 번
+  var busy = w.UI.busyStore({ ttl: 8000 });
+  var BUSY_TIP = '응답을 기다리는 중';
+  /** 명령을 보내고 진행 중 잠금에 넣는다 — 보낸 rid(못 보냈으면 0) */
+  function sendBusy(key, cmd, payload) {
+    var rid = w.app.send(cmd, payload);
+    if (rid) busy.start(key, rid);
+    return rid;
   }
 
   /* ===================== 확인 창 ===================== */
@@ -480,10 +509,12 @@
     if (a === 'close') {
       closeAlarm();
     } else if (a === 'ack' && canOperate()) {
-      w.app.send('alarm_ack');
+      if (busy.has('cmd:alarm_ack')) return;
+      sendBusy('cmd:alarm_ack', 'alarm_ack');
       w.app.send('alarm_popup_close');
     } else if (a === 'reset' && canOperate()) {
-      w.app.send('alarm_reset');
+      if (busy.has('cmd:alarm_reset')) return;
+      sendBusy('cmd:alarm_reset', 'alarm_reset');
       closeAlarm();
     }
   });
@@ -500,8 +531,8 @@
       return;
     }
     var sw = ev.target.closest('[data-fault]');
-    if (sw && !sw.classList.contains('dis') && simOperate()) {
-      w.app.send('sim_fault', { key: sw.dataset.fault, on: !sw.classList.contains('on') });
+    if (sw && !sw.classList.contains('dis') && simOperate() && !busy.has('sim:' + sw.dataset.fault)) {
+      sendBusy('sim:' + sw.dataset.fault, 'sim_fault', { key: sw.dataset.fault, on: !sw.classList.contains('on') });
     }
   });
 
@@ -535,54 +566,51 @@
       });
   }
 
-  /* ===================== fit ===================== */
-  var CANVAS_W = 960, CANVAS_H = 1000;
+  /* ===================== fit — 두 배치 + 배율 ===================== */
+  // ★ v0.8.0: 좁은(960×1000 기준 — 반쪽 창) · 넓은(1600×840 기준 — 최대화) 두 배치. 글자가 더 크게 보이는 쪽을 고르고
+  //   (경계에서 흔들리지 않게 3 % — UI.pickLayout), 캔버스는 기준 ~ 최대 크기 안에서 창을 채운다(UI.layoutBox).
+  //   칸 크기 · 자리는 배치와 장비 구조로만 정해진다(views/main.js · pid.js — 고정 격자)
+  var curLayout = '';
+  var curBox = null;
   var lastScale = 0;
+  var FRAME_H = 259;      // accentbar 1 · header 56 · tabbar 40 · 상태 띠 84 · 명령줄 52 · statusbar 26
 
   function fit() {
     var w0 = w.innerWidth, h0 = w.innerHeight;
     if (!w0 || !h0) { requestAnimationFrame(fit); return; }
     var app = d.getElementById('app');
-    var s = Math.min(w0 / CANVAS_W, h0 / CANVAS_H);
-    var hh = Math.max(CANVAS_H, Math.min(h0 / s, CANVAS_H * 1.6));
-    app.style.height = hh + 'px';
-    app.style.zoom = s;
-    fitMainRows(app, hh);
-    if (Math.abs(s - lastScale) > 0.001) {
-      lastScale = s;
+    var name = w.UI.pickLayout(w0, h0, curLayout);
+    var box = w.UI.layoutBox(name, w0, h0);
+    app.style.width = box.w + 'px';
+    app.style.height = box.h + 'px';
+    app.style.zoom = box.s;
+    // P&ID 넓은 배치 — 그림 칸 폭 = 그림 높이 × 920/680(뷰 여백 16 · 칸 머리 30 · 테두리 2)
+    app.style.setProperty('--pid-w', (Math.round((box.h - FRAME_H - 16 - 32) * 920 / 680) + 2) + 'px');
+    var changed = name !== curLayout;
+    var resized = !curBox || curBox.h !== box.h || curBox.w !== box.w;
+    curLayout = name;
+    curBox = box;
+    d.documentElement.setAttribute('data-layout', name);
+    if (changed) {
+      // 배치가 바뀌면 모든 뷰를 다시 그린다(부품이 배치별 칸 수를 다시 만든다) · 열린 조작 창은 닫는다
+      if (w.viewFaceplate && w.viewFaceplate.current) w.viewFaceplate.close(false);
+      if (lastState) {
+        for (var k in VIEWS) {
+          try { VIEWS[k].render(lastState); } catch (e) { console.error('render ' + k, e); }
+        }
+      }
+    } else if (resized && lastState) {
+      // 같은 배치에서 캔버스 높이만 바뀜 — 남는 높이를 받는 칸(Recent Events 줄 수 · 히터 표)만 다시 정한다
+      ['main', 'pid'].forEach(function (k) {
+        if (VIEWS[k]) { try { VIEWS[k].render(lastState); } catch (e) { console.error('render ' + k, e); } }
+      });
+    }
+    if (Math.abs(box.s - lastScale) > 0.001) {
+      lastScale = box.s;
       if (lastState && VIEWS.trend) {
         try { VIEWS.trend.render(lastState); } catch (e) { /* 탭 미표시 */ }
       }
     }
-  }
-
-  /** ★ v0.5.3 · v0.5.4: 창이 폭에 비해 길어(768 폭 등) 캔버스가 기본 높이(CANVAS_H)보다 길면, 늘어난 높이는
-   *  배관도 줄이 아니라 아래 줄(히터 · MFC 표)이 받는다 — 배관도 칸 아래가 비지 않게.
-   *  ★ v0.5.4: 위 줄은 .row.grow(flex:1, 기준 0)라 max-height 로는 지키지 못했다(두 줄이 남는 높이를 나눠 가져
-   *  Pressure 칸이 찌그러짐) — 위 줄은 '0 0 h0px'(기본 높이일 때의 높이로 고정), 아래 줄만 '1 1 auto'.
-   *  기본 높이(1280×900 등)에서는 원래 값(위 '' · 아래 HTML 의 '0 0 auto')으로 되돌린다. */
-  function rowFlex(hh, canvasH, h0, bottom0) {
-    if (hh <= canvasH + 1 || !(h0 > 0)) return { main: '', bottom: bottom0 };
-    return { main: '0 0 ' + Math.round(h0) + 'px', bottom: '1 1 auto' };
-  }
-
-  function fitMainRows(app, hh) {
-    var main = d.querySelector('#view-main > .row.grow');
-    var bottom = d.querySelector('#view-main > .row:not(.grow)');
-    if (!main || !bottom) return;
-    if (bottom.getAttribute('data-flex0') === null) bottom.setAttribute('data-flex0', bottom.style.flex || '');
-    var bottom0 = bottom.getAttribute('data-flex0');
-    main.style.flex = '';                        // 원래대로 놓고 기본 높이일 때의 위 줄 높이를 잰다
-    bottom.style.flex = bottom0;
-    var h0 = 0;
-    if (hh > CANVAS_H + 1) {
-      app.style.height = CANVAS_H + 'px';
-      h0 = main.offsetHeight;
-      app.style.height = hh + 'px';
-    }
-    var f = rowFlex(hh, CANVAS_H, h0, bottom0);
-    main.style.flex = f.main;
-    bottom.style.flex = f.bottom;
   }
 
   w.addEventListener('resize', fit);
@@ -631,6 +659,9 @@
   w.core = {
     bind: bind, esc: esc, h: h, html: html, setText: setText, chip: chip, bit: bit,
     toast: toast, setTab: setTab, fit: fit, confirmAsk: confirmAsk, closeConfirm: closeConfirm,
+    busy: busy, sendBusy: sendBusy, BUSY_TIP: BUSY_TIP,
+    get layout() { return curLayout || 'narrow'; },
+    get box() { return curBox; },
     showModal: showModal, hideModal: hideModal, setOffline: setOffline,
     get offline() { return offline; },
     askExit: askExit, renderSimPanel: renderSimPanel, renderAlarmModal: renderAlarmModal,
@@ -675,5 +706,7 @@
 
   // v0.5.0: 고정 라벨을 용어 사전에서(data-t)
   if (w.T && w.T.apply) w.T.apply(d);
+  var app0 = d.getElementById('app');
+  if (app0) app0.setAttribute('data-tab', curTab);
   fit();
 })(window, document);

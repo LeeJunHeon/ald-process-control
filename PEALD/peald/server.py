@@ -64,11 +64,21 @@ def uvicorn_config(app, host: str, port: int):
                           #   메시지로 풀려 폭주 비용을 키운다(창 · headless · 자체 점검 공통 설정)
                           ws_per_message_deflate=False)
 
+# ★ index.html 의 모든 script · link 경로가 여기 있어야 한다(빠지면 창이 옛 파일을 캐시에서 읽을 수 있다 — 시험이 본다)
 _ASSET_FILES = ["css/tokens.css", "css/style.css", "js/terms.js", "js/ops.js", "js/views/faceplate.js",
-                "js/fmt.js", "js/core.js", "js/app.js",
+                "js/fmt.js", "js/uimodel.js", "js/core.js", "js/app.js", "js/pidcheck.js",
+                "js/views/pid_model.js", "js/views/panels.js", "js/views/strip.js", "js/views/pid.js",
                 "js/views/main.js", "js/views/schematic.js", "js/views/trend.js",
                 "js/views/alarm.js", "js/views/setup.js", "js/views/recipe.js",
                 "js/views/manual.js", "js/views/datalog.js", "js/decimate.js", "js/chart.js"]
+
+
+def _rid(data):
+    """v0.8.0: 화면이 붙인 요청 번호 — 0 < rid < 2^31 인 정수(bool 아님)만. 아니면 None(done 을 보내지 않는다)."""
+    r = data.get("rid") if isinstance(data, dict) else None
+    if isinstance(r, bool) or not isinstance(r, int) or not (0 < r < 2 ** 31):
+        return None
+    return r
 
 
 def create_app(config_path: str = "", single_instance: bool = True,
@@ -370,6 +380,9 @@ def _routes(app: FastAPI):
                 except Exception:  # noqa: BLE001
                     continue
                 if isinstance(data, dict) and "cmd" in data:
+                    from .connection import push_notice, CURRENT_RID
+                    rid = _rid(data)
+                    tok = CURRENT_RID.set(rid)
                     try:
                         await handle_command(data, ws)
                     except WebSocketDisconnect:
@@ -378,8 +391,16 @@ def _routes(app: FastAPI):
                         # ★ 명령 처리 중 예외가 나도 연결은 유지한다(화면이 말없이 끊기지 않게)
                         logger.write("err", f"명령 처리 오류({logger.clean(data.get('cmd'), 40)}): "
                                             f"{type(e).__name__}: {logger.clean(e, 300)}")
-                        from .connection import push_notice
                         await push_notice(f"명령을 처리하지 못했습니다 — {type(e).__name__}", "err", ws)
+                    finally:
+                        CURRENT_RID.reset(tok)
+                        if rid is not None:
+                            # ★ v0.8.0: 이 명령의 처리가 끝났다(예외 · 원격 거절이어도) — 화면이 진행 중 잠금을 푼다.
+                            #   그 연결에만. 연결이 이미 닫혔으면 보내지 못해도 그만
+                            c = data.get("cmd")
+                            with contextlib.suppress(Exception):
+                                await manager.send_to(ws, {"type": "done", "rid": rid,
+                                                           "cmd": c[:40] if isinstance(c, str) else ""})
                 # ★ 메시지 하나마다 루프에 차례를 넘긴다 — 쌓인 메시지를 한 번에 몰아 처리하지 않게
                 await asyncio.sleep(0)
         except WebSocketDisconnect:

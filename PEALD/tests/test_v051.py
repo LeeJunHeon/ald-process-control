@@ -90,17 +90,27 @@ def test_restart_chip_is_neutral():
 
 
 def test_alarm_named_inputs_are_gray_when_normal():
-    js = _src("js", "views", "main.js")
-    assert "if (k.ok_when === false) lvl = on ? 'stop' : '';" in js
-    assert "lvl = on ? 'stop' : 'ok'" not in js
+    # v0.8.0: 입력 상태 판정은 램프판 규칙 하나(UI.lamp — uimodel.js). 알람 이름 입력(ok_when False)은 정상(0)이면
+    #   빈 원(off), 이상(1)일 때만 빨강 — '정상 = 초록' 으로 그려 '알람이 켜짐' 으로 읽히지 않게
+    out = _node("global.window = global; const UI = require(%s);"
+                "console.log(JSON.stringify([UI.lamp(0, { bit: 0, ok_when: false }, 'in'),"
+                " UI.lamp(1, { bit: 0, ok_when: false }, 'in'), UI.lamp(1, { bit: 0, ok_when: true }, 'in')]));"
+                % json.dumps(os.path.join(JS, "uimodel.js")))
+    assert out == ["off", "alarm", "ok"]
+    js = _src("js", "uimodel.js")
+    assert "if (def.ok_when === false) return on ? 'alarm' : 'off';" in js
 
 
 # ===================== A4. 글자 크기 셋 · 굵기 둘 · 768 에서 9 px 이상 =====================
 def test_font_sizes_and_weights():
     tok = _src("css", "tokens.css")
     sizes = {int(v) for v in re.findall(r"--fs-[\w-]+:\s*(\d+)px", tok)}
-    assert sizes == {12, 13, 15}, sizes                   # 960 설계 × 0.8(768 창) → 9.6 px 이상
+    # v0.8.0: 상태 띠 큰 값 하나(--fs-kpi 22)만 더했다 — 다른 칸은 그대로 {12, 13, 15}
+    assert sizes == {12, 13, 15, 22}, sizes               # 960 설계 × 0.8(768 창) → 9.6 px 이상
+    assert re.findall(r"--fs-[\w-]+:\s*22px", tok) == ["--fs-kpi: 22px"], tok
     css = _src("css", "style.css")
+    kpi = [ln for ln in css.splitlines() if "--fs-kpi" in ln]
+    assert kpi and all(ln.lstrip().startswith(".strip") for ln in kpi), kpi
     weights = set(re.findall(r"font-weight:\s*(\w+)", css))
     assert weights <= {"400", "700", "normal", "bold"}, weights
     assert not re.search(r"font-size:\s*\d+px", css)
@@ -112,8 +122,9 @@ def test_font_sizes_and_weights():
 
 
 # ===================== B. 배관도 — 8 격자 · 가로/세로만 · 겹침 0 · Tab 순서 =====================
+# v0.8.0: 격자는 viewSchematic.grid(모델 G) — 그려진 SVG 로 같은 불변식을 보고, 배관 끝이 포트인지는 검사기(아래 시험)로
 _GEOM = r'''
-  const G = 8, on = v => Math.abs(v / G - Math.round(v / G)) < 1e-9;
+  const G = viewSchematic.grid, on = v => Math.abs(v / G - Math.round(v / G)) < 1e-9;
   const rects = all.filter(e => e.tag === 'rect').map(e => ({ x0: +e.a.x, y0: +e.a.y, x1: +e.a.x + +e.a.width,
                                                               y1: +e.a.y + +e.a.height, w: +e.a.width, h: +e.a.height }));
   const pipes = all.filter(e => e.tag === 'path' && e.a['data-pipe'] !== undefined);
@@ -165,8 +176,9 @@ _GEOM = r'''
     const m = e.kids.find(k => k.tag === 'path').a.d.match(/M(-?[\d.]+),(-?[\d.]+)/); return [+e.a['data-grp'], +m[2], +m[1]]; });
   const cmp = (a, b) => (a[0] - b[0]) || (a[1] - b[1]) || (a[2] - b[2]);
   for (let i = 1; i < fp.length; i++) if (cmp(fp[i - 1], fp[i]) > 0) bad.push('tab order ' + i);
-  console.log(JSON.stringify({ bad, nseg: segs.length, nrect: rects.length, ndot: dots.length, nfp: fp.length,
-                               tabs: all.filter(e => e.a && e.a.tabindex !== undefined).length }));
+  console.log(JSON.stringify({ bad, nseg: segs.length, nrect: rects.length, ndot: dots.length, nfp: fp.length, G,
+                               tabs: all.filter(e => e.a && e.a.tabindex !== undefined).length,
+                               check: PidCheck.validate(PidModel) }));
 '''
 
 
@@ -174,18 +186,21 @@ def test_pid_grid_hv_lines_no_overlap_and_tab_order():
     # v0.5.2: Tab 순서는 무리 순서가 먼저(B7) — y · x 만 보던 검사를 고쳤다
     out = _schem(_GEOM)
     assert not out["bad"], out["bad"]
+    assert out["G"] == 8 and out["check"] == [], out["check"]          # v0.8.0: 끝이 포트 · 갈래 · 열린 끝(검사기)
     assert out["nseg"] > 15 and out["ndot"] >= 4 and out["nfp"] >= 15 and out["tabs"] == out["nfp"], out
 
 
 # 글자 겹침 — 가장 긴 값을 넣고 글자 폭을 어림해 글자/글자 · 글자/배관 · 글자/상자 겹침 0, 13 단위 이상, 칸 안
 _TEXT = r'''
-  const WORST = { cvg: '760.00', cm: '760.00', pcv: '100 %', rf: '300.0 W (Ref 12.0)', lid: 'Closed', o3: '200.0 g/Nm3' };
-  for (let i = 1; i <= 4; i++) { WORST['mfc' + i + 'pv'] = '1000.0'; WORST['mfc' + i + 'sv'] = 'SP 1000.0'; }
+  const WORST = { cvg: '760.00', cm: '760.00', pcv: '100 %', rf: '300.0 W (Ref 12.0)', lid: 'Closed', o3: '200.0 g/Nm3',
+                  h1sv: '250.0 ℃' };
+  for (let i = 1; i <= 4; i++) { WORST['mfc' + i + 'pv'] = '1000.0'; WORST['mfc' + i + 'sv'] = 'SP 1000.0 sccm'; }
   for (let i = 1; i <= 6; i++) WORST['h' + i] = '250.0 ℃';
+  const VB = svg.a.viewBox.split(' ').map(Number);           // v0.8.0: 경계는 viewBox(920 × 680)
   function cw(ch, mono) {
     const c = ch.codePointAt(0);
     if ((c >= 0xAC00 && c <= 0xD7A3) || ch === '℃' || ch === '—' || ch === '→') return 1.0;
-    if (mono) return 0.62;
+    if (mono) return 0.55;              // v0.8.0: 검사기(pidcheck.js)와 같은 규칙 — Consolas 0.55 em
     if (ch === ' ') return 0.3; if (ch === '·' || ch === '.') return 0.35;
     if ('()'.includes(ch)) return 0.36; if (ch === '-') return 0.38; if (ch === '%') return 0.85; if (ch === '/') return 0.4;
     if ('ilI'.includes(ch)) return 0.3; if ('ftjr'.includes(ch)) return 0.4; if ('mwMW'.includes(ch)) return 0.9;
@@ -214,7 +229,7 @@ _TEXT = r'''
   });
   const hit = (a, b) => a.x0 < b.x1 && b.x0 < a.x1 && a.y0 < b.y1 && b.y0 < a.y1;
   const bad = [];
-  texts.forEach(t => { if (t.f < 13) bad.push('small ' + t.s); if (t.x0 < 0 || t.x1 > 600 || t.y0 < 0 || t.y1 > 507) bad.push('out ' + t.s); });
+  texts.forEach(t => { if (t.f < 13) bad.push('small ' + t.s); if (t.x0 < 0 || t.x1 > VB[2] || t.y0 < 0 || t.y1 > VB[3]) bad.push('out ' + t.s); });
   for (let i = 0; i < texts.length; i++) for (let j = i + 1; j < texts.length; j++)
     if (hit(texts[i], texts[j])) bad.push('text/text ' + texts[i].s + ' / ' + texts[j].s);
   texts.forEach(t => segs.forEach(s => { if (hit(t, s)) bad.push('text/pipe ' + t.s); }));
@@ -238,27 +253,35 @@ def test_pid_text_no_overlap_and_labels():
 
 
 def test_pid_legend_one_line_english():
-    js = _src("js", "views", "schematic.js")
-    leg = js[js.index("function legend()"):js.index("/* ===================== 그리기")]
-    assert "T('s.open')" in leg and "T('s.closed')" in leg and "T('s.unknown')" in leg and "T('s.flow')" in leg
-    assert "T('s.clickToOperate')" in leg and not HANGUL.search(leg.split("box2.innerHTML")[1])
-    assert "s.idlePipe" not in leg and "s.exhaust" not in leg
+    # v0.8.0: P&ID 칸 머리 범례 — 그려진 내용으로 본다(보이는 글은 영문, 한글은 뜻 툴팁 title 에만)
+    out = _schem(r'''
+      const box = {}; core.bind = n => n === 'pidLegend' ? box : null; core.state = { device: %s };
+      viewSchematic.render({ live: {} });
+      console.log(JSON.stringify(box.innerHTML || ''));''' % json.dumps({"has_o3": DEV.HAS_O3}))
+    shown = re.sub(r'title="[^"]*"', '', out)
+    words = re.findall(r">([^<]+)<", shown)
+    assert words == ["Open", "Closed", "Pending", "Unknown", "Flow"] + (["Auto"] if DEV.HAS_O3 else []) + ["Click to operate"], words
+    assert not HANGUL.search(shown) and len(re.findall(r'title="[^"]*[가-힣][^"]*"', out)) == len(words), out
+    assert "Idle" not in words and "Exhaust" not in words
     css = _src("css", "style.css")
     assert "#schemSvg [data-fp]:focus .fp-hit { stroke: transparent; }" in css      # 포인터를 올릴 때만(키보드는 focus-visible)
 
 
 # ===================== C. 칸 넘침 =====================
 def test_panels_and_tables_fit():
+    # v0.8.0: 배관도는 P&ID 탭(#view-pid) 한 곳 · 운전 탭은 고정 격자(views/main.js) · 시작 조건은 자리마다 하나(묶음 '+N' 없음)
     html = _src("index.html")
-    assert '<div class="panel" style="flex:0 0 540px">' in html                     # 두 장비 같은 배관도 칸 폭
+    pid = html[html.index('id="view-pid"'):html.index("<!-- ---------- 레시피")]
+    assert 'id="schemSvg"' in pid and '<div class="opgrid" data-bind="opGrid"></div>' in html
     css = _src("css", "style.css")
-    assert ".stl, .stl.c2 { grid-template-columns: repeat(auto-fill, minmax(118px, 1fr)); }" in css
+    assert ".opgrid.narrow { grid-template-rows: 270px var(--ann-h) 64px minmax(0, 1fr);" in css
+    assert ".opgrid.wide .cl { grid-template-rows: 200px 64px minmax(0, 1fr); }" in css
     assert ".tblx { max-width: 100%; overflow-x: auto; }" in css
     setup = _src("js", "views", "setup.js")
     assert setup.count('<div class="tblx"><table class="tbl form">') == 2
     assert '<div class="tblx"><table class="tbl rc-steps">' in _src("js", "views", "recipe.js")
-    main = _src("js", "views", "main.js")
-    assert "return sti(c.label, c.key === 'base' ? 'warn' : 'stop', c.label + (det ? ' — ' + det : ''));" in main
+    panels = _src("js", "views", "panels.js")
+    assert "slots.map(function (sl, i) {" in panels and "+N" not in panels and "more" not in panels
 
 
 # ===================== D1. 배관도 요소에서 Enter/Space 가 TypeError 를 내지 않는다 =====================
@@ -284,13 +307,20 @@ def test_d2_faceplate_rebuilds_button_set():
 def test_d3_permit_ng_blocks_on():
     kind, tag = ("rf", "RF Permit") if DEV.HAS_RF else ("o3", "O3 Permit")
     bit = next(k["bit"] for k in DEV.INTERLOCKS if k["tag"] == tag)
-    ng, ok = _state(), _state(live__interlock=1 << bit)
+    extra = {} if DEV.HAS_RF else {"o3_sv": 50.0}
+    ng, ok = _state(live__extra=extra), _state(live__interlock=1 << bit, live__extra=extra)
     out = _fp(r'''
       const a = F.model('%s', 'X', %s, false), b = F.model('%s', 'X', %s, false);
       const on = m => m.buttons.filter(x => x.a === 'on')[0].on, off = m => m.buttons.filter(x => x.a === 'off')[0].on;
       console.log(JSON.stringify({ ng: [on(a), off(a), a.why], ok: [on(b), off(b), b.why] }));
     ''' % (kind, json.dumps(ng), kind, json.dumps(ok)))
-    assert out["ng"][0] is False and out["ng"][1] is True and out["ng"][2].startswith(tag + " NG"), out
+    if DEV.HAS_RF:
+        # RF Permit 은 RF 와 무관하게 생긴다 — 허가가 없으면 ON 을 막고 이유(그대로)
+        assert out["ng"][0] is False and out["ng"][1] is True and out["ng"][2].startswith(tag + " NG"), out
+    else:
+        # ★ v0.8.0: Powder O3 ON 은 O3 Permit 으로 막지 않는다 — O3 Permit 은 Line ON(바이패스 펌프 → BP-RUN → IV-B → 5 s)을
+        #   해야 생긴다. 예전 규칙(RF 와 같게 허가가 있어야 ON)은 배관도에서 꺼진 라인을 켤 수 없게 막았다(버그)
+        assert out["ng"] == [True, True, ""], out
     assert out["ok"] == [True, True, ""], out
 
 

@@ -137,7 +137,23 @@ def test_a4_chart_band_is_denser_with_more_points():
 
 
 # ===================== A3 배관도 글자 크기 · 겹침 =====================
-MIN_UNITS = 12.6 if DEV.HAS_RF else 11.2       # 768 창에서 9 px(PEALD 0.717 · Powder 0.802 px/단위)
+# ★ v0.8.0: 배관도는 P&ID 탭 한 곳(viewBox 920×680). 화면 배율 = 창 배치(core.fit) × 그림 칸 안 배율 — 768×900 ·
+#   960×1000 · 1920×1080 에서 가장 작은 px/단위로 '9 px 이상' 에 필요한 단위를 다시 계산한다
+def _pid_px_per_unit(width, height):
+    narrow = min(width / 960, height / 1000)
+    wide = min(width / 1600, height / 840)
+    if wide > narrow:                                   # 넓은 배치 — 그림 칸 폭 = 높이 × 920/680
+        s, ch = wide, min(max(height / wide, 840), 1000)
+        body_h = ch - 259 - 16 - 32
+        body_w = round(body_h * 920 / 680)
+    else:
+        s, ch = narrow, min(max(height / narrow, 1000), 1600)
+        cw = min(max(width / narrow, 960), 1200)
+        body_h, body_w = ch - 259 - 16 - 32, cw - 32 - 2
+    return s * min(body_w / 920, body_h / 680)
+
+
+MIN_UNITS = 9 / min(_pid_px_per_unit(w, h) for w, h in ((768, 900), (960, 1000), (1920, 1080)))
 
 
 def _schem(body: str):
@@ -150,14 +166,18 @@ def _schem(body: str):
       svg.querySelector = () => null; svg.querySelectorAll = () => [];
       global.window = global;
       global.document = { createElementNS: (ns, t) => El(t), getElementById: () => svg };
-      global.core = { register() {}, bind() { return null; }, state: {}, bit() { return false; } };
+      global.core = { register() {}, bind() { return null; }, state: {}, bit() { return false; }, esc: s => String(s) };
       global.fmt = { DASH: '—', flow: String, temp: String, torr: String, pct: String, watt: String, num: String };
       global.T = require(%s);                                  // v0.5.0: 용어 사전(terms.js)
+      // v0.8.0: 그림은 모델(pid_model.js) · 검사기(pidcheck.js)로 — 먼저 올린다
+      global.UI = require(%s); global.PidCheck = require(%s); global.PidModel = require(%s);
       require(%s);
       viewSchematic.render({ live: {} });
       const all = []; (function walk(e) { all.push(e); e.kids.forEach(walk); })(svg);
       %s
-    ''' % (json.dumps(os.path.join(JS, "terms.js")), json.dumps(os.path.join(JS, "views", "schematic.js")), body))
+    ''' % (json.dumps(os.path.join(JS, "terms.js")), json.dumps(os.path.join(JS, "uimodel.js")),
+           json.dumps(os.path.join(JS, "pidcheck.js")), json.dumps(os.path.join(JS, "views", "pid_model.js")),
+           json.dumps(os.path.join(JS, "views", "schematic.js")), body))
 
 
 def test_a3_schematic_font_floor_and_full_names():
@@ -168,8 +188,8 @@ def test_a3_schematic_font_floor_and_full_names():
       console.log(JSON.stringify({ min: Math.min(...texts.map(e => Number(e.a['font-size']))), titles, shown,
                                    vb: svg.a.viewBox }));
     ''')
-    assert out["vb"] == "0 0 600 507"
-    assert out["min"] >= MIN_UNITS, out["min"]
+    assert out["vb"] == "0 0 920 680"                    # v0.8.0: P&ID 탭 그림(모델 W × H)
+    assert out["min"] >= MIN_UNITS and out["min"] >= 13, out["min"]
     # 줄인 이름(상자 안 'MFC1')은 툴팁에 전체 이름
     assert "MFC1 Precursor Carrier" in out["titles"] and "MFC2 Assist" in out["titles"]     # v0.5.0 영문 용어
     assert "MFC1" in out["shown"] and not any("Carrier" in s for s in out["shown"])
@@ -224,16 +244,17 @@ _SCHEM_JS = """(minPx) => {
 }"""
 
 
-@pytest.mark.parametrize("width,height,min_px", [(768, 900, 9.0), (960, 1000, 11.0)])
+@pytest.mark.parametrize("width,height,min_px", [(768, 900, 9.0), (960, 1000, 9.0), (1920, 1080, 9.0)])
 async def test_a3_schematic_fonts_and_overlaps_in_browser(rig, width, height, min_px):
     pw, b, pg = await _page(rig.port, width, height)
     try:
-        await pg.evaluate("() => core.setTab('main')")
+        await pg.evaluate("() => core.setTab('pid')")       # v0.8.0: 배관도는 P&ID 탭
+        await asyncio.sleep(0.3)
         # 값 자리에 가장 긴 값을 넣고 잰다
         r = await pg.evaluate("(minPx) => { const svg = document.getElementById('schemSvg');"
                               " svg.querySelectorAll('[data-sv]').forEach(t => { const k = t.getAttribute('data-sv');"
-                              " t.textContent = /^mfc\\dsv$/.test(k) ? '설정 1000.0' : /^mfc\\dpv$/.test(k) ? '1000.0' :"
-                              " k === 'rf' ? '300.0 W (반사 12.0)' : /^h\\d$/.test(k) ? '250.0 ℃' :"
+                              " t.textContent = /^mfc\\dsv$/.test(k) ? 'SP 1000.0 sccm' : /^mfc\\dpv$/.test(k) ? '1000.0' :"
+                              " k === 'rf' ? '300.0 W (Ref 12.0)' : /^h\\d(sv)?$/.test(k) ? '250.0 ℃' :"
                               " k === 'pcv' ? '100 %' : k === 'o3' ? '200.0 g/Nm3' : t.textContent; });"
                               " return (" + _SCHEM_JS + ")(minPx); }", min_px)
         assert r["n"] > 20 and not r["small"], r

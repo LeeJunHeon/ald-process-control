@@ -678,8 +678,11 @@ class PlcLink:
         """명령 12. 잠금 안에서 반영 영역을 새로 읽고 mutate(현재값) 로 이번 변경만 얹어
         D01004~07 · D01008 · (PEALD) D01040·D01041 / (Powder) D01042 를 전부 쓴 뒤 보낸다.
 
-        mutate(cur: dict) -> (new: dict, 거절 사유 str). 사유가 있으면 보내지 않는다.
-        반환 {result, text, sent, lost_valve, lost_aux}. result None 은 못 보냈거나 응답 없음."""
+        mutate(cur: dict) -> (new: dict, 거절 사유 str[, noop bool]). 사유가 있으면 보내지 않는다.
+        ★ v0.8.0: noop(같은 요청)을 알리거나 새 값이 지금 반영 영역과 같으면 보내지 않는다 — {refused, noop, text}.
+          기준이 PLC 반영 영역(D04012~)이라 '같다' 를 믿을 수 있다(명령 13 히터는 기준이 PC 요청 워드라 쓰지 않는다).
+        반환 {result, text, sent, lost_valve, lost_aux, valve_out, aux_out}. result None 은 못 보냈거나 응답 없음.
+        valve_out · aux_out: 보낸 뒤 상태 영역을 다시 읽은 실제 출력(D00010 · D00014) — 결과 글을 되읽은 출력으로 쓴다."""
         if self.blocked_reason():
             return {"result": None, "text": self.blocked_reason()}
         async with self._cmd_lock:
@@ -688,11 +691,17 @@ class PlcLink:
             except (ModbusTimeout, ModbusError, OSError) as e:
                 return {"result": None, "text": f"PLC 통신 오류: {e}"}
             cur = self.manual_from_applied(self.applied)
-            new, why = mutate(dict(cur))
+            res = mutate(dict(cur))
+            new, why = res[0], res[1]
+            if len(res) > 2 and res[2]:
+                return {"result": None, "text": why, "refused": True, "noop": True, "before": cur}
             if why:
-                return {"result": None, "text": why, "refused": True}
+                return {"result": None, "text": why, "refused": True, "before": cur}
             new["valve"] = int(new.get("valve", 0)) & DEV.MANUAL_VALVE_MASK
             new["aux"] = int(new.get("aux", 0)) & DEV.AUX_CMD_MASK
+            if same_manual(new, cur):
+                return {"result": None, "text": "바뀌는 것이 없어 다시 보내지 않았습니다", "refused": True, "noop": True,
+                        "before": cur}
             lo, hi = A.split_dword(new["valve"])
             args = {A.D_MANUAL_VALVE: [lo, hi, 0, 0], A.D_MANUAL_AUX: new["aux"]}
             if DEV.HAS_PCV:
@@ -712,6 +721,12 @@ class PlcLink:
                 self._set_applied(await self.client.read_holding(A.APPLIED_BASE, A.APPLIED_COUNT))
             except (ModbusTimeout, ModbusError, OSError):
                 return out
+            try:
+                await self._read_status()           # ★ v0.8.0: 결과 글은 되읽은 실제 출력으로
+                out["valve_out"] = self.status[A.D_VALVE_OUT]
+                out["aux_out"] = self.status[A.D_AUX_OUT]
+            except (ModbusTimeout, ModbusError, OSError):
+                pass
             after = self.manual_from_applied(self.applied)
             out["lost_valve"] = new["valve"] & ~after["valve"]
             out["lost_aux"] = new["aux"] & ~after["aux"]
@@ -815,6 +830,18 @@ class PlcLink:
             return None, f"PLC 통신 오류: {e}"
         finally:
             self._cmd_seq += 1
+
+
+def same_manual(new: dict, cur: dict) -> bool:
+    """v0.8.0: 명령 12 로 쓸 값이 지금 PLC 반영 영역과 같은가(밸브 · 보조 출력 · 이 장비의 PCV · RF · O3)."""
+    if (int(new.get("valve", 0)) & DEV.MANUAL_VALVE_MASK) != (int(cur.get("valve", 0)) & DEV.MANUAL_VALVE_MASK):
+        return False
+    if (int(new.get("aux", 0)) & DEV.AUX_CMD_MASK) != (int(cur.get("aux", 0)) & DEV.AUX_CMD_MASK):
+        return False
+    for key, has in (("pcv", DEV.HAS_PCV), ("rf", DEV.HAS_RF), ("o3", DEV.HAS_O3)):
+        if has and (int(new.get(key, 0)) & 0xFFFF) != (int(cur.get(key, 0)) & 0xFFFF):
+            return False
+    return True
 
 
 def describe_bits(valve: int, aux: int) -> str:

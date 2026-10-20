@@ -1175,8 +1175,23 @@ class Run:
         got = {k.split(":", 1)[1]: rows1.get(k, 0) - rows0.get(k, 0) for k in rows1 if k.startswith("valve:")}
         return {k: v for k, v in got.items() if v}
 
+    async def _vacuum_steady(self, secs=3.0, timeout=60.0) -> bool:
+        """v0.8.0: Vacuum OK(인터락 b2)가 secs 동안 이어서 켜져 있을 때까지 — 베이스 기준선 바로 아래에서 시작하면 점검이
+        'Vacuum OK 아님' 으로 거절되던 시험 틀 틈(켜졌다 꺼지면 다시 센다)."""
+        op = self.op
+        since = [None]
+
+        def steady():
+            if op.ilk(A.ILK_VACUUM):
+                since[0] = since[0] or time.monotonic()
+                return time.monotonic() - since[0] >= secs
+            since[0] = None
+            return False
+        return await op.wait(steady, self.t(timeout * self.h.speed, timeout), 0.1)
+
     async def _leak(self, label, want, cancel=False):
         op = self.op
+        await self._vacuum_steady()
         t0 = time.monotonic()
         await op.send("leak_check")
         got = await op.wait(lambda: (op.live.get("leakcheck") or {}).get("running"), 5)
@@ -1340,6 +1355,32 @@ class Run:
         await op.send("vent")
         ok = await op.wait(lambda: ((op.live.get("inputs0") or 0) >> A.IN0_ATM) & 1, self.t(150, 15))
         self.check("벤트 → 대기압", ok, "대기압 입력(700 Torr↑)", f"{op.cvg()} Torr")
+        # ★ v0.8.0: Valve Permit 이 없으면(대기압 · 펌프 꺼짐) 열기를 보내지 않는다 — 공정 시작이 잠금을 다시 걸었으니 풀고
+        await op.send("manual_unlock", on=True)
+        t0 = time.monotonic()
+        await op.send("manual_valve", tag="PV-1", on=True)
+        await asyncio.sleep(1.0)
+        ns = [n for n in op.notices_since(t0) if "Valve Permit" in n[2]]
+        req = (op.live.get("manual") or {}).get("valve_request")
+        self.check("Valve Permit 없을 때 밸브 열기 거절", bool(ns) and ns[-1][1] == "warn" and not op.valve_on("PV-1") and not req,
+                   "'Valve Permit' 경고 · PV-1 출력 꺼짐 · 요청 없음",
+                   f"{ns[-1][2] if ns else '(알림 없음)'} · 출력 {op.valve_on('PV-1')} · 요청 {req}")
+        # ★ v0.8.0: 펌핑 중 같은 열기를 두 번 — 두 번째는 보내지 않는다(info '이미 …' · PLC 받은 명령 12 한 번)
+        await op.send("pump_start")
+        ok = await op.wait(lambda: op.ilk(A.ILK_VALVE_OK), self.t(420, 30))
+        await op.send("manual_unlock", on=True)
+        n0 = len(self.h.plc_log_text())
+        t0 = time.monotonic()
+        await op.send("manual_valve", tag="PV-1", on=True)
+        await op.wait(lambda: op.valve_on("PV-1"), 5)
+        await op.send("manual_valve", tag="PV-1", on=True)
+        await asyncio.sleep(1.0)
+        got = len(re.findall(r"명령 받음: 번호 \d+ · 코드 %d " % A.CMD_MANUAL_APPLY, self.h.plc_log_text()[n0:]))
+        info = [n for n in op.notices_since(t0) if n[1] == "info" and "이미" in n[2]]
+        self.check("같은 열기 두 번 → 한 번만 보냄", ok and got == 1 and bool(info),
+                   "Valve Permit · PLC 받은 명령 12 한 번 · 두 번째 '이미 …'(info)",
+                   f"허가 {ok} · 명령 12 {got} 번 · {info[-1][2] if info else '(info 없음)'}")
+        await op.send("manual_valve", tag="PV-1", on=False)
 
     # ---------- 9) 긴 공정 · 두 프로그램 ----------
     async def long(self, cycles=500):

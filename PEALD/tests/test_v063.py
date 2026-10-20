@@ -1,7 +1,7 @@
 """v0.6.3 — serve_app 시험을 동작으로 · e2e FAIL 진단(가짜 PLC 상태 · live 경과) · FAIL 이면 임시 폴더 남김 · '+N more' 문구.
 
 ★ 프로그램(headless) · 가짜 PLC 는 빈 포트 · 임시 폴더로 띄운다 — 실행 중인 프로그램과 data/ 는 건드리지 않는다.
-★ 화면의 순수 함수(terms.js 의 stiMoreText, main.js 의 stiList)는 node 로 부른다(node 가 없으면 건너뜀).
+★ v0.8.0: B2('+N more' 문구)는 그 기능을 없애 지웠다(고정 램프판 — 모든 항목이 늘 보인다, test_v080).
 """
 import os
 import re
@@ -16,8 +16,6 @@ import urllib.request
 
 from peald import addresses as A
 
-from test_v0411 import _node, JS
-from test_v054 import _fn
 from test_v060 import ROOT, TEST, PY, ENV
 
 if TEST not in sys.path:
@@ -163,42 +161,3 @@ def test_b1_pass_only_removes_tmp_and_amain_wiring():
     assert src.index("keep_on_fail(h, rep)") < src.index("h.close()")
     st = E.fail_diag(h, None)                       # 가짜 PLC 가 없어도 진단은 예외 없이
     assert "가짜 PLC 상태: 받지 못함" in st and "받은 적 없음" in st
-
-
-# ===================== B2. '+N more' 문구 =====================
-_PROBS = [{"name": n, "lvl": "stop"} for n in ("EMO", "Air", "Pump Alarm")] + \
-         [{"name": n, "lvl": "warn"} for n in ("RF Permit", "Pump")]
-_OKS = [{"name": n, "lvl": "ok"} for n in ("Lid", "Door", "N2", "CW", "Scrubber", "Exhaust")]
-
-
-def test_b2_more_text_and_tooltip():
-    main = open(os.path.join(ROOT, "frontend", "js", "views", "main.js"), encoding="utf-8").read()
-    script = "const T = require(%s);" % json.dumps(os.path.join(JS, "terms.js")) + r'''
-      const core = { esc: s => String(s).replace(/"/g, '&quot;') };
-      %s
-      %s
-      const probs = %s, oks = %s;
-      const quiet = T.stiFit(T.stiCompact(oks), 1, 3);
-      const mixed = T.stiFit(T.stiCompact(probs.concat(oks)), 1, 3);
-      console.log(JSON.stringify({
-        quiet: T.stiMoreText(quiet.more, quiet.okHid), qn: quiet.more.length, qok: quiet.okHid.length,
-        qnames: quiet.more.map(i => i.name).join(' · '),
-        mixed: T.stiMoreText(mixed.more, mixed.okHid),
-        okOnly: T.stiMoreText([], [{ name: 'Lid', lvl: 'ok' }]),
-        warnOnly: T.stiMoreText([{ name: 'A', lvl: 'warn' }], []),
-        htmlQuiet: stiList(oks, 1, 3), htmlMixed: stiList(probs.concat(oks), 1, 3),
-      }));
-    ''' % (_fn(main, "sti"), _fn(main, "stiList"), json.dumps(_PROBS), json.dumps(_OKS))
-    out = _node(script)
-    # 모두 정상인데 넘침 — 이름도 보인다
-    assert out["qn"] >= 1 and out["qok"] == 0, out
-    assert out["quiet"] == "OK %d — %s" % (out["qn"], out["qnames"]), out
-    assert out["quiet"].count(" · ") == out["qn"] - 1, out
-    # 문제 항목이 있으면 개수만(이름은 알람 · 경고)
-    assert out["mixed"] == "Alarm: Pump Alarm / Warning: RF Permit · Pump / OK 6", out
-    assert out["okOnly"] == "OK 1 — Lid" and out["warnOnly"] == "Warning: A", out
-    # 툴팁도 'OK n'(알림과 같게) — 'OK n 개' 없음
-    last = out["htmlMixed"][out["htmlMixed"].rindex('<span class="sti'):]
-    assert 'title="Pump Alarm · RF Permit · Pump · OK 6"' in last and " 개" not in last, last
-    lastq = out["htmlQuiet"][out["htmlQuiet"].rindex('<span class="sti'):]
-    assert ('data-more="OK %d — ' % out["qn"]) in lastq and 'data-lvl="info"' in lastq, lastq

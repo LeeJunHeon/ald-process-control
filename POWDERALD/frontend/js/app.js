@@ -5,11 +5,17 @@
  *   부르면 연결이 끊겼을 때 어떤 명령이 사라졌는지 알 수 없다.
  *
  * 연결이 끊기면 값을 지어내지 않는다 — '—' 로 비우고 2초마다 다시 붙는다.
+ * ★ v0.8.0: 보낼 때마다 요청 번호(rid — 1 부터, 2^31 전에 1 로)를 붙이고 돌려준다(못 보내면 0). 서버는 그 명령의
+ *   처리가 끝나면 그 연결에 {type: 'done', rid} 를 보내고, 그 명령에 대한 알림에도 rid 를 붙인다 —
+ *   진행 중 잠금(core.busy)을 풀고 조작 창이 '내 명령의 결과' 를 시각이 아니라 번호로 고른다.
+ *   (레시피 검증의 payload req 는 다른 번호다 — 그대로 둔다)
  * ============================================================ */
 (function (w, d) {
   'use strict';
 
   var ws = null, connected = false, reconnectTimer = null;
+  var lastRid = 0;
+  var RID_MAX = 2147483647;
   var handlers = {};
 
   function connect() {
@@ -48,8 +54,14 @@
       case 'live':   core.applyLive(msg); break;
       case 'notice':
         core.toast(msg.msg, msg.level);
-        if (w.viewManual && w.viewManual.onNotice) w.viewManual.onNotice();
-        if (w.viewFaceplate && w.viewFaceplate.onNotice) w.viewFaceplate.onNotice(msg);   // 배관도 조작 창 결과
+        if (w.viewManual && w.viewManual.onNotice) w.viewManual.onNotice(msg);
+        if (w.viewFaceplate && w.viewFaceplate.onNotice) w.viewFaceplate.onNotice(msg);   // 조작 창 결과(rid 로 고른다)
+        break;
+      case 'done':
+        core.busy.done(msg.rid);
+        if (w.viewFaceplate && w.viewFaceplate.onDone) w.viewFaceplate.onDone(msg);
+        if (w.viewManual && w.viewManual.onDone) w.viewManual.onDone(msg);
+        if (core.state && core.state.live) core.applyLive(core.state.live);      // 풀린 단추를 바로 다시 칠한다
         break;
       case 'log':
         if (core.state) {
@@ -63,15 +75,18 @@
     }
   }
 
+  /** 보내고 rid 를 돌려준다(못 보내면 0 — 'if (!w.app.send(…))' 는 그대로 동작한다) */
   function send(cmd, payload) {
     if (!ws || !connected) {
       core.toast('서버에 연결되어 있지 않습니다', 'warn');
-      return false;
+      return 0;
     }
     var obj = { cmd: cmd };
     for (var k in (payload || {})) obj[k] = payload[k];
-    try { ws.send(JSON.stringify(obj)); return true; }
-    catch (e) { return false; }
+    lastRid = lastRid >= RID_MAX - 1 ? 1 : lastRid + 1;
+    obj.rid = lastRid;
+    try { ws.send(JSON.stringify(obj)); return lastRid; }
+    catch (e) { return 0; }
   }
 
   w.app = {

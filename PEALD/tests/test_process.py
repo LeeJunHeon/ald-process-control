@@ -269,7 +269,7 @@ async def test_start_rejected_by_plc_without_recipe_table(wired):
 # ===================== 수동 조작 =====================
 async def test_manual_valve_needs_unlock(wired):
     lk, sim, _cfg = wired
-    await at_vacuum(lk, sim)
+    await valve_permit(lk, sim)          # v0.8.0: 허가 없이 열기는 보내지 않는다 — 허가를 받고 잠금만 본다
     tag = DEV.RECIPE_VALVES[0]
     state.manual_unlock_until = 0.0
     await C.handle_command({"cmd": "manual_valve", "tag": tag, "on": True})
@@ -285,7 +285,7 @@ async def test_manual_valve_needs_unlock(wired):
 async def test_manual_apply_writes_whole_request_set(wired):
     """★ 명령 12 는 한꺼번에 반영한다 — 매번 전체를 써야 빠진 값이 0 으로 지워지지 않는다."""
     lk, sim, _cfg = wired
-    await at_vacuum(lk, sim)
+    await valve_permit(lk, sim)          # v0.8.0: 허가가 있어야 보낸다
     a, b = DEV.RECIPE_VALVES[0], DEV.RECIPE_VALVES[1]
     state.manual_unlock_until = 9e9
     await C.handle_command({"cmd": "manual_valve", "tag": a, "on": True})
@@ -300,7 +300,7 @@ async def test_precursor_and_reactant_together_blocked_by_pc(wired):
     lk, sim, _cfg = wired
     if not (DEV.PRECURSOR_TAGS and DEV.REACTANT_TAGS):
         pytest.skip("이 장비에는 전구체·반응물 구분이 없다")
-    await at_vacuum(lk, sim)
+    await valve_permit(lk, sim)          # v0.8.0: 허가가 없으면 먼저 거절되어 동시 열기 규칙까지 가지 않는다
     state.manual_unlock_until = 9e9
     pre, rea = DEV.PRECURSOR_TAGS[0], DEV.REACTANT_TAGS[0]
     await C.handle_command({"cmd": "manual_valve", "tag": pre, "on": True})
@@ -332,7 +332,7 @@ async def test_screen_request_follows_plc_when_cleared(wired):
     """PLC 가 전체 닫기로 반영을 지우면 화면의 '요청'도 0 이다 — 요청 표시는 PC 기억이
     아니라 PLC 반영 영역(D04012)이다. PC 영역(D01004)은 PLC 가 지우지 않는다."""
     lk, sim, _cfg = wired
-    await at_vacuum(lk, sim)
+    await valve_permit(lk, sim)          # v0.8.0: 허가가 있어야 보낸다
     state.manual_unlock_until = 9e9
     tag = DEV.RECIPE_VALVES[0]
     await C.handle_command({"cmd": "manual_valve", "tag": tag, "on": True})
@@ -377,7 +377,11 @@ async def test_o3_line_not_revived_after_safe_stop(wired):
     sim.set_fault("emo", False)
     await lk.send_command(A.CMD_ALARM_RESET)
     assert await wait_until(lambda: not A.bit(lk.status[A.D_INTERLOCK], A.ILK_SAFE_STOP_REQ), 3)
+    # v0.8.0: 허가를 받고 밸브를 연다 — 허가 없이 거절되면 명령 12 다시 만들기 길을 타지 않아 시험이 저절로 통과한다
+    await valve_permit(lk, sim)
+    no = sim.reg[A.D_CMD_NO]
     await C.handle_command({"cmd": "manual_valve", "tag": DEV.RECIPE_VALVES[0], "on": True})
+    assert sim.reg[A.D_CMD_NO] != no, "밸브 명령 12 가 나가지 않았다"
     await asyncio.sleep(0.2)
     assert sim.man_aux == 0, "O3 라인이 되살아났다"
     assert not (sim.reg[A.D_AUX_OUT] & DEV.AUX_CMD_MASK)
@@ -413,7 +417,7 @@ async def test_valve_after_process_keeps_pcv_o3(wired):
     """공정 뒤 밸브 조작이 PCV 목표(PEALD)·O3 설정(Powder)을 바꾸지 않는다."""
     from peald.simulator import AO_PCV, AO_O3
     lk, sim, cfg = wired
-    await at_vacuum(lk, sim)
+    await valve_permit(lk, sim)          # v0.8.0: 허가가 있어야 밸브를 보낸다
     state.manual_unlock_until = 9e9
     key = AO_PCV if DEV.HAS_PCV else AO_O3
     if DEV.HAS_PCV:
@@ -432,6 +436,7 @@ async def test_valve_after_process_keeps_pcv_o3(wired):
     after_process = sim.ao[key]
     assert after_process != manual_val, "블록 값으로 바뀌어 있어야 한다"
     await asyncio.sleep(0.05)
+    await valve_permit(lk, sim)          # 공정 끝 정리 뒤에도 허가(펌핑 · IV-E 열림)가 있게
     await C.handle_command({"cmd": "manual_valve", "tag": DEV.RECIPE_VALVES[0], "on": True})
     assert sim.man_valve, "밸브가 반영되지 않았다"
     assert sim.ao[key] == after_process, \
@@ -439,15 +444,39 @@ async def test_valve_after_process_keeps_pcv_o3(wired):
 
 
 async def test_valve_at_atmosphere_reports_not_applied(wired, notices):
-    """대기압에서 밸브 열기 → 결과 0 이어도 '반영 안 됨'과 이유를 알린다."""
+    """v0.8.0: 대기압이면 Valve Permit 이 없어 보내지 않는다 — 알림에 밸브 이름과 '대기압'(빠진 조건)이 든다.
+    (예전: 보낸 뒤 PLC 가 지워 '반영되지 않았습니다'. 그 길은 아래 시험 · test_plclink 이 따로 본다)"""
     lk, sim, _cfg = wired
     assert await wait_until(lambda: A.bit(lk.status[A.D_INPUT0], A.IN0_ATM), 2)
     state.manual_unlock_until = 9e9
     tag = DEV.RECIPE_VALVES[0]
+    no = sim.reg[A.D_CMD_NO]
     await C.handle_command({"cmd": "manual_valve", "tag": tag, "on": True})
-    msgs = [m for _l, m in notices if "반영되지 않았습니다" in m]
+    msgs = [m for lv, m in notices if lv == "warn" and "보내지 않았습니다" in m]
     assert msgs, notices
     assert tag in msgs[0] and "대기압" in msgs[0]
+    assert sim.reg[A.D_CMD_NO] == no
+
+
+async def test_valve_cleared_by_plc_reports_not_applied(wired, notices, monkeypatch):
+    """허가가 있을 때 보냈는데 PLC 가 받은 직후 지운 경우(결과 0 · 반영 영역에 없음) — '반영되지 않았습니다' 와 이름 · 이유.
+    PLC 가 같은 스캔에 지우는 순간은 시뮬레이터로 결정적으로 만들 수 없어, 명령 12 결과(반영 안 된 비트)를 고정한다."""
+    lk, sim, _cfg = wired
+    await valve_permit(lk, sim)
+    state.manual_unlock_until = 9e9
+    tag = DEV.RECIPE_VALVES[0]
+    bit = 1 << DEV.valve_bit(tag)
+
+    async def fake_apply(mutate):
+        cur = lk.manual_from_applied(lk.applied)
+        new, why = mutate(dict(cur))[:2]
+        assert not why
+        return {"result": A.RESULT_OK, "text": "", "sent": new, "before": cur, "lost_valve": bit, "lost_aux": 0,
+                "valve_out": 0, "aux_out": 0}
+    monkeypatch.setattr(lk, "manual_apply", fake_apply)
+    await C.handle_command({"cmd": "manual_valve", "tag": tag, "on": True})
+    msgs = [m for _l, m in notices if "반영되지 않았습니다" in m]
+    assert msgs and tag in msgs[0], notices
 
 
 async def test_manual_mfc_writes_raw_setpoint(wired):
@@ -740,17 +769,25 @@ async def _notice(msg, level="info", ws=None):
 
 
 # ===================== v0.4.1 출력 단계 · 대기 표시 =====================
-async def test_manual_valve_waits_without_permit(wired):
-    """공정 밸브 허가가 없으면(펌프 정지) 요청은 반영되지만 출력은 0 — 화면에는 '대기'."""
+async def test_manual_valve_waits_without_permit(wired, notices):
+    """v0.8.0: 공정 밸브 허가가 없으면(펌프 정지) 열기는 보내지 않는다(요청 0 · 알림에 빠진 조건) — 허가가 생길 때 운전자 조작
+    없이 저절로 열리는 Pending 을 만들지 않게. 허가가 있을 때 연 밸브는 허가가 사라지면(Pumping Stop) Pending(요청은 남고 출력
+    꺼짐), 허가가 다시 생기면(Pumping Start) PLC 가 다시 연다(래더 동작 그대로)."""
     lk, sim, _cfg = wired
     await at_vacuum(lk, sim)
     state.manual_unlock_until = 9e9
     tag = DEV.RECIPE_VALVES[2]
     await C.handle_command({"cmd": "manual_valve", "tag": tag, "on": True})
-    assert await wait_until(lambda: state.manual_state()["valve_request"] != 0, 2)
     await asyncio.sleep(0.2)
-    assert sim.reg[A.D_VALVE_OUT] == 0, "허가 없이 밸브가 나갔다"
-    assert tag in state.manual_state()["pending"], "대기 표시가 없다"
+    assert state.manual_state()["valve_request"] == 0 and sim.reg[A.D_VALVE_OUT] == 0, "허가 없이 요청이 나갔다"
+    assert any("Valve Permit" in m and "필요:" in m for _l, m in notices), notices
+    await valve_permit(lk, sim)
+    await C.handle_command({"cmd": "manual_valve", "tag": tag, "on": True})
+    assert await wait_until(lambda: A.bit(sim.reg[A.D_VALVE_OUT], DEV.valve_bit(tag)), 2)
+    r, _ = await lk.send_command(A.CMD_PUMP_STOP)
+    assert r == A.RESULT_OK
+    assert await wait_until(lambda: tag in state.manual_state()["pending"], 5), "대기 표시가 없다"
+    assert not A.bit(sim.reg[A.D_VALVE_OUT], DEV.valve_bit(tag)), "허가 없이 밸브가 나갔다"
     await valve_permit(lk, sim)
     assert await wait_until(lambda: A.bit(sim.reg[A.D_VALVE_OUT], DEV.valve_bit(tag)), 2)
     assert await wait_until(lambda: tag not in state.manual_state()["pending"], 2)

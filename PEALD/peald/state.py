@@ -303,6 +303,12 @@ class State:
             "alarm_defs": {f"{tag}-{d['bit']:02d}": {"name": d["name"], "crit": d["crit"],
                                                      "cause": d.get("cause", ""), "check": d.get("check", "")}
                            for tag, defs in (("A0", DEV.ALARMS0), ("A1", DEV.ALARMS1)) for d in defs},
+            # v0.8.0: 운전 화면 배치 — 램프판 · 밸브 띠 · 시작 조건 자리(칸 크기는 이것으로만 정해진다)
+            "annunciator": DEV.ANNUNCIATOR,
+            "valve_strip": DEV.VALVE_STRIP,
+            "start_slots": DEV.START_SLOTS,
+            "aux_cmd_mask": DEV.AUX_CMD_MASK,
+            "heater_power_mask": DEV.HEATER_POWER_MASK,
         }
 
     def live(self) -> dict:
@@ -475,6 +481,16 @@ class State:
                         out.append(["err", "PC 끊김 트립도 남아 있지만 PLC 안전 정지 원인은 "
                                            + (" · ".join(cause) or "중대 알람") + " 입니다 — 원인을 없앤 뒤 [Alarm Reset]",
                                     "plc"])
+            if conn and link.status[A.D_STATE] not in (A.STATE_READY, A.STATE_RUN, A.STATE_PAUSE, A.STATE_STOPPING):
+                # ★ v0.8.0: 허가가 없어 출력이 꺼진 수동 밸브 요청 — 허가가 다시 생기면(펌핑 등) 운전자 조작 없이 열린다
+                try:
+                    pend = self.manual_state().get("pending") or []
+                except Exception:  # noqa: BLE001 — 다른 알림(트립 · 정비)을 막지 않게
+                    pend = []
+                if pend:
+                    out.append(["warn", "수동 밸브 요청이 허가를 기다립니다: " + " · ".join(pend) +
+                                " — Valve Permit 이 다시 생기면 그 밸브가 바로 열립니다. 필요 없으면 그 밸브 [Close] 또는 "
+                                "[Close All Valves]", "plc"])
             if self.runner is not None:
                 out += [list(x) for x in getattr(self.runner, "watch_notices", [])]
             from .maintenance import maint
@@ -534,7 +550,15 @@ class State:
         aux_pending = [a["tag"] for a in DEV.AUX
                        if (aux_req >> a["bit"]) & 1 and not (aux_out >> a["bit"]) & 1]
         o3_left = max(0, int(round(self.o3_off_at - _t.monotonic()))) if self.o3_off_at else 0
+        permit = bool(conn and A.bit(link.status[A.D_INTERLOCK], A.ILK_VALVE_OK))
+        missing = []
+        if conn:
+            from .process import valve_permit_missing
+            missing = valve_permit_missing(link.status)
         return {
+            # v0.8.0: 공정 밸브 허가(D00004 b4)와 빠진 조건 — 조작 창 · 수동 창이 열기를 막고 이유를 보인다
+            "valve_permit": permit,
+            "valve_permit_missing": missing,
             "unlocked": _t.monotonic() < self.manual_unlock_until,
             "unlock_left_s": max(0, int(self.manual_unlock_until - _t.monotonic())),
             "valve_request": req,

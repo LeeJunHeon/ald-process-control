@@ -36,6 +36,7 @@
     <!-- ===================== 탭 ===================== -->
     <nav class="tabbar">
       <button class="tab on" data-tab="main" data-t="tab.main">Operation</button>
+      <button class="tab" data-tab="pid" data-t="tab.pid">P&amp;ID</button>
       <button class="tab" data-tab="recipe" data-t="tab.recipe">Recipe</button>
       <button class="tab" data-tab="trend" data-t="tab.trend">Trend</button>
       <button class="tab" data-tab="datalog" data-t="tab.datalog">Data Log</button>
@@ -44,51 +45,23 @@
       <span class="access" data-bind="access">Access: This PC</span>
     </nav>
 
+    <!-- ===================== 상단 상태 띠 (Operation · P&ID 탭) ===================== -->
+    <div class="strip" id="strip" data-bind="strip"></div>
+
     <div class="views">
-      <!-- ---------- 운전 ---------- -->
+      <!-- ---------- 운전 — 칸은 배치(좁은 · 넓은)와 장비 구조로만 정해진다(views/main.js) ---------- -->
       <section class="view on" id="view-main">
-        <div class="row grow">
-          <div class="panel" style="flex:0 0 540px">
-            <div class="panel-head"><span data-t="panel.pid">P&amp;ID</span><span class="note" data-bind="schemNote">&mdash;</span></div>
-            <div class="panel-body flush col">
-              <div class="schem-wrap"><svg id="schemSvg" preserveAspectRatio="xMidYMin meet"></svg><div class="faceplate" id="faceplate" role="dialog" hidden></div></div>
-              <div class="legend" data-bind="schemLegend"></div>
-            </div>
+        <div class="opgrid" data-bind="opGrid"></div>
+      </section>
+
+      <!-- ---------- P&ID ---------- -->
+      <section class="view" id="view-pid">
+        <div class="pidgrid">
+          <div class="panel p-pid">
+            <div class="panel-head"><span data-t="panel.pid">P&amp;ID</span><span class="note legend" data-bind="pidLegend"></span></div>
+            <div class="panel-body flush"><div class="schem-wrap"><svg id="schemSvg" viewBox="0 0 920 680" preserveAspectRatio="xMidYMid meet"></svg></div></div>
           </div>
-          <div class="col grow">
-            <div class="panel" style="flex:0 0 auto">
-              <div class="panel-head"><span data-t="panel.process">Process</span><span class="note" data-bind="seqChip"></span></div>
-              <div class="panel-body" data-bind="seqBody"></div>
-            </div>
-            <div class="panel grow">
-              <div class="panel-head" data-t="panel.vac">Pressure / Exhaust / Interlock</div>
-              <div class="panel-body" data-bind="vacBody"></div>
-            </div>
-            <div class="panel" style="flex:0 0 auto" data-bind="devPanel" hidden>
-              <div class="panel-head" data-bind="devPanelHead">&mdash;</div>
-              <div class="panel-body" data-bind="devPanelBody"></div>
-            </div>
-          </div>
-        </div>
-        <div class="row" style="flex:0 0 auto">
-          <div class="panel grow">
-            <div class="panel-head"><span data-t="panel.heater">Heater</span><span class="note" data-bind="tcNote"></span></div>
-            <div class="panel-body tight"><table class="tbl" data-bind="heaterTbl"></table></div>
-          </div>
-          <div class="panel" style="flex:0 0 384px">
-            <div class="panel-head" data-t="panel.mfc">MFC</div>
-            <div class="panel-body tight"><table class="tbl" data-bind="mfcTbl"></table></div>
-          </div>
-        </div>
-        <div class="cmdbar">
-          <button class="btn" data-cmd="pump_start" data-t="b.pumpStart">Pumping Start</button>
-          <button class="btn" data-cmd="pump_stop" data-t="b.pumpStop">Pumping Stop</button>
-          <button class="btn" data-cmd="vent" data-t="b.vent">Vent</button>
-          <button class="btn" data-cmd="all_close" data-t="b.closeAll">Close All Valves</button>
-          <button class="btn" data-cmd="alarm_ack" data-t="b.ack">Alarm Ack</button>
-          <button class="btn" data-cmd="alarm_reset" data-t="b.reset">Alarm Reset</button>
-          <span class="lockmsg" data-bind="lockMsg"></span>
-          <button class="btn" data-cmd="exit" data-t="b.exit">Exit</button>
+          <div class="col pid-side" data-bind="pidSide"></div>
         </div>
       </section>
 
@@ -278,12 +251,27 @@
       </section>
     </div>
 
+    <!-- ===================== 명령줄 (Operation · P&ID 탭 — 높이 고정) ===================== -->
+    <div class="cmdbar">
+      <button class="btn" data-cmd="pump_start" data-t="b.pumpStart">Pumping Start</button>
+      <button class="btn" data-cmd="pump_stop" data-t="b.pumpStop">Pumping Stop</button>
+      <button class="btn" data-cmd="vent" data-t="b.vent">Vent</button>
+      <button class="btn" data-cmd="all_close" data-t="b.closeAll">Close All Valves</button>
+      <span class="sep"></span>
+      <button class="btn" data-cmd="alarm_ack" data-t="b.ack">Alarm Ack</button>
+      <button class="btn" data-cmd="alarm_reset" data-t="b.reset">Alarm Reset</button>
+      <span class="lockmsg" data-bind="lockMsg"></span>
+      <button class="btn" data-cmd="exit" data-t="b.exit">Exit</button>
+    </div>
+
     <div class="statusbar">
       <span class="dot" data-bind="sbDot"></span>
       <span data-bind="sbText">&mdash;</span>
       <span class="rec" data-bind="sbRec" hidden>&#9679; Data Log Recording</span>
       <span class="right mono" data-bind="sbVer">&mdash;</span>
     </div>
+    <!-- 조작 창 — 배관도 · 밸브 띠 · 히터 줄 · 시작 조건 어디서든 누른 자리 옆에 -->
+    <div class="faceplate" id="faceplate" role="dialog" hidden></div>
   </div>
 </div>
 
@@ -365,12 +353,18 @@
 
 <script src="js/terms.js?v=__ASSET_V__"></script>
 <script src="js/fmt.js?v=__ASSET_V__"></script>
+<script src="js/uimodel.js?v=__ASSET_V__"></script>
 <script src="js/core.js?v=__ASSET_V__"></script>
 <script src="js/decimate.js?v=__ASSET_V__"></script>
 <script src="js/chart.js?v=__ASSET_V__"></script>
 <script src="js/app.js?v=__ASSET_V__"></script>
+<script src="js/pidcheck.js?v=__ASSET_V__"></script>
+<script src="js/views/pid_model.js?v=__ASSET_V__"></script>
 <script src="js/views/schematic.js?v=__ASSET_V__"></script>
+<script src="js/views/panels.js?v=__ASSET_V__"></script>
+<script src="js/views/strip.js?v=__ASSET_V__"></script>
 <script src="js/views/main.js?v=__ASSET_V__"></script>
+<script src="js/views/pid.js?v=__ASSET_V__"></script>
 <script src="js/views/trend.js?v=__ASSET_V__"></script>
 <script src="js/views/alarm.js?v=__ASSET_V__"></script>
 <script src="js/views/setup.js?v=__ASSET_V__"></script>

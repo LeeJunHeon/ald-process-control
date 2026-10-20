@@ -139,10 +139,11 @@ async def _abort(ws):
 
 
 # ===================== PLC 명령 =====================
-async def _send_plc(code: int, ws, args: dict = None, what: str = "", sender=None):
+async def _send_plc(code: int, ws, args: dict = None, what: str = "", sender=None, ok_text=None):
     """사전 판정 → 보내기 → 결과 알림. sender 가 있으면 그것으로 보낸다
     (명령 12·13·14 처럼 잠금 안에서 PLC 값을 새로 읽고 써야 하는 것).
-    sender() → {result, text, refused?}. refused 면 PLC 에 보내지 않은 것이다."""
+    sender() → {result, text, refused?, noop?}. refused 면 PLC 에 보내지 않은 것이다 — noop(같은 요청)이면 info 알림만.
+    ok_text: 결과 0 일 때의 글(없으면 '이름: 처리되었습니다'). 함수면 ok_text(sender 결과) → (글, 수준) 또는 None."""
     name = what or A.CMD_NAMES.get(code, str(code))
     link = state.link
     if not (link and link.connected):
@@ -156,10 +157,15 @@ async def _send_plc(code: int, ws, args: dict = None, what: str = "", sender=Non
         return None
 
     no = link._cmd_no
+    res = {}
     if sender is None:
         result, text = await link.send_command(code, args)
     else:
         res = await sender()
+        if res.get("noop"):
+            # ★ v0.8.0: 같은 요청 — 보내지 않았다(연속 클릭이 명령 여러 번이 되지 않게). 경고 로그는 남기지 않는다
+            await push_notice(f"{name}: {res['text']}", "info", ws)
+            return None
         if res.get("refused"):
             await push_notice(f"{name}: {res['text']}", "warn", ws)
             logger.write("warn", f"명령 {name} 사전 거절 — {res['text']}")
@@ -173,8 +179,13 @@ async def _send_plc(code: int, ws, args: dict = None, what: str = "", sender=Non
         await push_log(f"명령 {name} — {text}", "err")
         return None
     if result == A.RESULT_OK:
-        await push_notice(f"{name}: 처리되었습니다", "ok", ws)
-        await push_log(f"명령 {name} — 처리됨", "ok")
+        got = ok_text(res) if callable(ok_text) else ((ok_text, "ok") if ok_text else None)
+        if got:
+            await push_notice(got[0], got[1], ws)
+            await push_log(f"명령 {name} — {got[0]}", got[1])
+        else:
+            await push_notice(f"{name}: 처리되었습니다", "ok", ws)
+            await push_log(f"명령 {name} — 처리됨", "ok")
     else:
         detail = text
         if result == A.RESULT_INTERLOCK:
@@ -661,8 +672,9 @@ def _manual_allowed():
     return True, ""
 
 
-async def _manual_send(ws, what: str, mutate):
-    """명령 12 — 반영 영역 기준 + 이번 변경. 결과 0 이어도 반영 안 된 비트가 있으면 알린다."""
+async def _manual_send(ws, what: str, mutate, ok_text=None):
+    """명령 12 — 반영 영역 기준 + 이번 변경. 결과 0 이어도 반영 안 된 비트가 있으면 알린다.
+    ★ v0.8.0: 바뀌는 것이 없으면(같은 요청) 보내지 않는다(box['noop'])."""
     link = state.link
     box = {}
 
@@ -671,7 +683,7 @@ async def _manual_send(ws, what: str, mutate):
         box.update(r)
         return r
 
-    res = await _send_plc(A.CMD_MANUAL_APPLY, ws, what=what, sender=sender)
+    res = await _send_plc(A.CMD_MANUAL_APPLY, ws, what=what, sender=sender, ok_text=ok_text)
     if res == A.RESULT_OK and (box.get("lost_valve") or box.get("lost_aux")):
         from .plclink import describe_bits
         msg = (f"{what}: PLC 에 반영되지 않았습니다 — "
@@ -709,10 +721,20 @@ async def _cmd_manual_valve(d, ws):
         return
 
     was = {}
+    from .process import valve_permit_missing
 
     def mutate(cur):
+        # ★ v0.8.0: 판단은 명령 잠금 안에서 새로 읽은 반영 영역(cur)으로 — ① 같은 요청 ② 허가 ③ 동시 열기 순
         bit = 1 << v["bit"]
         was["open"] = bool(cur["valve"] & bit)
+        if want and was["open"]:
+            return None, "이미 열기 요청 상태입니다 — 다시 보내지 않았습니다", True
+        if not want and not was["open"]:
+            return None, "이미 닫힘(요청 없음) — 다시 보내지 않았습니다", True
+        if want and not A.bit(state.link.status[A.D_INTERLOCK], A.ILK_VALVE_OK):
+            # PLC 는 요청을 남기고 출력만 막는다(Pending) — 허가가 생기면(펌핑 등) 운전자 조작 없이 저절로 열린다. 보내지 않는다
+            miss = valve_permit_missing(state.link.status)
+            return None, "Valve Permit 이 없어 보내지 않았습니다 — 필요: " + " · ".join(miss)
         new = (cur["valve"] | bit) if want else (cur["valve"] & ~bit)
         # ★ 전구체와 반응물을 함께 여는 요청은 PC 가 막는다(PLC 도 둘 다 막고 알람을 낸다).
         pre = any(new & (1 << b) for b in DEV.PRECURSOR_VALVE_BITS)
@@ -723,8 +745,25 @@ async def _cmd_manual_valve(d, ws):
         cur["valve"] = new
         return cur, ""
 
-    state.manual_unlock_until = time.monotonic() + MANUAL_UNLOCK_S   # 조작하면 시간 연장
-    res, box = await _manual_send(ws, f"밸브 {tag} {'열기' if want else '닫기'}", mutate)
+    def ok_text(r):
+        """v0.8.0: 결과 글은 되읽은 실제 출력(D00010)으로 — 'PLC 결과 0' 은 받았다는 뜻일 뿐 열렸다는 뜻이 아니다."""
+        out = r.get("valve_out")
+        if out is None or (r.get("lost_valve", 0) >> v["bit"]) & 1:
+            return None                     # 못 읽음 · 반영 안 됨(아래 '반영되지 않았습니다' 경로) — 예전 글
+        on = bool((out >> v["bit"]) & 1)
+        if want and on:
+            return f"{tag} 열림 확인", "ok"
+        if want:
+            miss = valve_permit_missing(state.link.status)
+            why = ("Valve Permit 없음 · 필요: " + " · ".join(miss)) if miss else "잠시 뒤 다시 확인하세요"
+            return f"{tag} 열기 요청됨 — 출력이 아직 꺼져 있습니다({why})", "warn"
+        if not on:
+            return f"{tag} 닫힘 확인", "ok"
+        return f"{tag} 닫기 요청됨 — 출력이 아직 켜져 있습니다", "warn"
+
+    res, box = await _manual_send(ws, f"밸브 {tag} {'열기' if want else '닫기'}", mutate, ok_text=ok_text)
+    if "sent" in box:
+        state.manual_unlock_until = time.monotonic() + MANUAL_UNLOCK_S   # 조작하면 시간 연장(실제로 보낸 뒤에만)
     if want and res == A.RESULT_OK and was.get("open") is False and not (box.get("lost_valve", 0) >> v["bit"]) & 1:
         from .maintenance import maint
         maint.manual_open(tag)          # v0.7.0(A4): 수동 밸브 열기(닫힘 → 열림) 1 회
@@ -1002,7 +1041,9 @@ async def _cmd_manual_o3(d, ws):
         cur["aux"] &= ~(1 << A.AUX_O3_GEN)
         return cur, ""
 
-    res, _ = await _manual_send(ws, "O3 발생기 끄기", off_mutate)
+    res, box = await _manual_send(ws, "O3 발생기 끄기", off_mutate)
+    if box.get("noop") and ((box.get("before") or {}).get("aux", 0) & O3_LINE_BITS) and not state.o3_off_at:
+        res = A.RESULT_OK                   # ★ v0.8.0: 발생기는 이미 꺼짐(보내지 않음) — 남은 바이패스 라인은 지연 뒤 닫는다
     if res != A.RESULT_OK:
         return
     delay = float((state.cfg.get("process") or {}).get("o3_off_delay_s") or 10)
