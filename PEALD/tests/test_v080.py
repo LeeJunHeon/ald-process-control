@@ -922,9 +922,20 @@ async def _page80(port, width, height, theme=None, spy=False):
     return pw, b, pg, errors
 
 
-# v0.8.1: 표 머리 th 좌표도 — 열 자리가 값 · 상태와 상관없이 그대로인지
-_BOXES = """() => [...document.querySelectorAll('.view.on .panel, #strip .cell, .cmdbar, .view.on .tbl th')].map(e => {
-  const r = e.getBoundingClientRect(); return [e.className, Math.round(r.x), Math.round(r.y), Math.round(r.width), Math.round(r.height)]; })"""
+# v0.8.1: 표 머리 th 좌표도 — 열 자리가 값 · 상태와 상관없이 그대로인지.
+#   이름표는 고정 이름만(띠 칸 c- · 칸 p- 클래스 · cmdbar · 표 머리는 그 칸의 p- + 글자) — 상태와 함께 붙고 떨어지는
+#   클래스(attn · dimmed · dense …)는 보지 않는다. 같은 이름이 둘 이상이면 문서 순서 그대로(목록 순서도 비교된다)
+_BOXES = """() => {
+  const fix = (e, pre) => [...e.classList].filter(c => c.indexOf(pre) === 0).join(' ');
+  const tag = e => {
+    if (e.matches('#strip .cell')) return fix(e, 'c-');
+    if (e.matches('.cmdbar')) return 'cmdbar';
+    if (e.tagName === 'TH') { const p = e.closest('.panel'); return (p ? fix(p, 'p-') : '') + ' ' + e.textContent.trim(); }
+    return fix(e, 'p-') || 'panel';
+  };
+  return [...document.querySelectorAll('.view.on .panel, #strip .cell, .cmdbar, .view.on .tbl th')].map(e => {
+    const r = e.getBoundingClientRect(); return [tag(e), Math.round(r.x), Math.round(r.y), Math.round(r.width), Math.round(r.height)]; });
+}"""
 _FITS = """() => [...document.querySelectorAll('.view.on .panel-body, .view.on .panel, #strip .cell')].filter(e =>
   e.scrollHeight > e.clientHeight + 1 || e.scrollWidth > e.clientWidth + 1).map(e => e.className)
   .concat([...document.querySelectorAll('#strip .kpi:not(.name), .lamp, .vt .vtag, .vt .vval, .sct b, .view.on .tbl th, ' +
@@ -1055,6 +1066,39 @@ async def test_browser_fixed_cells_fit_and_do_not_move(served80, width, height, 
             assert "200.0 / 200.0 g/Nm3" in big["seen"] and "200.0 g/Nm3" in big["seen"]
         await asyncio.sleep(0.5)
         assert not errors, errors                                                # ⑧ 콘솔 오류 0
+    finally:
+        await b.close()
+        await pw.stop()
+
+
+async def test_browser_box_tags_ignore_state_classes(served80):
+    """v0.8.1 시험 고침: 칸 상자 이름표가 상태 클래스(attn · dimmed)에 흔들리지 않는다 — 같은 evaluate 안에서
+    재고 · 붙이고 · 다시 재고 · 떼어 원래대로"""
+    pw, b, pg, errors = await _page80(served80, 960, 1000)
+    try:
+        assert await pg.evaluate("() => document.documentElement.getAttribute('data-layout')") == "narrow"
+        await pg.evaluate("() => core.setTab('main')")
+        await asyncio.sleep(0.4)
+        r = await pg.evaluate("""() => {
+          const boxes = """ + _BOXES + """;
+          const alm = document.querySelector('#strip .c-alm'), st = document.querySelector('.view.on .p-start');
+          const had = [alm.classList.contains('attn'), st.classList.contains('dimmed')];
+          const a = boxes();
+          alm.classList.add('attn'); st.classList.add('dimmed');
+          const marked = [alm.classList.contains('attn'), st.classList.contains('dimmed')];
+          const b = boxes();
+          alm.classList.toggle('attn', had[0]); st.classList.toggle('dimmed', had[1]);
+          return { a: a, b: b, marked: marked, n: a.length,
+                   tags: a.map(x => x[0]), back: [alm.classList.contains('attn'), st.classList.contains('dimmed')], had: had };
+        }""")
+        assert r["marked"] == [True, True]                                       # 정말 붙여 보고 쟀다
+        assert r["b"] == r["a"], (r["a"], r["b"])
+        assert r["back"] == r["had"]                                             # 원래대로
+        tags = r["tags"]
+        assert "c-alm" in tags and "p-start" in tags and "cmdbar" in tags, tags
+        assert any(t.startswith("p-heater ") for t in tags), tags                # 표 머리 = 칸 p- + 글자
+        assert not any("attn" in t or "dimmed" in t or "dense" in t for t in tags), tags
+        assert not errors, errors
     finally:
         await b.close()
         await pw.stop()
