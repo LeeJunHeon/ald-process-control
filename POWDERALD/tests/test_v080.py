@@ -191,13 +191,15 @@ def test_strip_model_cases(struct):
     p = lambda k: out[k]["proc"]  # noqa: E731
     assert p("proc_none")["text"] == "No recipe selected" and p("proc_none")["dim"] is True
     assert p("proc_run")["text"] == "R · No. 2" and abs(p("proc_run")["bar"] - 0.75) < 1e-9 and p("proc_run")["barLvl"] == "ok"
-    assert p("proc_run")["sub"] == "Cycle 3 / 10 · Remaining 00:00:25"
-    assert p("proc_paused")["sub"].startswith("Paused · ") and p("proc_paused")["barLvl"] == "warn"
+    assert p("proc_run")["sub"] == "Cycle 3/10 · 00:00:25 left"                       # v0.8.1: 짧게(좁은 칸에 다 들어가게)
+    # v0.8.1: 일시정지는 앞말 없이 색(warn)으로만 — DEVICE STATE 큰 글과 막대 색이 이미 말한다
+    assert p("proc_paused")["sub"] == "Cycle 1/2 · 00:00:00 left" and p("proc_paused")["subLvl"] == "warn"
+    assert p("proc_paused")["barLvl"] == "warn"
     assert p("proc_flow")["sub"] == "베이스 압력 대기 중" and p("proc_flow")["subLvl"] == "warn"
     assert p("proc_last")["last"] is True and p("proc_last")["subLvl"] == "warn"
     pr = lambda k: out[k]["pr"]  # noqa: E731
     assert pr("idle")["text"] == "759.60" and pr("idle")["unconf"] is True
-    assert pr("base_bad")["sub"] == "Base 5.0E-2 Torr · not reached" and pr("base_bad")["subLvl"] == "warn"
+    assert pr("base_bad")["sub"] == "Base 5.0E-2 · not reached" and pr("base_bad")["subLvl"] == "warn"   # 단위는 윗줄
     assert pr("cm_run")["sub"].startswith("In process") and "CM 0.450" in pr("cm_run")["sub"]
     assert ("PCV 40 %" in pr("cm_run")["sub"]) is bool(struct["device"]["has_pcv"])
     ex = lambda k: [(x["text"], x["lvl"]) for x in out[k]["exh"]]  # noqa: E731
@@ -255,7 +257,9 @@ def test_start_slots_fixed_ten(struct):
     assert icons("id")[:2] == ["ok", "no"] and icons("id")[2:] == ["unknown"] * 8
     assert out["id"]["items"][2]["text"] == "Device ID 를 먼저 맞추세요"
     assert icons("base")[6] == "wait" and out["base"]["summary"]["text"] == "Ready"          # base 는 막지 않는다
-    assert out["base"]["items"][6]["text"] == "759.60 → 5.0E-2 Torr · 시작 뒤 대기"
+    # v0.8.1: 자리 안 짧은 글은 '현재 → 목표'(노란 시계 아이콘이 '시작 뒤 대기'), 긴 글은 title
+    assert out["base"]["items"][6]["text"] == "759.60 → 5.0E-2"
+    assert "759.60 → 5.0E-2 Torr · 시작 뒤 대기" in out["base"]["items"][6]["title"]
     assert icons("leak")[2] == "no" and out["leak"]["summary"] == {"text": "Not ready · 1", "lvl": "alarm"}
     assert icons("heater")[8] == "no"
     if not rf:
@@ -515,7 +519,7 @@ def test_faceplate_o3_rf_pump_vent_rules():
           console.log(JSON.stringify(S.map(s => { const m = F.model('o3', 'O3', s, false); return [on(m), m.why]; })));''')
         assert o[0] == [True, ""], o                                                # ★ O3 Permit 으로 막지 않는다
         assert o[1][0] is False and o[1][1] == "O3 라인이 이미 켜져 있습니다"
-        assert o[2][0] is False
+        assert o[2] == [True, ""], o           # v0.8.1: PLC 설정값 0 이어도 ON 은 살아 있다(입력 칸 값으로 보낸다)
     else:
         bit = next(k["bit"] for k in DEV.INTERLOCKS if k["tag"] == "RF Permit")
         r = _fp(r'''
@@ -890,7 +894,13 @@ def served80(cfg, tmp_path):
         state.sim = None
 
 
-async def _page80(port, width, height, theme=None):
+# v0.8.1: 보낸 명령을 센다(막힌 단추에 JS click() 은 아무 일도 안 해 시험이 저절로 통과하던 것 — 실제 보낸 수로 본다)
+_SEND_SPY = """(() => { const o = WebSocket.prototype.send; window.__sent = [];
+  WebSocket.prototype.send = function (x) { try { window.__sent.push(JSON.parse(x).cmd); } catch (e) { /* 아님 */ } return o.call(this, x); };
+})();"""
+
+
+async def _page80(port, width, height, theme=None, spy=False):
     pw_mod = pytest.importorskip("playwright.async_api")
     pw = await pw_mod.async_playwright().start()
     try:
@@ -902,6 +912,8 @@ async def _page80(port, width, height, theme=None):
     errors = []
     pg.on("console", lambda m: errors.append(m.text) if m.type == "error" else None)
     pg.on("pageerror", lambda e: errors.append(str(e)))
+    if spy:
+        await pg.add_init_script(_SEND_SPY)
     await pg.goto(f"http://127.0.0.1:{port}/")
     await pg.add_style_tag(content="#alarmModal { display: none !important; }")
     await pg.wait_for_function("() => window.core && core.state && core.plcOk()", timeout=30000)
@@ -910,12 +922,102 @@ async def _page80(port, width, height, theme=None):
     return pw, b, pg, errors
 
 
-_BOXES = """() => [...document.querySelectorAll('.view.on .panel, #strip .cell, .cmdbar')].map(e => {
+# v0.8.1: 표 머리 th 좌표도 — 열 자리가 값 · 상태와 상관없이 그대로인지
+_BOXES = """() => [...document.querySelectorAll('.view.on .panel, #strip .cell, .cmdbar, .view.on .tbl th')].map(e => {
   const r = e.getBoundingClientRect(); return [e.className, Math.round(r.x), Math.round(r.y), Math.round(r.width), Math.round(r.height)]; })"""
 _FITS = """() => [...document.querySelectorAll('.view.on .panel-body, .view.on .panel, #strip .cell')].filter(e =>
   e.scrollHeight > e.clientHeight + 1 || e.scrollWidth > e.clientWidth + 1).map(e => e.className)
-  .concat([...document.querySelectorAll('#strip .kpi:not(.name), .lamp, .vt .vtag, .sct b')].filter(e =>
-  e.scrollWidth > e.clientWidth + 1).map(e => 'clip ' + e.textContent))"""
+  .concat([...document.querySelectorAll('#strip .kpi:not(.name), .lamp, .vt .vtag, .vt .vval, .sct b, .view.on .tbl th, ' +
+  '.view.on .tbl td:not(.nm)')].filter(e => e.scrollWidth > e.clientWidth + 1).map(e => 'clip ' + e.textContent))"""
+
+# v0.8.1(①-b): 띠 '가장 긴 글' — 지금 live 를 복사해 바꾼 가짜 live 로 칠하고 곧바로 잰다(서버 live 가 덮기 전에).
+#   띠는 칸마다 테두리가 있어 칸 상자 기준이다
+_STRIP_LONG = """() => {
+  const S = core.state, base = JSON.parse(JSON.stringify(S.live)), un0 = S.unconfirmed, str = S.structure, bad = [];
+  const bitOf = (list, tag) => ((list || []).filter(x => x.tag === tag)[0] || {}).bit;
+  const ax = t => 1 << bitOf(str.aux, t);
+  const crit = n => Array.from({ length: 12 }, (_, i) => ({ crit: n, name: 'Gas Leak ' + i, since: '10:00:0' + (i % 10), code: 'X' + i }));
+  const run = Object.assign({}, base, { state: { code: 3, name: 'Running' }, seq: { name: 'Step Run' },
+    process: { running: true, recipe: 'R', cycle: 999, block_repeat: 999, total_ms: 360000000, remaining_ms: 359999000 },
+    pressure: { cvg: 1000 }, aux: ax('PMP') | ax('IV-E'), inputs0: 0 });
+  const check = (k) => {
+    document.querySelectorAll('#strip .cell').forEach(c => {
+      if (c.scrollWidth > c.clientWidth + 1 || c.scrollHeight > c.clientHeight + 1) bad.push(k + ' cell ' + c.className);
+    });
+    document.querySelectorAll('#strip .kpi:not(.name), #strip .mini .mv, #strip .mini .mn, #strip .u2 > span, #strip .sn').forEach(e => {
+      if (e.offsetParent && e.scrollWidth > e.clientWidth + 1) bad.push(k + ' clip ' + e.textContent);
+    });
+  };
+  const seen = [];
+  const words = () => [...document.querySelectorAll('#strip .kpi, #strip .mini .mv, #strip .u2 .un:not([hidden]), #strip .ss')]
+    .map(e => e.textContent);
+  S.unconfirmed = ['CVG Pressure'];
+  try {
+    core.applyLive(Object.assign({}, run, { alarms: crit(true) })); check('critical'); seen.push(...words());
+    core.applyLive(Object.assign({}, run, { alarms: crit(false) })); check('warning'); seen.push(...words());
+    core.applyLive(Object.assign({}, base, { plc: Object.assign({}, base.plc, { connected: false, stalled: true }) }));
+    check('stalled'); seen.push(...words());
+    core.setOffline(true); check('offline'); seen.push(...words()); core.setOffline(false);
+  } finally {
+    S.unconfirmed = un0;
+    core.applyLive(base);
+  }
+  return { bad: bad, seen: seen };
+}"""
+
+# v0.8.1(①-c): 표 · 밸브 띠 큰 값 — state 를 복사해 큰 이름 · 풀스케일 · 한계 없음으로 바꾸고 가짜 live 로 칠한 뒤 곧바로 잰다.
+#   글자 상자(Range — 칩이면 칩 상자)가 칸 안쪽(여백 뺀 자리) 안. ★ zoom 이 1 이 아니면 getBoundingClientRect 는 확대된 값,
+#   getComputedStyle 의 여백은 확대 전 값 — 여백에 zoom 을 곱한다. 이름 칸(.nm)은 말줄임만(넘치면 title 이 있어야)
+_BIG = """() => {
+  const S0 = core.state, orig = JSON.parse(JSON.stringify(S0)), bad = [], seen = [];
+  const app = document.getElementById('app'), k = app.getBoundingClientRect().width / app.offsetWidth;
+  const s = JSON.parse(JSON.stringify(S0)), str = s.structure, dev = s.device || {};
+  const bitOf = (list, tag) => ((list || []).filter(x => x.tag === tag)[0] || {}).bit;
+  const gases = ['NH3', 'SiH4', 'Ar/H2', 'NH3'];
+  (str.mfc || []).forEach((m, i) => { m.gas = gases[i % 4]; m.full_scale_sccm = 9999; });
+  const en = (str.heaters || []).filter(h => h.enabled);
+  if (en.length) en[en.length - 1].max_c = null;                       // Limit Unset
+  const H = (str.heaters || []).map(h => ({ sv: 999.9, pv: 999.9, power: true, out_pct: 100, comm_ok: true, alarm: false }));
+  if (en[1]) H[en[1].ch - 1] = Object.assign(H[en[1].ch - 1], { comm_ok: false, power_block: 'x' });   // Comm Lost
+  if (en[2]) H[en[2].ch - 1].alarm = true;                             // Ctrl Alarm
+  if (en[3]) H[en[3].ch - 1].power = false;                            // OFF
+  const bp = bitOf(str.aux, 'BPMP');
+  const small = Object.assign({}, S0.live, { extra: { pcv_pv: 0, pcv_sv: 0, rf_fwd: 0, rf_ref: 0, rf_sv: 0, rf_on: false,
+    o3_pv: 0, o3_sv: 0, o3_unit: 'g/Nm3', o3_on: false }, aux: 0 });
+  const big = Object.assign({}, S0.live, { heaters: H, mfc: (str.mfc || []).map(() => ({ sv: 9999.9, pv: 9999.9 })),
+    extra: { pcv_pv: 100, pcv_sv: 100, rf_fwd: 999.9, rf_ref: 999.9, rf_sv: 999.9, rf_on: true,
+             o3_pv: 200, o3_sv: 200, o3_unit: 'g/Nm3', o3_on: true },
+    aux: bp == null ? (S0.live.aux || 0) : (S0.live.aux || 0) | (1 << bp) });
+  const tiles = () => [...document.querySelectorAll('.view.on .vt')].map(e => { const r = e.getBoundingClientRect(); return [Math.round(r.x), Math.round(r.width)]; });
+  const inner = e => { const r = e.getBoundingClientRect(), cs = getComputedStyle(e);
+    return { l: r.left + parseFloat(cs.paddingLeft) * k, r: r.right - parseFloat(cs.paddingRight) * k }; };
+  try {
+    s.live = small; core.applyState(s);
+    const t0 = tiles();
+    core.applyLive(big);
+    const t1 = tiles();
+    if (JSON.stringify(t0) !== JSON.stringify(t1)) bad.push('tiles moved ' + JSON.stringify([t0, t1]));
+    const vg = document.querySelector('.view.on .vs-groups'), last = [...document.querySelectorAll('.view.on .vt')].pop();
+    if (vg && last && last.getBoundingClientRect().right > inner(vg).r + 0.5) bad.push('strip overflow ' + last.getAttribute('data-vt'));
+    document.querySelectorAll('.view.on .vt.val .vval').forEach(e => { seen.push(e.textContent);
+      if (e.scrollWidth > e.clientWidth + 1 || e.getBoundingClientRect().right > inner(e.closest('.vt')).r + 0.5) bad.push('tile clip ' + e.textContent); });
+    document.querySelectorAll('.view.on .p-heater .tbl th, .view.on .p-heater .tbl td, .view.on .p-mfc .tbl th, .view.on .p-mfc .tbl td').forEach(c => {
+      if (c.classList.contains('nm')) {
+        if (c.scrollWidth > c.clientWidth + 1 && !(c.title || c.closest('tr').title)) bad.push('name clip without title ' + c.textContent);
+        return;
+      }
+      const box = inner(c), chip = c.querySelector('.chip');
+      let r;
+      if (chip) r = chip.getBoundingClientRect();
+      else { const rg = document.createRange(); rg.selectNodeContents(c); r = rg.getBoundingClientRect(); }
+      seen.push(c.textContent);
+      if (r.width && (r.left < box.l - 0.5 || r.right > box.r + 0.5)) bad.push('cell ' + c.textContent + ' ' + [r.left, r.right, box.l, box.r].map(Math.round));
+    });
+  } finally {
+    core.applyState(orig);
+  }
+  return { bad: bad, seen: seen, dev: dev };
+}"""
 
 
 @pytest.mark.parametrize("width,height,layout", [(960, 1000, "narrow"), (1920, 1032, "wide")])
@@ -931,10 +1033,27 @@ async def test_browser_fixed_cells_fit_and_do_not_move(served80, width, height, 
             for fault in ("emo", "leak", "pump_alm", "plc_stop"):
                 await pg.evaluate("(k) => app.send('sim_fault', {key: k, on: true})", fault)
                 await asyncio.sleep(0.8)
-                assert await pg.evaluate(_BOXES) == before, (tab, fault)      # ② 칸 상자가 1 px 도 안 바뀜
+                assert await pg.evaluate(_BOXES) == before, (tab, fault)      # ② 칸 상자 · 표 머리가 1 px 도 안 바뀜
+                if fault != "leak":                                            # v0.8.1: emo · leak+pump_alm · plc_stop 에서도 ①
+                    assert await pg.evaluate(_FITS) == [], (tab, fault)
             for fault in ("plc_stop", "pump_alm", "leak", "emo"):
                 await pg.evaluate("(k) => app.send('sim_fault', {key: k, on: false})", fault)
             await asyncio.sleep(1.0)
+        await pg.evaluate("() => core.setTab('main')")
+        await asyncio.sleep(0.4)
+        lg = await pg.evaluate(_STRIP_LONG)                                    # ①-b 띠 가장 긴 글
+        assert lg["bad"] == [], lg["bad"]
+        for word in ("PLC Stalled", "Server Lost", "12 Critical", "12 Warning", "Cycle 999/999 · 99:59:59 left",
+                     "Unconfirmed", "ON · No FB", "Opening"):
+            assert word in lg["seen"], (word, lg["seen"])                      # 그 글을 정말 칠해 보고 쟀다
+        big = await pg.evaluate(_BIG)                                          # ①-c 표 · 밸브 띠 큰 값
+        assert big["bad"] == [], big["bad"]
+        assert "ON 100 %" in big["seen"] and "9999.9" in big["seen"] and "Ctrl Alarm" in big["seen"], big["seen"]
+        if big["dev"].get("has_rf"):
+            assert "999.9 / 999.9 W" in big["seen"] and "999.9 W" in big["seen"]
+        if big["dev"].get("has_o3"):
+            assert "200.0 / 200.0 g/Nm3" in big["seen"] and "200.0 g/Nm3" in big["seen"]
+        await asyncio.sleep(0.5)
         assert not errors, errors                                                # ⑧ 콘솔 오류 0
     finally:
         await b.close()
@@ -942,7 +1061,7 @@ async def test_browser_fixed_cells_fit_and_do_not_move(served80, width, height, 
 
 
 async def test_browser_valve_tile_faceplate_and_one_command(served80):
-    pw, b, pg, errors = await _page80(served80, 960, 1000)
+    pw, b, pg, errors = await _page80(served80, 960, 1000, spy=True)
     try:
         await pg.evaluate("() => core.setTab('main')")
         await pg.click('[data-vt="valve:PV-1"]')
@@ -952,6 +1071,10 @@ async def test_browser_valve_tile_faceplate_and_one_command(served80):
           return { shown: !f.hidden, near: Math.abs(a.left - r.right) < 40 || Math.abs(r.left - a.right) < 40 || a.top >= r.bottom - 2,
                    openDisabled: open ? open.disabled : null }; }""")
         assert fp["shown"] and fp["near"] and fp["openDisabled"] is True, fp          # ③ 허가 없음 → Open 막힘
+        # ⑨ v0.8.1: Unlock → 2 s 안에 결과 줄이 잠금 해제 알림 글('기다리는 중' 이 남지 않음)
+        await pg.click('#faceplate [data-fpa="unlock"]')
+        await pg.wait_for_function("() => (document.querySelector('#faceplate [data-fpbind=\"res\"]') || {}).textContent === "
+                                   "'수동 조작 잠금 해제 — 5분 뒤 · 공정이 시작되면 다시 잠깁니다'", timeout=2000)
         await pg.keyboard.press("Escape")
         await pg.evaluate("() => app.send('manual_unlock', {on: true})")
         await pg.evaluate("() => app.send('pump_start')")
@@ -959,9 +1082,20 @@ async def test_browser_valve_tile_faceplate_and_one_command(served80):
         n0 = await pg.evaluate("() => document.querySelectorAll('#toasts .toast').length")
         await pg.click('[data-vt="valve:PV-1"]')
         await pg.wait_for_function("() => !document.querySelector('#faceplate [data-fpa=\"open\"]').disabled", timeout=5000)
-        for _ in range(5):                                                           # ④ 빠르게 5 번
-            await pg.evaluate("() => document.querySelector('#faceplate [data-fpa=\"open\"]').click()")
+        # ④ 빠르게 5 번 — 진짜 마우스로 단추 가운데(막힌 단추에 JS click() 은 아무 일도 안 해 시험이 저절로 통과한다)
+        sim = state.sim
+        n12 = []
+        orig = sim._manual_apply
+        sim._manual_apply = lambda: (n12.append(1), orig())[1]
+        await pg.evaluate("() => { window.__sent.length = 0; }")
+        bb = await pg.locator('#faceplate [data-fpa="open"]').bounding_box()
+        for _ in range(5):
+            await pg.mouse.click(bb["x"] + bb["width"] / 2, bb["y"] + bb["height"] / 2)
+            await asyncio.sleep(0.06)
         await asyncio.sleep(1.5)
+        sim._manual_apply = orig
+        sent = await pg.evaluate("() => window.__sent.filter(c => c === 'manual_valve').length")
+        assert sent == 1 and len(n12) == 1, (sent, n12)                               # 보낸 것 1 · PLC 가 받은 명령 12 도 1
         toasts = await pg.evaluate("() => [...document.querySelectorAll('#toasts .toast')].map(e => e.textContent)")
         assert len([t for t in toasts if "PV-1" in t]) == 1 and len(toasts) <= n0 + 2, toasts
         assert not errors, errors
@@ -978,9 +1112,11 @@ async def test_browser_other_tabs_and_dark_and_resize(served80):
             await asyncio.sleep(0.3)
             over = await pg.evaluate("() => { const v = document.querySelector('.view.on'); return v.scrollWidth > v.clientWidth + 1; }")
             assert not over, tab                                                     # ⑤ 가로 넘침 없음
-        h = await pg.evaluate("() => document.querySelector('.panel.log-min').getBoundingClientRect().height / "
-                              "(document.getElementById('app').getBoundingClientRect().width / document.getElementById('app').offsetWidth)")
-        assert h >= 150 - 1, h
+            if tab == "alarm":                                                       # v0.8.1: 그 탭이 보일 때 잰다(숨은 탭은 0)
+                h = await pg.evaluate("() => document.querySelector('.panel.log-min').getBoundingClientRect().height / "
+                                      "(document.getElementById('app').getBoundingClientRect().width / "
+                                      "document.getElementById('app').offsetWidth)")
+                assert h >= 150 - 1, h
         await pg.evaluate("() => core.setTab('main')")
         assert await pg.evaluate(_FITS) == []                                        # ⑥ 어두운 테마에서도
         before = await pg.evaluate(_BOXES)
@@ -991,6 +1127,45 @@ async def test_browser_other_tabs_and_dark_and_resize(served80):
         await pg.set_viewport_size({"width": 1920, "height": 1032})
         await asyncio.sleep(0.6)
         assert await pg.evaluate(_BOXES) == before
+        # ⑦-b v0.8.1: 같은 배치에서 창 높이만 바뀌어도(운전 탭을 다시 그림) 열린 조작 창은 닫힌다
+        await pg.set_viewport_size({"width": 960, "height": 1000})
+        await asyncio.sleep(0.6)
+        await pg.click('[data-vt="aux:VV"]')
+        assert await pg.evaluate("() => document.getElementById('faceplate').hidden") is False
+        await pg.set_viewport_size({"width": 960, "height": 1100})
+        await asyncio.sleep(0.6)
+        assert await pg.evaluate("() => [document.documentElement.getAttribute('data-layout'), document.getElementById('faceplate').hidden]") == ["narrow", True]
+        assert not errors, errors
+    finally:
+        await b.close()
+        await pw.stop()
+
+
+async def test_browser_o3_line_on_from_start_slot(served80):
+    """⑩ v0.8.1(Powder): 시작 조건 'O3 Line ON' 단추 → o3 조작 창 → 입력 100 → ON 살아 있음(PLC 설정값 0 이어도) → 확인 →
+    O3 Permit 켜짐. 자리 이름 '.sct b' 는 좁은 · 넓은 배치 모두 잘리지 않는다."""
+    if not DEV.HAS_O3:
+        pytest.skip("O3 라인이 없는 장비")
+    clip = "() => [...document.querySelectorAll('.view.on .sct b')].filter(e => e.scrollWidth > e.clientWidth + 1).map(e => e.textContent)"
+    pw, b, pg, errors = await _page80(served80, 960, 1000)
+    try:
+        await pg.evaluate("() => core.setTab('main')")
+        await pg.wait_for_selector(".view.on .sc-o3:not([hidden])", timeout=10000)
+        assert await pg.evaluate(clip) == []                                  # 좁은 — 단추가 보일 때
+        await pg.set_viewport_size({"width": 1920, "height": 1032})
+        await asyncio.sleep(0.6)
+        assert await pg.evaluate("() => document.documentElement.getAttribute('data-layout')") == "wide"
+        await pg.wait_for_selector(".view.on .sc-o3:not([hidden])", timeout=5000)
+        assert await pg.evaluate(clip) == []                                  # 넓은 — 단추가 보일 때
+        await pg.click(".view.on .sc-o3")
+        await pg.wait_for_selector("#faceplate:not([hidden]) [data-fpin='sp']", timeout=3000)
+        await pg.fill("#faceplate [data-fpin='sp']", "100")
+        assert await pg.evaluate("() => !document.querySelector('#faceplate [data-fpa=\"on\"]').disabled")
+        await pg.click('#faceplate [data-fpa="on"]')
+        await pg.click("#confirmModal [data-cf='ok']")
+        bit = next(k["bit"] for k in DEV.INTERLOCKS if k["tag"] == "O3 Permit")
+        await pg.wait_for_function("(b) => ((((core.state.live || {}).interlock) || 0) >> b) & 1", arg=bit, timeout=60000)
+        await pg.keyboard.press("Escape")
         assert not errors, errors
     finally:
         await b.close()

@@ -15,6 +15,8 @@
  * ★ v0.8.0: 밸브 Open 은 Valve Permit 이 있어야(없으면 서버도 보내지 않는다 — 허가가 생길 때 저절로 열리는 Pending 을 만들지
  *   않게). 이미 요청 · 열림이면 Open 막힘, Close 는 요청이나 출력이 있을 때만. 이미 그 상태인 펌핑 · 벤트는 막힘.
  *   Powder O3 ON 은 O3 Permit 으로 막지 않는다(ON 이 그 허가를 만드는 순서다 — 바이패스 펌프 → IV-B → 5 s → 허가 → 발생기).
+ *   v0.8.1: PLC 설정값(o3_sv)으로도 막지 않는다 — ON 은 입력 칸 값으로 보낸다(RF 와 같은 규칙, 비었거나 0 이면 '값을 넣으세요').
+ * ★ v0.8.1: 응답(done)이 왔는데 그 rid 의 알림이 없었으면 결과 줄의 '기다리는 중' 을 비운다.
  * ★ v0.8.0: 결과는 보낸 명령의 요청 번호(rid)가 같은 알림만 결과 줄에. 응답(done)이 올 때까지(최대 8 s) 단추를 모두 막는다.
  * ★ 한 번에 하나. 바깥을 누르거나 Esc · 탭 바꿈 · 배치 바꿈에 닫힌다. 값은 실시간(입력 칸은 다시 만들지 않는다).
  * ★ model · command 는 DOM 없는 순수 함수 — 시험은 node 로 부른다.
@@ -134,24 +136,25 @@
       m.rows.push([T_('v.actual'), conn ? num(eo.o3_pv, function (x) { return F.num(x, 1); }) + ' ' + (eo.o3_unit || '') : D]);
       m.rows.push([T_('v.setpoint'), conn ? num(eo.o3_sv, function (x) { return F.num(x, 1); }) + ' ' + (eo.o3_unit || '') : D]);
       m.rows.push([T_('v.generator'), conn ? (am.O3GEN ? T_('s.on') : T_('s.off')) : D]);
-      m.rows.push([T_('eq.bypassPump'), conn ? (am.BPMP ? T_('s.on') : T_('s.off')) + ' · ' +
-        (bpRun.bit != null && bit(t.inputs1, bpRun.bit) ? T_('s.feedbackOk') : T_('s.noFeedback')) : D]);
+      // v0.8.1: 꺼진 펌프를 이상처럼 보이지 않게 — 출력 꺼짐 'OFF' · 켜짐 + 운전 피드백 'ON' · 켜짐 + 피드백 없음 'ON · No Feedback'
+      m.rows.push([T_('eq.bypassPump'), !conn ? D : !am.BPMP ? T_('s.off')
+        : (bpRun.bit != null && bit(t.inputs1, bpRun.bit)) ? T_('s.on') : T_('s.on') + ' · ' + T_('s.noFeedback')]);
       m.rows.push(['IV-B', conn ? (am['IV-B'] ? T_('s.open') : T_('s.closed')) : D]);
       if (op) m.rows.push(['O3 Permit', conn ? (bit(t.interlock, op.bit) ? T_('s.yes') : T_('s.no')) : D]);
       m.rows.push([T_('v.offDelay'), conn && mo.o3_off_left_s > 0 ? mo.o3_off_left_s + ' s' : D]);
-      m.note = 'Line ON = 바이패스 펌프 → IV-B → 5 s 뒤 O3 Permit → 발생기 순서';
-      var hasSv = conn && eo.o3_sv > 0;
+      m.note = 'Line ON = 바이패스 펌프 → IV-B → 5 s 뒤 O3 Permit → 발생기 순서 · ON 은 입력한 Setpoint 로 켭니다';
       if (lineOn) extraWhy = 'O3 라인이 이미 켜져 있습니다';
-      else if (!hasSv) extraWhy = 'O3 Setpoint 를 넣고 Apply 한 뒤 ON — 0 이면 발생기가 켜져도 O3 가 나오지 않습니다';
       m.inputs.push({ id: 'sp', label: T_('v.setpoint'), unit: eo.o3_unit || '', step: 0.1, off: !!block });
       btn('apply', T_('b.apply'), true);
-      btn('on', T_('b.on'), !lineOn && hasSv);         // ★ O3 Permit 으로 막지 않는다(ON 이 그 허가를 만든다)
+      // ★ O3 Permit 으로도, PLC 설정값(o3_sv)으로도 막지 않는다 — ON 이 허가를 만들고, 값은 입력 칸 것을 보낸다
+      btn('on', T_('b.on'), !lineOn);
       btn('off', T_('b.off'), true);
     } else if (kind === 'pump') {
       var ap = auxMap(str, t, conn);
       m.title = dev.has_o3 ? T_('eq.mainPump') : T_('eq.dryPump');
       m.rows.push([T_('v.status'), conn ? (ap['PMP'] ? T_('s.on') : T_('s.off')) : D]);
-      m.rows.push(['Feedback', conn ? (bit(t.inputs0, 7) ? T_('s.feedbackOk') : T_('s.noFeedback')) : D]);
+      // v0.8.1: 펌프 출력이 꺼져 있으면 피드백은 '—'(꺼진 것을 이상처럼 보이지 않게)
+      m.rows.push(['Feedback', !conn || !ap['PMP'] ? D : bit(t.inputs0, 7) ? T_('s.feedbackOk') : T_('s.noFeedback')]);
       m.rows.push(['IV-E', conn ? (ap['IV-E'] ? T_('s.open') : T_('s.closed')) : D]);
       m.rows.push(['CVG', conn ? num((t.pressure || {}).cvg, F.torr) + ' Torr' : D]);
       var ps = conn ? w.UI.alreadyWhy('pump_start', str, t) : '', pt = conn ? w.UI.alreadyWhy('pump_stop', str, t) : '';
@@ -361,7 +364,7 @@
       var rid = w.Ops.send(c.pair);
       if (!rid) return;
       w.core.busy.start(busyKey(here.kind, here.key, a), rid);
-      if (cur === here) { cur.rid = rid; result('보냈습니다 — 응답을 기다리는 중', ''); paint(); }
+      if (cur === here) { cur.rid = rid; cur.noticed = false; result('보냈습니다 — 응답을 기다리는 중', ''); paint(); }
     };
     var val = inp ? Number(inp.value) : 0;
     if (c.confirm === 'heater') {
@@ -396,12 +399,15 @@
   /** 서버 알림 — 이 창에서 보낸 명령과 요청 번호(rid)가 같은 알림만 결과 줄에(시각으로 고르지 않는다) */
   function onNotice(msg) {
     if (!cur || !cur.rid || !msg || msg.rid !== cur.rid) return;
+    cur.noticed = true;
     result(msg.msg || '', msg.level || '');
   }
 
-  /** 응답 끝(done) — 진행 중 잠금은 core 가 풀었다. 단추를 다시 칠한다 */
+  /** 응답 끝(done) — 진행 중 잠금은 core 가 풀었다. 단추를 다시 칠한다. v0.8.1: 그 rid 의 알림이 오지 않았으면
+   *  결과 줄('기다리는 중')을 비운다 — 알림 없는 명령이 생겨도 '기다리는 중' 이 남지 않게 */
   function onDone(msg) {
     if (!cur || !msg || msg.rid !== cur.rid) return;
+    if (!cur.noticed) result('', '');
     paint();
   }
 

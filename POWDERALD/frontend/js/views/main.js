@@ -2,7 +2,10 @@
  * views/main.js — 운전 탭 (v0.8.0 다시 짬).
  *
  *   좁은 배치(960×1000 기준): [Process | Start Conditions] · Interlock · Input · Valves · [Heater | MFC…]
- *   넓은 배치(1600×840 기준): 왼쪽 [Process · Valves · Heater | MFC…] · 오른쪽 [Start Conditions · Interlock · Input · Recent Events]
+ *   넓은 배치(1600×840 기준): 왼쪽 [Process · Valves · Heater] · 오른쪽 [Start Conditions · Interlock · Input · MFC…]
+ *     (v0.8.1: 표 열을 고정하니 Heater | MFC 를 나란히 둘 폭이 없다 — Recent Events 는 P&ID 탭 넓은 배치와 Alarm/Log 탭에)
+ * ★ v0.8.1: Heater · MFC 표는 table-layout fixed + colgroup — 이름 열만 남는 폭을 받고(말줄임 · title), 값 열은 가장 긴
+ *   값 · 칩(넓은 대체 글꼴로 잼)이 들어가는 px 고정. 값이 바뀌어도, 끊겨도('—') 열 자리가 그대로다.
  *   명령줄 · 상단 상태 띠는 #app 에(이 탭과 P&ID 탭에서만 보인다).
  *
  * ★ 칸 크기 · 자리는 배치와 장비 구조로만 정해진다(고정 격자) — 값이 바뀌어도, 알람이 몇 개든, 끊겨도 어느 칸의 상자도
@@ -32,6 +35,12 @@
   var WIDE = { proc: 200, start: 132, valves: 64, annCols: 6, chips: 7 };
   var LAMP_H = 22, LAMP_GAP = 4, PANEL_HEAD = 30, PANEL_PAD = 12, BORDER = 2;
   var HROW = 26, HROW_DENSE = 22, THEAD = 24;
+  // v0.8.1: 표 열 폭(px, 여백 포함) — 이름 열(Channel · MFC)은 나머지. 근거는 README(v0.8.0 절 — 표 열 고정)
+  var HEATER_COLS = [null, 72, 58, 108, 108];          // Channel | Setpoint | Actual | Power | Status
+  var MFC_COLS = [null, 50, 82, 72, 62];               // MFC | Gas | Full Scale | Setpoint | Actual
+  function colgroup(ws) {
+    return '<colgroup>' + ws.map(function (x) { return x == null ? '<col>' : '<col style="width:' + x + 'px">'; }).join('') + '</colgroup>';
+  }
 
   /** 램프판 칸 높이 = 머리 + 줄 수 × 22 + 사이 4 + 여백(장비 구조 · 열 수로만) */
   function annH(s, cols) {
@@ -41,7 +50,7 @@
   function viewsH() { var b = core.box; return (b ? b.h : 1000) - FRAME_H - VIEW_PAD; }
 
   var builtSig = '';
-  var parts = { process: [], start: [], ann: [], valves: [], events: [] };
+  var parts = { process: [], start: [], ann: [], valves: [] };
 
   /* ===================== render ===================== */
   function render(s) {
@@ -63,37 +72,43 @@
     var cols = wide ? WIDE.annCols : NARROW.annCols, ah = annH(s, cols);
     var dev = s.device || {};
     var mfcHead = dev.has_o3 ? T('panel.mfcO3') : dev.has_rf ? T('panel.mfcRf') : T('panel.mfc');
-    var tables = '<div class="oprow r4" data-bind="opTables">' +
-      '<div class="panel p-heater"><div class="panel-head"><span data-t="panel.heater">' + T('panel.heater') + '</span>' +
-      '<span class="note" data-bind="tcNote"></span></div><div class="panel-body tight"><table class="tbl" data-bind="heaterTbl"></table></div></div>' +
-      '<div class="panel p-mfc"><div class="panel-head">' + mfcHead + '</div>' +
-      '<div class="panel-body tight"><table class="tbl" data-bind="mfcTbl"></table></div></div></div>';
-    var bottom;
+    var heaterP = '<div class="panel p-heater"><div class="panel-head"><span data-t="panel.heater">' + T('panel.heater') + '</span>' +
+      '<span class="note" data-bind="tcNote"></span></div><div class="panel-body tight"><table class="tbl fixed" data-bind="heaterTbl"></table></div></div>';
+    var mfcP = '<div class="panel p-mfc"><div class="panel-head">' + mfcHead + '</div>' +
+      '<div class="panel-body tight"><table class="tbl fixed" data-bind="mfcTbl"></table></div></div>';
+    var hRoom, mRoom;
     if (wide) {
       grid.className = 'opgrid wide';
       grid.style.setProperty('--ann-h', ah + 'px');
       grid.innerHTML = '<div class="opcol cl">' + panel('p-proc', ' data-part="process"') + panel('p-valves', ' data-part="valves"') +
-        tables + '</div><div class="opcol cr">' + panel('p-start', ' data-part="start"') + panel('p-ann', ' data-part="ann"') +
-        panel('p-events', ' data-part="events"') + '</div>';
-      bottom = vh - WIDE.proc - WIDE.valves - 2 * GAP;
+        heaterP + '</div><div class="opcol cr">' + panel('p-start', ' data-part="start"') + panel('p-ann', ' data-part="ann"') +
+        mfcP + '</div>';
+      hRoom = vh - WIDE.proc - WIDE.valves - 2 * GAP;
+      mRoom = vh - WIDE.start - ah - 2 * GAP;
     } else {
       grid.className = 'opgrid narrow';
       grid.style.setProperty('--ann-h', ah + 'px');
       grid.innerHTML = '<div class="oprow r1">' + panel('p-proc', ' data-part="process"') + panel('p-start', ' data-part="start"') +
-        '</div>' + panel('p-ann', ' data-part="ann"') + panel('p-valves', ' data-part="valves"') + tables;
-      bottom = vh - NARROW.r1 - ah - NARROW.valves - 3 * GAP;
+        '</div>' + panel('p-ann', ' data-part="ann"') + panel('p-valves', ' data-part="valves"') +
+        '<div class="oprow r4">' + heaterP + mfcP + '</div>';
+      hRoom = mRoom = vh - NARROW.r1 - ah - NARROW.valves - 3 * GAP;
     }
-    parts = { process: [], start: [], ann: [], valves: [], events: [] };
+    parts = { process: [], start: [], ann: [], valves: [] };
     Array.prototype.forEach.call(grid.querySelectorAll('[data-part]'), function (root) {
       var k = root.getAttribute('data-part');
       if (k === 'process') processPart.build(root, s, core.layout);
       else if (k === 'ann') w.Panels.ann.build(root, s, { cols: cols });
-      else if (k === 'events') w.Panels.events.build(root, s, { rows: Math.floor((vh - WIDE.start - ah - 2 * GAP - PANEL_HEAD - BORDER - 8) / 25) });
       else w.Panels[k].build(root, s);
       parts[k].push(root);
     });
-    buildHeaters(s, bottom);
-    buildMfc(s);
+    buildHeaters(s, hRoom);
+    buildMfc(s, mRoom);
+  }
+
+  /** 기본 설정에서 넘치지 않게 — 줄을 더 켜 넘치면 줄 높이를 22 로(구조가 바뀔 때 한 번). 두 표 같은 규칙 */
+  function dense(tbl, room, rows) {
+    var on = room > 0 && PANEL_HEAD + BORDER + 8 + THEAD + rows * HROW > room;
+    tbl.classList.toggle('dense', on);
   }
 
   /* ---------- 히터 표 ---------- */
@@ -102,19 +117,19 @@
     if (!tbl) return;
     var heaters = (s.structure || {}).heaters || [];
     var n = heaters.filter(function (h) { return h.enabled; }).length;
-    // 기본 설정(PEALD 6 · Powder 5 채널)에서 넘치지 않게 — 채널을 더 켜 넘치면 줄 높이를 22 로(구조가 바뀔 때 한 번)
-    var dense = room > 0 && PANEL_HEAD + BORDER + 8 + THEAD + n * HROW > room;
-    tbl.classList.toggle('dense', dense);
-    var html = '<thead><tr><th>' + T('v.channel') + '</th><th>' + T('v.setpoint') + ' ℃</th><th>' + T('v.actual') +
-      ' ℃</th><th>' + T('v.output') + '</th><th>' + T('v.power') + '</th><th>' + T('v.status') + '</th></tr></thead><tbody>';
+    // 기본 설정(PEALD 6 · Powder 5 채널)에서 넘치지 않게 — 채널을 더 켜 넘치면 줄 높이를 22 로
+    dense(tbl, room, n);
+    // v0.8.1: 단위 ℃ 는 칸 이름(Heater (℃))에 — 머리에 붙이면 좁은 배치 이름 열이 남지 않는다. Output 열은 Power 칩에 합친다
+    var html = colgroup(HEATER_COLS) + '<thead><tr><th>' + T('v.channel') + '</th><th>' + T('v.setpoint') + '</th><th>' +
+      T('v.actual') + '</th><th title="전원(ON/OFF) · 출력(MV — 온도조절기가 내는 출력 %)">' + T('v.power') + '</th><th>' +
+      T('v.status') + '</th></tr></thead><tbody>';
     heaters.forEach(function (h) {
       if (!h.enabled) return;   // 사용 채널만 보여 준다
       html += '<tr data-hrow="' + h.ch + '" data-fp="heater:' + h.ch + '" tabindex="0" role="button" title="CH' + core.esc(h.ch) +
         ' ' + core.esc(h.name) + ' — 누르면 조작 창">' +
-        '<td>CH' + core.esc(h.ch) + ' ' + core.esc(h.name) + '</td>' +
+        '<td class="nm">CH' + core.esc(h.ch) + ' ' + core.esc(h.name) + '</td>' +
         '<td class="sv" data-hsv="' + h.ch + '">—</td>' +
         '<td class="pv" data-hpv="' + h.ch + '">—</td>' +
-        '<td data-hout="' + h.ch + '">—</td>' +
         '<td data-hpow="' + h.ch + '">—</td>' +
         '<td data-hst="' + h.ch + '"></td></tr>';
     });
@@ -126,33 +141,38 @@
   }
 
   /* ---------- MFC 표 + 장비 전용 줄(PEALD: RF · PCV / Powder: O3) ---------- */
-  function buildMfc(s) {
+  function buildMfc(s, room) {
     var tbl = core.bind('mfcTbl');
     if (!tbl) return;
     var mfc = (s.structure || {}).mfc || [];
     var dev = s.device || {};
-    var html = '<thead><tr><th>MFC</th><th>' + T('v.gas') + '</th><th>' + T('v.fullScale') + '</th><th>' +
+    var html = colgroup(MFC_COLS) + '<thead><tr><th>MFC</th><th>' + T('v.gas') + '</th><th>' + T('v.fullScale') + '</th><th>' +
       T('v.setpoint') + '</th><th>' + T('v.actual') + '</th></tr></thead><tbody>';
     mfc.forEach(function (m) {
       html += '<tr data-fp="mfc:' + core.esc(m.no) + '" tabindex="0" role="button" title="MFC' + core.esc(m.no) + ' ' +
-        core.esc(m.name) + ' — 누르면 조작 창"><td>' + core.esc(m.no) + ' ' + core.esc(m.name) + '</td>' +
-        '<td>' + core.esc(m.gas || fmt.DASH) + '</td>' +
+        core.esc(m.name) + ' — 누르면 조작 창"><td class="nm">' + core.esc(m.no) + ' ' + core.esc(m.name) + '</td>' +
+        '<td class="nm" title="' + core.esc(m.gas || '') + '">' + core.esc(m.gas || fmt.DASH) + '</td>' +
         '<td>' + (m.full_scale_sccm == null
           ? '<span class="unconf">Unset</span>'
           : core.esc(fmt.int(m.full_scale_sccm)) + '<span class="unit">sccm</span>') + '</td>' +
         '<td class="sv" data-msv="' + m.no + '">—</td>' +
         '<td class="pv" data-mpv="' + m.no + '">—</td></tr>';
     });
-    var xrow = function (key, name, fp) {
-      return '<tr class="xrow"' + (fp ? ' data-fp="' + fp + '" tabindex="0" role="button"' : '') + '><td colspan="3">' + name +
-        '</td><td colspan="2" class="pv" data-mx="' + key + '">—</td></tr>';
+    // 장비 전용 줄 — 이름 colspan 2(이름 + Gas) · 값 colspan 3(Full Scale + Setpoint + Actual). 값은 단위까지
+    var xn = 0;
+    var xrow = function (key, name, fp, title, word) {
+      xn++;
+      return '<tr class="xrow"' + (fp ? ' data-fp="' + fp + '" tabindex="0" role="button"' : '') + ' title="' + core.esc(title || name) + '"' +
+        '><td colspan="2" class="nm">' + name + '</td><td colspan="3" class="' + (word ? 'wv' : 'pv') + '" data-mx="' + key + '">—</td></tr>';
     };
     if (dev.has_rf) html += xrow('rf', 'RF Forward / Reflected', 'rf:RF');
     if (dev.has_pcv) html += xrow('pcv', 'PCV Target / Position', 'pcv:PCV');
     if (dev.has_o3) {
-      html += xrow('o3', 'O3 Setpoint / Actual', 'o3:O3') + xrow('o3line', 'Generator · Bypass Pump · IV-B', 'o3:O3') +
+      html += xrow('o3', 'O3 Setpoint / Actual', 'o3:O3') +
+        xrow('o3line', 'Gen · Bypass Pump · IV-B', 'o3:O3', 'O3 Generator · Bypass Pump · IV-B(바이패스 격리 밸브)', true) +
         xrow('o3off', T('v.offDelay'), '');
     }
+    dense(tbl, room, mfc.length + xn);
     core.html(tbl, html + '</tbody>');
   }
 
@@ -191,7 +211,7 @@
     if (!s) return;
     var conn = !!(t.plc && t.plc.connected);
     parts.process.forEach(function (r) { updateProcess(r, t, conn); });
-    ['start', 'ann', 'valves', 'events'].forEach(function (k) {
+    ['start', 'ann', 'valves'].forEach(function (k) {
       parts[k].forEach(function (r) { w.Panels[k].update(r, s, t); });
     });
     updateHeaters(s, t, conn);
@@ -229,8 +249,15 @@
     setIn(root, 'pqGroup', run && p.group ? (p.group_pass || 0) + ' / ' + p.group.repeat : D);
     // v0.4.15: 이어받은 공정은 시작 시각을 모른다 — 경과는 이어받은 뒤부터('+')
     setIn(root, 'pqElapsed', run ? (p.adopted ? '+' : '') + fmt.hms(p.elapsed_s) : D);
-    setIn(root, 'pqRemaining', run && p.total_ms ? fmt.hms((p.remaining_ms || 0) / 1000)
-      : (!run && p.estimate && p.estimate.total_ms ? T('v.estimate') + ' ' + fmt.hms(p.estimate.total_ms / 1000) : D));
+    // v0.8.1: 공정 전 예상 시간은 'Est. ' 앞말 없이 흐린 색(class est)과 툴팁으로 — 앞말이 붙으면 칸에서 잘린다
+    var est = !run && p.estimate && p.estimate.total_ms;
+    setIn(root, 'pqRemaining', run && p.total_ms ? fmt.hms((p.remaining_ms || 0) / 1000) : (est ? fmt.hms(p.estimate.total_ms / 1000) : D));
+    var rv = core.bind('pqRemaining', root);
+    if (rv) {
+      rv.classList.toggle('est', !!est);
+      var rt = est ? T('v.estimate') + ' — 레시피 기준 예상 시간(공정 전)' : '';
+      if (rv.title !== rt) rv.title = rt;
+    }
     setIn(root, 'pqPlannedEnd', run ? (p.eta || D) : D);
 
     var done = (run && p.total_ms) ? (1 - (p.remaining_ms || 0) / p.total_ms) : 0;
@@ -325,16 +352,16 @@
       var h = heaters[def.ch - 1] || {};
       set('[data-hsv="' + def.ch + '"]', conn ? fmt.temp(h.sv) : fmt.DASH);
       set('[data-hpv="' + def.ch + '"]', conn && h.comm_ok ? fmt.temp(h.pv) : fmt.DASH);
-      set('[data-hout="' + def.ch + '"]', conn && h.comm_ok && h.out_pct != null
-        ? fmt.int(h.out_pct) + ' %' : fmt.DASH);
+      // v0.8.1: Power 칩에 출력 % 를 합친다 — 'ON 35 %'(출력은 온도조절기 통신이 될 때만) · 'OFF' · 모름 '—'
       var pw = d.querySelector('[data-hpow="' + def.ch + '"]');
       if (pw) core.html(pw, (!conn || h.power == null) ? fmt.DASH
-        : core.chip(h.power ? T('s.on') : T('s.off'), h.power ? 'ok' : 'off'));
+        : core.chip(h.power ? T('s.on') + (h.comm_ok && h.out_pct != null ? ' ' + fmt.int(h.out_pct) + ' %' : '') : T('s.off'),
+          h.power ? 'ok' : 'off'));
       var st = d.querySelector('[data-hst="' + def.ch + '"]');
       if (!st) return;
       if (!conn) { core.html(st, fmt.DASH); return; }
       if (!h.comm_ok) core.html(st, core.chip(T('s.commLost'), 'stop', h.power_block || ''));
-      else if (h.alarm) core.html(st, core.chip(T('s.ctrlAlarm'), 'stop'));
+      else if (h.alarm) core.html(st, core.chip(T('s.ctrlAlarm'), 'stop', '온도조절기(Controller) 알람'));
       else if (def.max_c == null) core.html(st, core.chip(T('s.limitUnset'), 'warn', '과온 한계가 없어 PLC 소프트 과온 감시가 꺼집니다 — PC 가 설정·전원 켜기를 막습니다'));
       else core.html(st, core.chip(T('s.normal'), 'ok'));
     });

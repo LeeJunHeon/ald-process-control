@@ -126,10 +126,12 @@
       out.proc.barLvl = (p.paused || p.stop_reserved) ? 'warn' : 'ok';
     }
     if (run) {
-      var cyc = 'Cycle ' + (p.cycle || 0) + ' / ' + (p.block_repeat || DASH);
-      var rem = p.total_ms ? 'Remaining ' + f.hms((p.remaining_ms || 0) / 1000) : '';
-      var head = p.adopted ? 'Adopted +' + f.hms(p.elapsed_s) : cyc;
-      out.proc.sub = (p.paused ? 'Paused · ' : '') + [head, rem].filter(Boolean).join(' · ');
+      // ★ v0.8.1: 'Cycle 12/40 · 00:07:57 left' — 좁은 칸에 다 들어가게 짧게. 일시정지 · 정지 예약은 앞말 없이 색(warn)으로만
+      //   (DEVICE STATE 큰 글과 막대 색이 이미 말한다)
+      var cyc = 'Cycle ' + (p.cycle || 0) + '/' + (p.block_repeat || DASH);
+      var rem = p.total_ms ? f.hms((p.remaining_ms || 0) / 1000) + ' left' : '';
+      var head = p.adopted ? 'Adopted' : cyc;
+      out.proc.sub = [head, rem].filter(Boolean).join(' · ');
       out.proc.subLvl = (p.paused || p.stop_reserved) ? 'warn' : '';
     } else if (p.phase && p.phase !== 'idle' && p.message) {
       out.proc.sub = p.message;
@@ -152,7 +154,7 @@
     } else if (conn) {
       var base = find(p.checks, function (c) { return c.key === 'base'; });
       if (base) {
-        out.pr.sub = 'Base ' + f.torr(base.target) + ' Torr · ' + (base.ok ? 'reached' : 'not reached');
+        out.pr.sub = 'Base ' + f.torr(base.target) + ' · ' + (base.ok ? 'reached' : 'not reached');   // 단위는 윗줄(Torr · CVG)
         out.pr.subLvl = base.ok ? '' : 'warn';
       }
       if (pr.cm_installed) out.pr.sub += (out.pr.sub ? ' · ' : '') + 'CM ' + f.torr(pr.cm);
@@ -160,7 +162,7 @@
       out.pr.sub = DOWN[ls] ? DOWN[ls][0] : '';
     }
 
-    /* --- PUMP · EXHAUST · VENT --- */
+    /* --- EXHAUST · VENT (Pump · IV-E · VV) --- */
     var am = auxMap(str, t, conn), i0 = t.inputs0;
     var fb = bit(i0, inBit(str, 'PMP-RUN')), palm = bit(i0, inBit(str, 'PMP-ALM'));
     var lo = bit(i0, inBit(str, 'IVE-O')), lc = bit(i0, inBit(str, 'IVE-C'));
@@ -223,6 +225,14 @@
     return (c && c.detail) || '';
   }
 
+  /** v0.8.1: 자리 안 짧은 글 — 베이스 압력은 '현재 → 목표'(단위 · '시작 뒤 대기' 없음 — 노란 시계 아이콘과 title 이 말한다),
+   *  장비 ID 가 맞으면 읽은 ID(서버 short), 그 밖은 checkDetail. 긴 글은 title · 시작 확인 창(checkDetail) */
+  function slotText(c) {
+    if (c && c.key === 'base' && ('cur' in c || 'target' in c)) { var f = F(); return f.torr(c.cur) + ' → ' + f.torr(c.target); }
+    if (c && c.key === 'device_id' && c.ok && c.short) return c.short;
+    return checkDetail(c);
+  }
+
   /** 시작 조건 자리 — slots(장비 구조 START_SLOTS) 수 · 순서 그대로. progress: live.process,
    *  ctx: { conn, running }. 반환 { items: [{label, icon, text, title, o3btn}], summary: {text, lvl}, dim }.
    *  icon: ok · no · wait(베이스 압력 — 시작 뒤 대기로 채움) · na(그 항목이 없음) · unknown(연결 · 장비 ID 를 모름) */
@@ -257,7 +267,7 @@
       var bad = got.filter(function (x) { return !x.ok; });
       var show = bad[0] || got[0];
       it.icon = !bad.length ? 'ok' : (bad.every(function (x) { return x.key === 'base'; }) ? 'wait' : 'no');
-      it.text = checkDetail(show);
+      it.text = slotText(show);
       it.title = got.map(function (x) { var dd = checkDetail(x); return x.label + (dd ? ' — ' + dd : ''); }).join('\n');
       it.o3btn = it.icon === 'no' && bad.some(function (x) { return x.action === 'o3_on'; });
       return it;

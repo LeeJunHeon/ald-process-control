@@ -7,7 +7,10 @@ PLC 가 서버, 이 프로그램이 클라이언트입니다.
 - 화면: pywebview 창 안의 HTML/CSS/JS (**외부 라이브러리 없음**, 오프라인 전제)
 - 화면 통신: WebSocket 하나 (`/ws`) — 상태의 주인은 서버입니다
 
-> **버전 0.8.0** — 운전 화면 다시 짜기: 창 크기 맞춤(좁은 960×1000 · 넓은 1600×840 두 배치) · 고정 칸 · 상단 상태 띠 ·
+> **버전 0.8.1** — v0.8.0 확인 결과 고치기: 상단 띠 열 최소 폭 · Heater/MFC 표 열 고정(큰 값 기준 · Heater Power + Output) ·
+> 밸브 띠 값 타일 고정 폭 · 넓은 배치 표 자리 · 시작 조건 자리 글 · 조작 창 결과 줄 · O3 ON · 공정 중 시작 조건 계산 보호 ·
+> 브라우저 시험 보강 — 아래 'v0.8.0' 절(v0.8.1 표시).
+> 버전 0.8.0 — 운전 화면 다시 짜기: 창 크기 맞춤(좁은 960×1000 · 넓은 1600×840 두 배치) · 고정 칸 · 상단 상태 띠 ·
 > P&ID 탭(포트 기반 배관도 + 검사기) · 명령 rid/done · 진행 중 잠금 · 같은 요청 무시 · 허가 없는 밸브 열기 거절 · 알림 합치기 —
 > 아래 '화면에서 지키는 것' 의 'v0.8.0' 절 · '수동 조작' · '화면 ↔ 서버 통신 약속'.
 > 버전 0.7.2 — v0.7.1 검토 반영: 정비 카운터가 공정 끝에서 실제로 세지 않던 것(인자 오류) · 끝 결과 색 · 끝 판정 한
@@ -905,6 +908,9 @@ RF 준비 끔 / RF 알람 / 반사 전력 증가, 온도조절기 국번 1~3 통
 - 명령 1 을 보내기 직전에 `D00028`(합계) · `D00029`(검증 통과) · 표 머리의 레시피 번호를 다시 읽어
   스냅샷과 같을 때만 보냅니다
 - 흐름 안에서 어떤 예외가 나도 단계(phase)를 대기로 되돌리고 로그를 남깁니다
+- ★ v0.8.1: 공정 중 시작 조건은 화면용이다 — `progress()` 는 live(5 Hz)와 데이터 로그 줄이 부르므로 공정 중 그 계산에서
+  예외가 나면 `checks = []` 로 내고 경고는 같은 예외 종류마다 한 실행에 한 번만 남긴다(live · 데이터 로그를 깨지 않게).
+  공정이 아닐 때는 시작 판단이라 예외를 삼키지 않는다
 - 시작 조건은 **서버가 판정**하고 화면은 항목과 현재 값을 받아 그립니다:
   PLC 연결·하트비트 / 장비 상태 / 중대 알람 없음 / 펌프 / 공정 밸브 허가 /
   베이스 압력 / 레시피 검증 / (설정으로 켜면) 히터 안정 / (레시피가 RF 를 쓰면) RF 준비
@@ -1308,6 +1314,8 @@ PLC 가 끊기면 모든 값이 `null`(화면에서 `—`)이고 명령 버튼�
 - 그 연결에 대한 답(`ws` 를 준 `notice`)에는 `rid` 를 붙인다(`connection.CURRENT_RID`). 방송 알림에는 rid 가 없다
 - 화면의 진행 중 잠금(`core.busy` — key `cmd:명령` · `valve:태그` · `heater:채널` · `mfc` · `pcv` · `rf` · `o3` · `unlock` ·
   `leak` · `sim:키`)은 done 으로 풀리고, 8 s 지나면 저절로, 서버 끊김 · 다시 연결 때 모두 풀린다
+- ★ v0.8.1: `manual_unlock` 도 그 연결에 info 알림(rid 붙음) — 켤 때 '수동 조작 잠금 해제 — 5분 뒤 · 공정이 시작되면 다시
+  잠깁니다', 끌 때 '수동 조작 잠금'. 조작 창은 done 이 왔는데 그 rid 의 알림이 없었으면 결과 줄('기다리는 중')을 비운다
 
 ### HTTP
 
@@ -1391,13 +1399,38 @@ HTTP 는 읽기 전용이라 원격 보기에서도 됩니다. 내보내기·폴
 - **칸 크기 규칙**: 운전 · P&ID 탭의 칸 크기 · 자리는 배치와 장비 구조(device.py)로만 정해지는 고정 격자다 — 값이 바뀌어도,
   알람이 몇 개든, 끊겨도 상자가 1 px 도 움직이지 않는다. 묶음 표시('+N OK' · '+N more')는 없다(모든 항목이 늘 보인다).
   상태는 글자 굵기 · 자리가 아니라 색 · 점 · 테두리로만 말한다. 말줄임(…)은 이름 · 문장 칸(레시피 이름 · 알림 · 시작 조건
-  설명)에만, 전체 글은 title. 남는 높이는 Heater | MFC 줄(좁은)과 Recent Events(넓은)가 받는다. 예외는 다른 장비 PLC 의
+  설명)에만, 전체 글은 title. 남는 높이는 Heater 표 · MFC 표가 받는다. 예외는 다른 장비 PLC 의
   빨간 띠 하나. 명령줄은 높이 52 고정, 잠금 문구는 두 줄까지
   - 좁은: [Process | Start Conditions] 270 · Interlock · Input(줄 수 × 22 + 사이 4 + 머리) · Valves 64 · [Heater | MFC…]
-  - 넓은: 왼쪽 [Process 200 · Valves 64 · Heater | MFC…] · 오른쪽 [Start Conditions 132 · Interlock · Input · Recent Events]
-- **상단 상태 띠**(Operation · P&ID 탭, 높이 84): DEVICE STATE · PROCESS · CHAMBER PRESSURE · PUMP · EXHAUST · VENT · ALARM.
+    (v0.8.1: 아래 줄 비율 1.2fr | 1fr)
+  - 넓은(v0.8.1): 왼쪽 [Process 200 · Valves 64 · Heater] · 오른쪽 [Start Conditions 132 · Interlock · Input · MFC…], 열 비율
+    1.15fr | 1fr. 표 열을 고정하면 Heater 약 490 · MFC 약 400 이 필요한데 오른쪽 열(시작 조건 5×2 · 램프판 6 열)은 약 710 아래로
+    줄일 수 없어 둘을 나란히 둘 자리가 없다. Recent Events 는 넓은 Operation 에서 빠진다 — P&ID 탭 넓은 배치의 오른쪽 열에
+    그대로 있고, 전체 기록은 Alarm/Log 탭. 840 기준 Heater 칸 289(6 채널 220 필요) · MFC 칸 225(PEALD 4 + RF + PCV 220 필요)
+- ★ v0.8.1 **글자 폭 기준**: 칸 · 열 폭은 넓은 대체 글꼴로 재서 맞춘다(Windows 의 Segoe UI 보다 약 15 % 넓음 — 거기서 맞으면
+  Windows 에서도 맞는다). 값 칸은 값이 가장 길 때(히터 'ON 100 %' · 'Limit Unset' · 'Comm Lost', MFC 9999.9 · Full Scale 9999,
+  가스 'NH3' · 'SiH4', RF '999.9 / 999.9 W', O3 '200.0 / 200.0 g/Nm3')도 들어가야 한다 — 브라우저 시험이 큰 값을 칠해 잰다
+- ★ v0.8.1 **Heater · MFC 표 열 고정**: `table-layout: fixed` + `<colgroup>`, th · td 좌우 여백 6. 이름 열(Channel · MFC)만 남는
+  폭을 받고 말줄임(줄 title 에 전체 이름). 나머지 열은 px 고정 — 값이 바뀌어도, 끊겨도('—') 열 자리가 그대로다
+  - Heater 5 열: Channel | Setpoint 72 | Actual 58 | Power 108 | Status 108. 단위 ℃ 는 칸 이름 'Heater (℃)' 로(머리에 붙이면
+    좁은 배치 이름 열이 남지 않는다). Output 열은 Power 칩에 합친다 — 'ON 35 %'(출력 % 는 온도조절기 통신이 될 때만) · 'OFF' ·
+    모름 '—'. 상태 낱말 'Ctrl Alarm'(툴팁 '온도조절기(Controller) 알람')
+  - MFC 5 열: MFC | Gas 50 | Full Scale 82 | Setpoint 72 | Actual 62. Gas 는 설정 글이라 넘치면 말줄임 + title
+  - 장비 전용 줄(RF · PCV / O3 · 발생기 · Off Delay): 이름 colspan 2 · 값 colspan 3(단위 포함). Powder 발생기 줄 이름은
+    'Gen · Bypass Pump · IV-B'(title 'O3 Generator · Bypass Pump · IV-B(바이패스 격리 밸브)'), 값은 낱말이라 고정폭 아님
+  - 줄 높이 26, 넘치면 22(dense — 두 표 같은 규칙, 구조가 바뀔 때 한 번)
+- **상단 상태 띠**(Operation · P&ID 탭, 높이 84): DEVICE STATE · PROCESS · CHAMBER PRESSURE · EXHAUST · VENT(Pump · IV-E · VV) · ALARM.
   이 두 탭에서는 머리의 상태 · 알람 칩을 숨긴다(같은 상태를 여러 곳에 쓰지 않는다). ALARM 칸은 누르면 Alarm/Log 탭,
   확인 전(부저)이면 빨간 테두리. 칸 이름마다 한글 뜻 툴팁
+  - ★ v0.8.1 열 최소 폭 = 그 칸의 가장 긴 상태 글 + 점 · 여백: `minmax(181px, 1fr) minmax(0, 1.45fr) minmax(196px, 1.2fr)
+    minmax(150px, 1fr) minmax(175px, 1fr)`(넓은 배치는 비율만 1 · 1.6 · 1.25 · 1.3 · 1.1), 칸 좌우 여백 8. 근거: 22px 굵게
+    'PLC Stalled' · 'Server Lost' · '12 Warning' ≈ 143, 압력 '1000.00' ≈ 93 + 'Unconfirmed'(12px) ≈ 77, 미니 줄
+    'Pump ● ON · No FB' ≈ 130. PROCESS 는 남는 폭(좁은 960 에서 약 202)
+  - PROCESS 큰 글(레시피 이름 · 'No recipe selected')은 15 굵게(이름 — 말줄임 · title). 아랫줄(공정 중)
+    'Cycle 12/40 · 00:07:57 left', 이어받기 'Adopted · 00:07:57 left' — 일시정지 · 정지 예약은 앞말 없이 노랑으로만
+  - CHAMBER PRESSURE: 값 오른쪽 두 줄 묶음 — 윗줄 'Torr · CVG', 아랫줄 'Unconfirmed'(환산 미확정일 때만, 노랑).
+    아랫줄 글(공정 아님) 'Base 5.0E-2 · reached / not reached'(단위는 윗줄), CM 이 있으면 ' · CM 값'
+  - 칸 이름 'Exhaust · Vent'(툴팁에 Pump · IV-E · VV 뜻)
 - **램프판(Interlock · Input)**: device.py `ANNUNCIATOR` 의 줄(SAFETY · PERMIT · STATE · RF/O3) · 자리 그대로, 좁은 8 열 · 넓은
   6 열. 초록 = 정상 조건 · 허가 · 켜짐, 노랑 = 허가 조건이 아직(Not ready), 빨강(옅은 빨강 바탕) = 이상, 빈 원 = 꺼짐(정상),
   점선 = 모름. RST-SW(순간 스위치) · SCRUB(쓰지 않음)은 넣지 않고 그 밖 입력 · 인터락은 정확히 한 번(시험이 센다).
@@ -1405,16 +1438,28 @@ HTTP 는 읽기 전용이라 원격 보기에서도 됩니다. 내보내기·폴
 - **시작 조건 자리 10 개**(device.py `START_SLOTS` — 좁은 2×5 · 넓은 5×2): 아이콘 ok · no · wait(베이스 압력 — 시작 뒤 대기) ·
   na(해당 없음) · unknown(연결 · 장비 ID 를 모름). 공정 중에도 서버가 시작 조건을 보낸다(칸은 흐리게 '다음 시작 때 확인').
   Powder 'O3 Line' 자리가 no 면 그 자리 안 [O3 Line ON] → O3 조작 창
+  - ★ v0.8.1 자리 안 짧은 글: Base Pressure 는 '현재 → 목표'(단위 · '시작 뒤 대기' 없음 — 노란 시계 아이콘과 title 이 말한다),
+    Device ID 는 맞으면 읽은 ID(서버 `short`), 그 밖은 서버 detail(말줄임 · title). 시작 확인 창은 긴 글 그대로.
+    [O3 Line ON] 은 설명 줄 자리에(단추가 보이면 설명 글은 title 로) — 자리 이름이 줄지 않는다
+  - Process 칸 Remaining(공정 전)은 'Est. ' 앞말 없이 흐린 색 + 툴팁 'Est. — 레시피 기준 예상 시간(공정 전)'
+  - Valve Permit 글: 허가가 꺼졌는데 빠진 것이 Pump 뿐이면 '필요: Pump 운전', 아무 조건도 못 찾으면 '필요: PLC 허가 조건 확인'
+    (허가가 켜져 있을 때만 '허가됨')
 - **밸브 띠**(device.py `VALVE_STRIP`): Open(초록) · Closed(회색) · **Pending**(노랑 점선 — 요청은 있지만 Valve Permit 이 없어
-  출력이 꺼짐, 'VALVES' 칸 아래 'Pending n') · Unknown · Auto(Powder PV-B — 누를 수 없음). 누르면 그 옆에 조작 창
+  출력이 꺼짐, 'VALVES' 칸 아래 'Pending n') · Unknown · Auto(Powder PV-B — 누를 수 없음). 누르면 그 옆에 조작 창.
+  ★ v0.8.1 값 타일은 가장 긴 값이 들어가는 고정 폭 — PCV 56 · RF 72 · O3 104 · BPMP 48(값이 바뀌어도 뒤 타일이 밀리지 않는다)
 - **P&ID 탭**: 배관도는 이 탭 한 곳(viewBox 920×680). 넓은 배치는 그림(폭 = 높이 × 920/680) + 오른쪽 [Process · 램프판 ·
   Recent Events]. 범례 Open · Closed · Pending · Unknown · Flow(+ Powder Auto) — 영문 용어 + 한글 뜻 툴팁
 - **조작 창**: 배관도 · 밸브 띠 · 히터/MFC 줄 · 시작 조건 어디서든 누른 자리 옆(오른쪽 → 왼쪽 → 아래). 탭 · 배치 바꿈 · 바깥 ·
   Esc 에 닫힌다. 밸브 Open 은 **Valve Permit 이 있어야**(없으면 빠진 조건을 보인다), 이미 요청 · 열림이면 Open 막힘, Close 는
   요청이나 출력이 있을 때만. 이미 그 상태인 Pumping Start / Stop · Vent 는 막힘(명령줄도 같다). Powder O3 ON 은 O3 Permit
   으로 막지 않는다(ON 이 그 허가를 만드는 순서다 — 바이패스 펌프 → IV-B → 5 s → 허가 → 발생기)
+  - ★ v0.8.1 O3 ON 규칙: '라인이 이미 켜져 있음' 과 막는 이유(공정 중 · 끊김 …)로만 막는다 — PLC 설정값(o3_sv)으로 막지 않고
+    입력 칸 값으로 켠다(RF 와 같은 규칙, 비었거나 0 이면 '값을 넣으세요'). 'Bypass Pump' 줄은 출력 꺼짐 'OFF' · 켜짐 + 운전
+    피드백 'ON' · 켜짐 + 피드백 없음 'ON · No Feedback'. 펌프 조작 창 Feedback 줄도 펌프가 꺼져 있으면 '—'
+  - ★ v0.8.1 같은 배치에서 캔버스 크기만 바뀌어 운전 · P&ID 를 다시 그릴 때도 열린 조작 창을 닫는다
 - **명령 한 번**: 보낸 명령은 응답(done)이 올 때까지(최대 8 s) 같은 단추를 막는다('응답을 기다리는 중'). 수동 조작 창과 조작
-  창이 같은 잠금 key 를 쓴다. 조작 창 결과 줄은 보낸 명령의 요청 번호(rid)와 같은 알림만
+  창이 같은 잠금 key 를 쓴다. 조작 창 결과 줄은 보낸 명령의 요청 번호(rid)와 같은 알림만(v0.8.1: 응답이 왔는데 알림이
+  없었으면 결과 줄을 비운다 — '기다리는 중' 이 남지 않게)
 - **알림 합치기**: 보이는 알림 중 같은 수준 + 같은 글은 새로 만들지 않고 '×n' 을 붙여 맨 아래로(4.2 s 다시), 한 번에 4 개까지
 - **용어**: 새 화면 용어(띠 칸 · 램프 · 범례 · Pending 등)는 영문(terms.js) + 툴팁에 한글 뜻
 

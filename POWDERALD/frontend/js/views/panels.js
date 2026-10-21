@@ -44,10 +44,11 @@
         '<span class="note"><span class="chip" data-bind="scSum">—</span></span></div>' +
         '<div class="panel-body sc-body"><div class="scgrid">' + slots.map(function (sl, i) {
           var o3 = (sl.keys || []).indexOf('o3') >= 0;
+          // v0.8.1: 'O3 Line ON' 단추는 설명 줄 자리에(단추가 보이면 설명 글은 숨기고 title 로) — 자리 이름이 줄지 않는다
           return '<div class="sc" data-sc="' + i + '"><span class="sci unknown" data-bind="sci' + i + '"></span>' +
-            '<span class="sct"><b>' + esc(sl.label) + '</b><span class="scd" data-bind="scd' + i + '">—</span></span>' +
+            '<span class="sct"><b>' + esc(sl.label) + '</b><span class="scd" data-bind="scd' + i + '">—</span>' +
             (o3 ? '<button class="btn xs sc-o3" data-fp="o3:O3" data-bind="sco3_' + i + '" hidden>' + T('b.o3On') + '</button>' : '') +
-            '</div>';
+            '</span></div>';
         }).join('') + '</div></div>';
       root._slots = slots;
     },
@@ -67,7 +68,11 @@
         var cell = dd && dd.closest('.sc');
         setTitle(cell, it.title || (it.label + ' — ' + (it.text || '')));
         var b = core.bind('sco3_' + i, root);
-        if (b) b.hidden = !it.o3btn;
+        if (b) {
+          b.hidden = !it.o3btn;
+          if (dd) dd.hidden = !!it.o3btn;
+          setTitle(b, it.o3btn ? (it.text || '') + ' — 누르면 O3 조작 창' : '');
+        }
       });
       var sum = core.bind('scSum', root);
       setTxt(sum, m.summary.text);
@@ -117,7 +122,9 @@
     }
   };
 
-  /* ===================== Valves (밸브 띠) ===================== */
+  /* ===================== Valves (밸브 띠) =====================
+   * v0.8.1: 값 타일(PCV · RF · O3 · BPMP)은 가장 긴 값이 들어가는 고정 폭(style.css .vt.val[data-vt=…]) — 값이 바뀌어도
+   * 그 타일과 뒤 타일의 자리가 그대로다 */
   var VICON = '<svg class="vi" viewBox="0 0 22 14"><path d="M1.5,1.5 L11,7 L1.5,12.5 Z M20.5,1.5 L11,7 L20.5,12.5 Z"/></svg>';
 
   var valves = {

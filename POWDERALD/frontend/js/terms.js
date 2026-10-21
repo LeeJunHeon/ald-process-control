@@ -17,7 +17,7 @@
     // 칸
     'panel.pid': 'P&ID', 'panel.process': 'Process', 'panel.start': 'Start Conditions', 'panel.ann': 'Interlock · Input',
     'panel.valves': 'Valves', 'panel.events': 'Recent Events', 'panel.mfcRf': 'MFC · RF · PCV', 'panel.mfcO3': 'MFC · O3',
-    'panel.heater': 'Heater', 'panel.mfc': 'MFC', 'panel.rfpcv': 'RF / PCV', 'panel.o3': 'O3',
+    'panel.heater': 'Heater (℃)', 'panel.mfc': 'MFC', 'panel.rfpcv': 'RF / PCV', 'panel.o3': 'O3',
     'panel.savedRecipes': 'Saved Recipes', 'panel.edit': 'Edit', 'panel.check': 'Check',
     'panel.datalog': 'Process Data Log', 'panel.table': 'Table', 'panel.recipeCopy': 'Recipe Copy',
     'panel.alarms': 'Active Alarms', 'panel.notices': 'Program Notices', 'panel.alarmHist': 'Alarm History',
@@ -35,7 +35,7 @@
     'eq.precursor': 'Precursor', 'eq.reactant': 'Reactant', 'eq.reactantO3': 'Reactant (O3)', 'eq.pump': 'Pump',
     'eq.mainPump': 'Main Pump',
     // 상단 상태 띠 · 램프판 묶음
-    'strip.dev': 'Device State', 'strip.proc': 'Process', 'strip.pr': 'Chamber Pressure', 'strip.exh': 'Pump · Exhaust · Vent',
+    'strip.dev': 'Device State', 'strip.proc': 'Process', 'strip.pr': 'Chamber Pressure', 'strip.exh': 'Exhaust · Vent',
     'strip.alm': 'Alarm',
     'ann.safety': 'Safety', 'ann.permit': 'Permit', 'ann.state': 'State', 'ann.rf': 'RF', 'ann.o3': 'O3',
     // 값
@@ -54,7 +54,7 @@
     // 상태
     's.open': 'Open', 's.closed': 'Closed', 's.unknown': 'Unknown', 's.on': 'ON', 's.off': 'OFF',
     's.normal': 'Normal', 's.limitUnset': 'Limit Unset', 's.idle': 'Idle', 's.running': 'Running',
-    's.paused': 'Paused', 's.pending': 'Pending', 's.commLost': 'Comm Lost', 's.ctrlAlarm': 'Controller Alarm',
+    's.paused': 'Paused', 's.pending': 'Pending', 's.commLost': 'Comm Lost', 's.ctrlAlarm': 'Ctrl Alarm',
     's.tableOk': 'Table OK', 's.tableNg': 'Table NG', 's.noAlarm': 'No Alarm', 's.critical': 'Critical',
     's.warning': 'Warning', 's.flow': 'Flow', 's.clickToOperate': 'Click to operate', 's.idlePipe': 'Idle', 's.exhaust': 'Exhaust', 's.heated': 'Heated',
     's.serverLost': 'Server Lost', 's.plcLost': 'PLC Lost', 's.plcStalled': 'PLC Stalled', 's.noAddress': 'No PLC Address',

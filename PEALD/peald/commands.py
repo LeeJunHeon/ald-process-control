@@ -659,6 +659,8 @@ async def _cmd_manual_unlock(d, ws):
     on = bool(d.get("on", True))
     state.manual_unlock_until = (time.monotonic() + MANUAL_UNLOCK_S) if on else 0.0
     await push_log(f"수동 조작 잠금 {'해제' if on else '설정'}", "info")
+    # ★ v0.8.1: 그 연결에도 알린다(rid 가 붙어 조작 창 결과 줄이 '기다리는 중' 에서 바뀐다)
+    await push_notice("수동 조작 잠금 해제 — 5분 뒤 · 공정이 시작되면 다시 잠깁니다" if on else "수동 조작 잠금", "info", ws)
     await push_state()
 
 

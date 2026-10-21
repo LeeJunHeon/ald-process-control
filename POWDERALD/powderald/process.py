@@ -120,6 +120,7 @@ class ProcessRunner:
         from .plclink import id_text
         blocked = link.id_block_text() if hasattr(link, "id_block_text") else ""
         out.append({"key": "device_id", "label": "Device ID", "ok": not blocked,
+                    "short": id_text(getattr(link, 'device_id', None)),     # v0.8.1: 시작 조건 자리 글
                     "detail": f"읽은 ID {id_text(getattr(link, 'device_id', None))} / "
                               f"이 장비 {id_text(DEV.DEVICE_ID)}" + (f" — {blocked}" if blocked else "")})
         if blocked:
@@ -238,10 +239,17 @@ class ProcessRunner:
     def _valve_ok_detail(self, s) -> str:
         """시작 조건 'Valve Permit' 글 — v0.8.0: valve_permit_missing 하나로(순서 · 문구는 예전 그대로: Pump 는 시작 조건에
         따로 칸이 있어 빼고, 기본 인터락은 맨 뒤)."""
-        miss = [m for m in valve_permit_missing(s) if m not in ("Pump 운전", "PLC 허가 조건 확인")]
+        full = valve_permit_missing(s)
+        if not full:
+            return "허가됨"
+        miss = [m for m in full if m not in ("Pump 운전", "PLC 허가 조건 확인")]
         if "기본 인터락" in miss:
             miss = [m for m in miss if m != "기본 인터락"] + ["기본 인터락"]
-        return "필요: " + " · ".join(miss) if miss else "허가됨"
+        if miss:
+            return "필요: " + " · ".join(miss)
+        # ★ v0.8.1: 허가가 꺼졌는데 빠진 것이 Pump 뿐(펌프 알람으로 펌프만 멈추고 IV-E 가 아직 열린 순간 등)이면
+        #   '허가됨' 이 아니라 그것을, 아무 조건도 못 찾으면 PLC 쪽 확인을 적는다
+        return "필요: Pump 운전" if "Pump 운전" in full else "필요: PLC 허가 조건 확인"
 
     def can_start(self):
         checks = self.start_checks()
@@ -1029,7 +1037,23 @@ class ProcessRunner:
         # 시작 조건은 화면이 아니라 서버가 판정한다 — 화면은 항목과 이유만 그린다.
         # ★ v0.8.0: 공정 중에도 checks 를 보낸다(화면의 시작 조건 칸은 흐리게 '다음 시작 때 확인') —
         #   can_start · blocking 은 공정이 아닐 때만
-        ok, blocking, checks = self.can_start()
+        # ★ v0.8.1: 공정 중 시작 조건은 화면용이다 — progress() 는 live(5 Hz)와 데이터 로그 줄이 부르므로 이 계산의 예외가
+        #   공정 중 live · 데이터 로그를 깨뜨리지 않게 checks = [] 로 내고, 경고는 같은 예외 종류마다 한 실행에 한 번만.
+        #   공정이 아닐 때는 시작 판단이라 예외를 삼키지 않는다
+        warned = self.__dict__.setdefault("_checks_warned", set())
+        if running:
+            try:
+                ok, blocking, checks = self.can_start()
+            except Exception as e:
+                checks = []
+                kind = type(e).__name__
+                if kind not in warned:
+                    warned.add(kind)
+                    logger.write("warn", f"공정 중 시작 조건 계산 실패(화면의 시작 조건만 비움 — 공정 · 데이터 로그는 계속): "
+                                         f"{kind}: {logger.clean(e, 160)}")
+        else:
+            warned.clear()
+            ok, blocking, checks = self.can_start()
         out["checks"] = checks
         if not running:
             out["can_start"] = ok

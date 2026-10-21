@@ -600,7 +600,9 @@
         }
       }
     } else if (resized && lastState) {
-      // 같은 배치에서 캔버스 높이만 바뀜 — 남는 높이를 받는 칸(Recent Events 줄 수 · 히터 표)만 다시 정한다
+      // 같은 배치에서 캔버스 높이만 바뀜 — 남는 높이를 받는 칸(Recent Events 줄 수 · 히터 표)만 다시 정한다.
+      // v0.8.1: 열린 조작 창도 닫는다 — 가리키던 요소가 새로 만들어져 창이 옛 자리에 떠 있게 된다
+      if (w.viewFaceplate && w.viewFaceplate.current) w.viewFaceplate.close(false);
       ['main', 'pid'].forEach(function (k) {
         if (VIEWS[k]) { try { VIEWS[k].render(lastState); } catch (e) { console.error('render ' + k, e); } }
       });

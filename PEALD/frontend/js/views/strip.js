@@ -1,7 +1,9 @@
 /* ============================================================
  * views/strip.js — 상단 상태 띠 (v0.8.0). Operation · P&ID 탭에서만 보인다(CSS — #app[data-tab]).
  *
- *   DEVICE STATE · PROCESS · CHAMBER PRESSURE · PUMP · EXHAUST · VENT · ALARM — 다섯 칸, 높이 84 고정.
+ *   DEVICE STATE · PROCESS · CHAMBER PRESSURE · EXHAUST · VENT(Pump · IV-E · VV) · ALARM — 다섯 칸, 높이 84 고정.
+ * ★ v0.8.1: 열 최소 폭은 그 칸의 가장 긴 상태 글(넓은 대체 글꼴로 잼 — style.css .strip). 압력 단위 · 미확정은 값 오른쪽
+ *   두 줄 묶음(.u2).
  *
  * ★ 판단은 UI.stripModel(순수 — uimodel.js). 여기서는 글자 · 클래스만 바꾼다(5 Hz). 칸 · 자리는 바뀌지 않는다.
  * ★ 같은 상태를 여러 곳에 쓰지 않는다 — 이 두 탭에서는 머리의 상태 · 알람 칩을 숨긴다(띠가 크게 보인다).
@@ -38,8 +40,8 @@
       '<div class="bar"><span data-bind="stProcBar"></span></div>' +
       '<div class="ss" data-bind="stProcSub"></div></div>' +
       '<div class="cell c-pr">' + name('pr') +
-      '<div class="sv"><span class="kpi mono" data-bind="stPr">—</span><span class="u">Torr · CVG</span>' +
-      '<span class="unconf" data-bind="stPrUn" hidden>' + T('s.unconfirmed') + '</span></div>' +
+      '<div class="sv"><span class="kpi mono" data-bind="stPr">—</span><span class="u2"><span class="u">Torr · CVG</span>' +
+      '<span class="un" data-bind="stPrUn" hidden>' + T('s.unconfirmed') + '</span></span></div>' +
       '<div class="ss" data-bind="stPrSub"></div></div>' +
       '<div class="cell c-exh">' + name('exh') +
       [0, 1, 2].map(function (i) {
