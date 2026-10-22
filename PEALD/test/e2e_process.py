@@ -448,6 +448,10 @@ class Operator:
     def notices_since(self, t0):
         return [n for n in self.notices if n[0] >= t0]
 
+    def logs_since(self, t0):
+        """v0.8.2: 이벤트 로그 줄(type 'log') — PLC 가 수동 요청을 지운 사유 등."""
+        return [n for n in self.logs if n[0] >= t0]
+
     # ---------- 값 ----------
     @property
     def proc(self):
@@ -1333,6 +1337,31 @@ class Run:
             await op.send("manual_rf", on=False)
             ok = await op.wait(lambda: not (op.live.get("extra") or {}).get("rf_on"), 6)
             self.check("RF 끄기", ok, "꺼짐", (op.live.get("extra") or {}).get("rf_on"))
+            # ★ v0.8.2: RF 허가가 꺼지면(가스를 끊어 압력이 베이스 아래로) PLC 가 RF 요청을 지운다 — 돌아와도 저절로 안 켜진다
+            await op.send("manual_rf", on=True, watt=50)
+            await op.wait(lambda: (op.live.get("extra") or {}).get("rf_on"), self.t(10, 6))
+            t0 = time.monotonic()
+
+            def rf_req():
+                return bool((((op.live.get("manual") or {}).get("aux_request") or 0) >> A.AUX_RF) & 1)
+
+            def rf_lost_log():
+                return [n for n in op.logs_since(t0) if "수동 요청을 지웠습니다" in n[2] and "RF 허가 없음" in n[2]]
+            await op.send("manual_mfc", sccm={"1": 0})
+            off = await op.wait(lambda: not op.ilk(A.ILK_RF_OK), self.t(60, 10))
+            cleared = await op.wait(lambda: not rf_req(), 3)
+            await op.wait(lambda: bool(rf_lost_log()), 3)
+            lg = rf_lost_log()
+            rf_on = (op.live.get("extra") or {}).get("rf_on")
+            self.check("RF 허가 꺼짐 → PLC 가 RF 요청 지움", off and cleared and bool(lg) and not rf_on,
+                       "RF 허가 꺼짐 · RF 요청 0 · 'PLC 가 수동 요청을 지웠습니다 — RF (RF 허가 없음 …)'",
+                       f"허가 꺼짐 {off} · 요청 {rf_req()} · RF {rf_on} · {lg[-1][2] if lg else '(로그 없음)'}")
+            await op.send("manual_mfc", sccm={"1": 300})
+            back = await op.wait(lambda: op.ilk(A.ILK_RF_OK), self.t(30, 10))
+            await asyncio.sleep(2.0)
+            rf_on = (op.live.get("extra") or {}).get("rf_on")
+            self.check("RF 허가 돌아옴 → RF 저절로 안 켜짐", back and not rf_on and not rf_req(),
+                       "RF Permit · RF 꺼짐 · RF 요청 0", f"허가 {back} · RF {rf_on} · 요청 {rf_req()}")
             await op.send("manual_mfc", sccm={"1": 0})
         if DEV.HAS_O3:
             ok = await self.o3_line(True)
@@ -1380,7 +1409,28 @@ class Run:
         self.check("같은 열기 두 번 → 한 번만 보냄", ok and got == 1 and bool(info),
                    "Valve Permit · PLC 받은 명령 12 한 번 · 두 번째 '이미 …'(info)",
                    f"허가 {ok} · 명령 12 {got} 번 · {info[-1][2] if info else '(info 없음)'}")
-        await op.send("manual_valve", tag="PV-1", on=False)
+        # ★ v0.8.2: Pumping Stop → 허가가 꺼지면 PLC(래더 P50)가 PV-1 요청을 지운다 — 다시 펌핑해도 저절로 안 열린다
+        t0 = time.monotonic()
+
+        def pv1_lost_log():
+            return [n for n in op.logs_since(t0) if "수동 요청을 지웠습니다" in n[2] and "PV-1" in n[2]]
+        await op.send("pump_stop")
+        off = await op.wait(lambda: not op.ilk(A.ILK_VALVE_OK), self.t(30, 8))
+        cleared = await op.wait(lambda: not (op.live.get("manual") or {}).get("valve_request"), 3)
+        await op.wait(lambda: bool(pv1_lost_log()), 3)
+        lg = pv1_lost_log()
+        self.check("Pumping Stop → PLC 가 PV-1 요청 지움", off and cleared and bool(lg) and not op.valve_on("PV-1"),
+                   "허가 꺼짐 · 요청 0 · 'PLC 가 수동 요청을 지웠습니다 — PV-1 …' 로그 · 출력 꺼짐",
+                   f"허가 꺼짐 {off} · 요청 {(op.live.get('manual') or {}).get('valve_request')} · "
+                   f"{lg[-1][2] if lg else '(로그 없음)'}")
+        await op.send("pump_start")
+        back = await op.wait(lambda: op.ilk(A.ILK_VALVE_OK), self.t(420, 30))
+        await asyncio.sleep(2.0)
+        mn = op.live.get("manual") or {}
+        self.check("다시 Pumping Start → PV-1 저절로 안 열림",
+                   back and not op.valve_on("PV-1") and not mn.get("valve_request") and "PV-1" not in (mn.get("pending") or []),
+                   "Valve Permit · PV-1 출력 꺼짐 · 요청 0 · Pending 없음",
+                   f"허가 {back} · 출력 {op.valve_on('PV-1')} · 요청 {mn.get('valve_request')} · Pending {mn.get('pending')}")
 
     # ---------- 9) 긴 공정 · 두 프로그램 ----------
     async def long(self, cycles=500):

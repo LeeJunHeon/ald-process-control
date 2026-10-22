@@ -464,20 +464,21 @@
   }
 
   /** 확인 창 문구. Powder 는 O3 라인이 켜져 있으면 전체 닫기가 라인도 한꺼번에 끈다고 알린다.
-   *  ★ v0.8.0: Pumping Start — 수동 밸브 요청이 남아 있는데 Valve Permit 이 없으면, 펌핑으로 허가가 생기는 순간 그 밸브가
-   *  운전자 조작 없이 열린다 — 먼저 묻는다(명령줄 · 조작 창 같은 창). 그 밖에는 확인 없이 */
+   *  ★ v0.8.0 · v0.8.2: 래더 P50 은 허가가 꺼지면 수동 요청을 지우므로 보통은 뜨지 않는다. PLC 가 지우지 않은 요청(서버
+   *  manual.pending — 1 s 넘게 · PEALD 는 RF 도)이 남아 있으면 펌핑으로 허가가 생기는 순간 운전자 조작 없이 열리거나 켜지므로
+   *  먼저 묻는다(명령줄 · 조작 창 같은 창 — 고치기 전 래더 안전망). 그 밖에는 확인 없이 */
   function confirmFor(c) {
     var st = core.state || {};
     var t = st.live || {};
     if (c === 'pump_start') {
       var mn = t.manual || {};
-      if (!mn.valve_request || mn.valve_permit) return null;
-      var names = ((st.structure || {}).valves || []).filter(function (v) { return core.bit(mn.valve_request, v.bit); })
-        .map(function (v) { return v.tag; });
+      var names = (mn.pending || []).slice();
+      if ((mn.aux_pending || []).indexOf('RF') >= 0) names.push('RF');     // Powder O3 라인(O3GEN · IV-B)은 묻지 않는다
       if (!names.length) return null;
       return { t: 'Pumping Start 를 할까요?', ok: T('b.pumpStart'),
-        b: '수동 밸브 요청이 남아 있습니다: <b>' + core.esc(names.join(' · ')) + '</b> — 펌핑으로 Valve Permit 이 생기면 ' +
-           '이 밸브가 바로 열립니다.<br>먼저 그 밸브를 Close 하거나 [Close All Valves] 로 지우세요. 그대로 펌핑할까요?' };
+        b: 'PLC 가 지우지 않은 수동 요청이 남아 있습니다: <b>' + core.esc(names.join(' · ')) + '</b> — 펌핑으로 허가가 생기면 ' +
+           '바로 열리거나 켜집니다(래더 P50 확인).<br>먼저 그 밸브를 Close(RF 는 OFF) 하거나 [Close All Valves] 로 지우세요. ' +
+           '그대로 펌핑할까요?' };
     }
     var cf = CONFIRM[c];
     if (!cf || c !== 'all_close') return cf;

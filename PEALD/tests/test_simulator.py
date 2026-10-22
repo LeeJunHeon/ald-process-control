@@ -79,11 +79,11 @@ async def test_vent_reaches_atmosphere(link):
 
 
 async def test_all_close_clears_internal_copies_but_keeps_pump(link):
-    """전체 닫기는 PLC 내부 사본(D04012·D04050)만 지운다 — PC 요청 영역은 그대로다."""
+    """전체 닫기는 PLC 내부 사본(D04012·D04050)만 지운다 — PC 요청 영역은 그대로다.
+    v0.8.2: 허가(Valve Permit)를 먼저 받는다 — 허가가 없으면 래더 P50 이 요청을 같은 스캔에 지운다."""
     lk, s, _cfg = link
-    await lk.send_command(A.CMD_PUMP_START)
-    assert await wait_until(lambda: A.bit(s.reg[A.D_AUX_OUT], A.AUX_PUMP), 4)
-    await at_vacuum(lk, s)
+    await pumped_permit(lk, s)
+    assert A.bit(s.reg[A.D_AUX_OUT], A.AUX_PUMP)
     want = DEV.MANUAL_VALVE_MASK & 0x0003
     assert await manual(lk, want, DEV.AUX_CMD_MASK) == A.RESULT_OK
     assert await wait_until(lambda: s.man_valve == want, 1)
@@ -124,9 +124,9 @@ async def test_manual_apply_blocked_during_safe_stop(link):
 
 async def test_safe_stop_clears_internal_copies(link):
     """안전 정지 요구가 되면 수동 밸브·보조 반영(내부 사본)을 지운다 — PC 영역은 그대로.
-    원인을 없애도 스스로 다시 켜지지 않는다."""
+    원인을 없애도 스스로 다시 켜지지 않는다. v0.8.2: 허가를 먼저 받는다(없으면 P50 이 요청을 지운다)."""
     lk, s, _cfg = link
-    await at_vacuum(lk, s)
+    await pumped_permit(lk, s)
     assert await manual(lk, 0x0003, DEV.AUX_CMD_MASK) == A.RESULT_OK
     assert await wait_until(lambda: s.man_valve == 0x0003, 1)
     before = pc_area(s)
@@ -202,7 +202,8 @@ async def test_precursor_and_reactant_together_is_blocked(link):
     def watch():
         return (s.reg[A.D_ALARM0] >> A.ALM0_BOTH_OPEN) & 1
 
-    await at_vacuum(lk, s)
+    # v0.8.2: 허가가 없으면 P50 이 요청을 같은 스캔에 지워 P60 이 동시 요청을 못 본다 — 허가를 먼저 받는다
+    await pumped_permit(lk, s)
     await manual(lk, pre | rea)
     assert await wait_until(watch, 3, step=0.01), "동시 개방 알람이 걸리지 않았다"
     assert not opened, f"밸브가 열렸다: {opened}"
@@ -476,15 +477,21 @@ async def pumped_permit(lk, s):
 
 
 async def test_valve_output_needs_valve_permit(link):
+    """v0.8.2: 허가 없이 받은 명령 12 는 결과 0 이어도 P50 이 같은 스캔에 지운다(출력도 0) — 허가 뒤 다시 보내야 열린다."""
     lk, s, _cfg = link
     await at_vacuum(lk, s)
-    await manual(lk, 0x0004)
+    assert await manual(lk, 0x0004) == A.RESULT_OK
     await asyncio.sleep(0.2)
-    assert s.man_valve == 0x0004 and s.reg[A.D_VALVE_OUT] == 0, "허가 없이 밸브가 나갔다"
+    assert s.man_valve == 0 and s.reg[A.D_APPLIED_VALVE] == 0, "허가 없는 요청이 남았다"
+    assert s.reg[A.D_VALVE_OUT] == 0, "허가 없이 밸브가 나갔다"
     await pumped_permit(lk, s)
+    await asyncio.sleep(0.3)
+    assert s.reg[A.D_VALVE_OUT] == 0, "지운 요청이 허가 뒤 되살아났다"
+    assert await manual(lk, 0x0004) == A.RESULT_OK
     assert await wait_until(lambda: s.reg[A.D_VALVE_OUT] == 0x0004, 2)
     s.set_fault("emo", True)                      # 펌프가 멈추고 허가가 빠진다
     assert await wait_until(lambda: s.reg[A.D_VALVE_OUT] == 0, 2)
+    assert s.man_valve == 0
 
 
 async def test_both_request_zeroes_all_valves(link):
@@ -577,11 +584,13 @@ def test_pv_b_follows_generator_and_pv_r(cfg):
 
 @pytest.mark.skipif(not DEV.HAS_RF, reason="RF 가 있는 장비만")
 async def test_rf_output_needs_rf_permit(link):
+    """v0.8.2: RF 허가 없이 받은 RF 요청은 결과 0 이어도 P50(스텝 75)이 같은 스캔에 지운다 — 요청 0 · RF 출력 0."""
     lk, s, _cfg = link
     s.write(A.D_PRM_RF_MAX, [16000])
-    await lk.send_command(A.CMD_MANUAL_APPLY, {A.D_MANUAL_AUX: 1 << A.AUX_RF, A.D_RF_SV: 1000})
+    r, _ = await lk.send_command(A.CMD_MANUAL_APPLY, {A.D_MANUAL_AUX: 1 << A.AUX_RF, A.D_RF_SV: 1000})
+    assert r == A.RESULT_OK
     await asyncio.sleep(0.2)
-    assert s.man_aux & (1 << A.AUX_RF)
+    assert not s.man_aux & (1 << A.AUX_RF), "RF 허가 없는 RF 요청이 남았다"
     assert not A.bit(s.reg[A.D_INTERLOCK], A.ILK_RF_OK)
     assert not A.bit(s.reg[A.D_AUX_OUT], A.AUX_RF), "RF 허가 없이 RF 가 켜졌다"
 

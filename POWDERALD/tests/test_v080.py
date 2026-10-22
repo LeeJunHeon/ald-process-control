@@ -478,7 +478,7 @@ def test_faceplate_valve_permit_pending_and_busy():
     ok = _fstate(live__interlock=1 << vp, live__manual={"unlocked": True, "valve_request": 0, "valve_permit": True,
                                                          "valve_permit_missing": []})
     req = _fstate(live__manual={"unlocked": True, "valve_request": 1 << vb, "valve_permit": False,
-                                "valve_permit_missing": ["Pump 운전"]})
+                                "valve_permit_missing": ["Pump 운전"], "pending": ["PV-1"]})   # v0.8.2: 서버가 1 s 넘게 본 것
     opened = _fstate(live__valves=1 << vb, live__manual={"unlocked": True, "valve_request": 1 << vb, "valve_permit": True})
     out = _fp(r'''
       const S = ''' + json.dumps([nop, ok, req, opened]) + r''';
@@ -489,7 +489,7 @@ def test_faceplate_valve_permit_pending_and_busy():
     assert out["why"][0][0] == "Valve Permit 이 없어 열 수 없습니다 — 필요: Pump 운전 · IV-E 열림"
     assert out["b"][1] == [["open", True], ["close", False]] and out["why"][1] == ["", ""]
     assert out["b"][2] == [["open", False], ["close", True]]                         # pending → Close 살아 있음 + 노랑
-    assert out["why"][2][1] == "warn" and out["why"][2][0].startswith("요청은 남아 있지만 Valve Permit 이 없어")
+    assert out["why"][2][1] == "warn" and out["why"][2][0].startswith("PLC 가 지우지 않은 요청이 남아 있습니다")
     assert out["b"][3] == [["open", False], ["close", True]]                         # 이미 요청 · 열림 → Open 막힘
     assert out["busy"] == [[["open", False], ["close", False]], "응답을 기다리는 중"]
     assert ["Valve Permit", "No — Pump 운전"] in out["rows"] and ["Request", "Open"] in out["rows"]
@@ -540,13 +540,18 @@ def test_pump_start_confirm_when_request_left():
       const base = { structure: { valves: ''' + json.dumps(DEV.VALVES) + r''', aux: [] }, device: {} };
       const mk = mn => Object.assign({}, base, { live: { plc: { connected: true }, manual: mn } });
       const r = [];
-      core.state = mk({ valve_request: 0, valve_permit: false }); r.push(confirmFor('pump_start'));
-      core.state = mk({ valve_request: ''' + str(1 << vb) + r''', valve_permit: true }); r.push(confirmFor('pump_start'));
-      core.state = mk({ valve_request: ''' + str(1 << vb) + r''', valve_permit: false }); r.push(confirmFor('pump_start'));
+      // v0.8.2: 요청 워드 · 허가가 아니라 서버 pending(1 s 넘게) · aux_pending 의 RF 로
+      core.state = mk({ valve_request: 0, valve_permit: false, pending: [] }); r.push(confirmFor('pump_start'));
+      core.state = mk({ valve_request: ''' + str(1 << vb) + r''', valve_permit: false, pending: [] }); r.push(confirmFor('pump_start'));
+      core.state = mk({ valve_request: ''' + str(1 << vb) + r''', valve_permit: false, pending: ['PV-1'] }); r.push(confirmFor('pump_start'));
+      core.state = mk({ valve_request: 0, valve_permit: false, pending: [], aux_pending: ['RF'] }); r.push(confirmFor('pump_start'));
+      core.state = mk({ valve_request: 0, valve_permit: false, pending: [], aux_pending: ['O3GEN', 'IV-B'] }); r.push(confirmFor('pump_start'));
       console.log(JSON.stringify(r));''')
-    assert out[0] is None and out[1] is None
-    assert "수동 밸브 요청이 남아 있습니다: <b>PV-1</b>" in out[2]["b"] and out[2]["ok"] == "b.pumpStart"
-    assert "그대로 펌핑할까요?" in out[2]["b"]
+    assert out[0] is None and out[1] is None                                 # 한순간(pending 없음)은 묻지 않는다
+    assert "PLC 가 지우지 않은 수동 요청이 남아 있습니다: <b>PV-1</b>" in out[2]["b"] and out[2]["ok"] == "b.pumpStart"
+    assert "래더 P50" in out[2]["b"] and "그대로 펌핑할까요?" in out[2]["b"]
+    assert "<b>RF</b>" in out[3]["b"]
+    assert out[4] is None                                                    # Powder O3 라인은 묻지 않는다
 
 
 # ===================== 8-1. 알림 합치기 · 진행 중 잠금 =====================
@@ -711,22 +716,44 @@ async def test_m_manual_valve_permit_same_request_and_readback(wired, notices):
 
 
 async def test_m_pending_notice_after_pump_stop(wired, notices):
+    """v0.8.2: ① 고친 래더 — Pumping Stop 뒤 PLC 가 요청을 지워 Pending · 안전망 알림이 한 번도 없다.
+    ② 결함 old_p50(고치기 전 래더) — 요청이 남으면 1 s 넘게 뒤 Pending · 'PLC 가 지우지 않은 수동 요청' 알림, 모두 닫기로 사라짐."""
     lk, sim, _cfg = wired
-    await valve_permit(lk, sim)
     state.manual_unlock_until = 9e9
+
+    def left():
+        return [n for n in state.pc_notices(True) if "PLC 가 지우지 않은" in n[1]]
+
+    # ① 고친 래더
+    await valve_permit(lk, sim)
     await C.handle_command({"cmd": "manual_valve", "tag": "PV-1", "on": True})
     assert await wait_until(lambda: A.bit(sim.reg[A.D_VALVE_OUT], DEV.valve_bit("PV-1")), 2)
     r, _ = await lk.send_command(A.CMD_PUMP_STOP)
     assert r == A.RESULT_OK
-    assert await wait_until(lambda: "PV-1" in state.manual_state()["pending"], 5)
-    pn = [n for n in state.pc_notices(True) if n[1].startswith("수동 밸브 요청이 허가를 기다립니다: PV-1")]
-    assert pn and pn[0][0] == "warn" and "[Close All Valves]" in pn[0][1]
-    ms = state.manual_state()
-    assert ms["valve_permit"] is False and "Pump 운전" in ms["valve_permit_missing"]
-    r, _ = await lk.send_command(A.CMD_ALL_CLOSE)
-    assert r == A.RESULT_OK
-    assert await wait_until(lambda: not state.manual_state()["pending"], 3)
-    assert not [n for n in state.pc_notices(True) if "허가를 기다립니다" in n[1]]
+    for _ in range(30):
+        assert not state.manual_state()["pending"], state.manual_state()
+        assert not left(), left()
+        await asyncio.sleep(0.1)
+    assert lk.applied_valve == 0
+    # ② 고치기 전 래더(시험 결함)
+    sim.set_fault("old_p50", True)
+    try:
+        await valve_permit(lk, sim)
+        await C.handle_command({"cmd": "manual_valve", "tag": "PV-1", "on": True})
+        assert await wait_until(lambda: A.bit(sim.reg[A.D_VALVE_OUT], DEV.valve_bit("PV-1")), 2)
+        r, _ = await lk.send_command(A.CMD_PUMP_STOP)
+        assert r == A.RESULT_OK
+        assert await wait_until(lambda: "PV-1" in state.manual_state()["pending"], 6)
+        pn = [n for n in left() if n[1].startswith("PLC 가 지우지 않은 수동 요청: PV-1")]
+        assert pn and pn[0][0] == "warn" and "[Close All Valves]" in pn[0][1] and "래더 P50" in pn[0][1], left()
+        ms = state.manual_state()
+        assert ms["valve_permit"] is False and "Pump 운전" in ms["valve_permit_missing"]
+        r, _ = await lk.send_command(A.CMD_ALL_CLOSE)
+        assert r == A.RESULT_OK
+        assert await wait_until(lambda: not state.manual_state()["pending"], 3)
+        assert not left()
+    finally:
+        sim.set_fault("old_p50", False)
 
 
 def _st(ilk=0, i0=0, a0=0, a1=0):

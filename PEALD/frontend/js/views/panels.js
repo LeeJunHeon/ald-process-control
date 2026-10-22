@@ -166,7 +166,7 @@
       if (pe) {
         pe.hidden = !m.pending.length;
         setTxt(pe, T('s.pending') + ' ' + m.pending.length);
-        setTitle(pe, 'Pending — 요청은 들어갔지만 Valve Permit 이 없어 출력이 꺼진 것: ' + m.pending.join(' · '));
+        setTitle(pe, 'Pending — 출력이 꺼진 채 1 s 넘게 남은 요청: ' + m.pending.join(' · '));
       }
     }
   };

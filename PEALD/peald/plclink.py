@@ -18,7 +18,8 @@ plclink.py — PLC 링크. 백그라운드 태스크 하나가 소켓을 가진�
   않는다 — PLC 가 이미 받았을 수 있어 두 번 실행될 위험이 있다.
 
 ★ PC 는 수동 요청(밸브·보조·MFC·PCV·RF·O3)을 따로 기억하지 않는다.
-  PLC 는 전체 닫기·공정 시작·안전 정지·대기압에서 '내부 사본(D04012~)'만 지우고
+  PLC 는 전체 닫기·공정 시작·안전 정지·대기압·Valve Permit 꺼짐(밸브)·RF 허가 꺼짐(RF 가 있는 장비의 RF — v0.8.2 래더 P50)에서
+  '내부 사본(D04012~)'만 지우고
   PC 영역(D01004~)은 그대로 둔다. PC 가 옛 요청을 들고 있거나 PC 영역을 기준으로 삼으면
   다음 명령 12 때 PLC 가 지운 요청이 되살아난다. 그래서 명령 12·14 를 보낼 때마다
   명령 잠금 안에서 반영 영역을 새로 읽고, 거기에 이번 변경만 얹어 전부 쓴다.
@@ -36,6 +37,10 @@ from .modbus import ModbusClient, ModbusError, ModbusTimeout
 log = logging.getLogger(__name__)
 
 POLL_S = 0.100
+# v0.8.2: 이 명령들만 반영 영역(D04012 · D04050)을 PC 가 직접 바꾼다(공정 시작 · 모두 닫기 · 수동 적용) — 주기 비교에서 뺀다.
+#   펌핑 정지 · 벤트 · 알람 리셋 같은 다른 명령 뒤에 반영이 줄면 PLC 가 스스로 지운 것(허가 꺼짐 · 대기압 · 안전 정지)이라
+#   알린다 — 예전에는 모든 명령을 빼서 Pumping Stop 직후 PLC 가 지운 것을 알리지 못했다
+SEQ_CODES = (A.CMD_PROCESS_START, A.CMD_ALL_CLOSE, A.CMD_MANUAL_APPLY)
 HEARTBEAT_S = 0.250
 DISPLAY_S = 0.500
 CMD_READ_S = 1.0                # 명령 영역·PRM 영역 되읽기
@@ -125,7 +130,8 @@ class PlcLink:
 
         self._cmd_no = 0
         self._cmd_lock = asyncio.Lock()
-        self._cmd_seq = 0               # 명령을 보낼 때마다(시작·끝) +1 — 주기 비교에서 뺀다
+        self._cmd_seq = 0               # SEQ_CODES 명령을 보낼 때마다(시작·끝) +1 — 주기 비교에서 뺀다
+        self.pending_toasts = []        # v0.8.2: (수준, 글) — PLC 가 스스로 지운 요청. event_loop 가 모든 화면에 토스트로
         self._seen = None               # (반영 밸브, 반영 보조, 그때의 _cmd_seq)
         self._ot_prev = False
         self._trip_task = None
@@ -552,9 +558,11 @@ class PlcLink:
                 # ★ 사유는 그 자리에서 상태 영역을 한 번 더 읽어 판단한다. 마지막 주기 읽기(최대
                 #   100 ms 전)는 PLC 가 반영을 지운 것과 같은 스캔의 안전 정지 요구를 아직 못 봤을 수 있다.
                 await self._read_status()
-                self.on_event("warn", "PLC 가 수동 요청을 지웠습니다 — "
-                              + describe_bits(lost_v, lost_a)
-                              + f" ({self.clear_reason(bool(lost_v))})")
+                msg = ("PLC 가 수동 요청을 지웠습니다 — " + describe_bits(lost_v, lost_a)
+                       + f" ({self.clear_reason(bool(lost_v), bool(lost_a))})"
+                       + " — 저절로 다시 열리거나 켜지지 않습니다(필요하면 다시 조작)")
+                self.on_event("warn", msg)
+                self.pending_toasts.append(("warn", msg))
         self._seen = (v, a, seq)
 
     async def _read_cmd_area(self):
@@ -562,14 +570,23 @@ class PlcLink:
         self._store_prm_readback(await self.client.read_holding(PRM_READ_BASE, PRM_READ_COUNT))
         self._maybe_fix_prm()
 
-    def clear_reason(self, valve_lost: bool) -> str:
-        """PLC 가 수동 반영을 지운 사유(지금 상태로 추정)."""
+    def clear_reason(self, valve_lost: bool, aux_lost: bool = False) -> str:
+        """PLC 가 수동 반영을 지운 사유(지금 상태로 추정) — 래더 P50 의 지우는 조건 순서.
+        v0.8.2: Valve Permit 꺼짐(밸브) · RF 허가 꺼짐(RF) 도 — 빠진 조건을 붙인다."""
+        from .process import valve_permit_missing, rf_permit_missing
         s = self.status
+        ilk = s[A.D_INTERLOCK]
+        safe = A.bit(ilk, A.ILK_SAFE_STOP_REQ)
+        atm = A.bit(s[A.D_INPUT0], A.IN0_ATM)
         why = []
-        if A.bit(s[A.D_INTERLOCK], A.ILK_SAFE_STOP_REQ):
+        if safe:
             why.append("안전 정지 요구")
-        if valve_lost and A.bit(s[A.D_INPUT0], A.IN0_ATM):
+        if valve_lost and atm:
             why.append("챔버 대기압")
+        if valve_lost and not safe and not atm and not A.bit(ilk, A.ILK_VALVE_OK):
+            why.append("Valve Permit 없음 — 필요: " + " · ".join(valve_permit_missing(s)))
+        if aux_lost and DEV.HAS_RF and not safe and not A.bit(ilk, A.ILK_RF_OK):
+            why.append("RF 허가 없음 — 필요: " + " · ".join(rf_permit_missing(s, self.prm_readback, self.conv)))
         if s[A.D_STATE] in (A.STATE_READY, A.STATE_RUN, A.STATE_PAUSE, A.STATE_STOPPING):
             why.append("공정 시작")
         return " · ".join(why) if why else "사유 확인 필요"
@@ -715,7 +732,8 @@ class PlcLink:
                    "lost_valve": 0, "lost_aux": 0}
             if result != A.RESULT_OK:
                 return out
-            # 결과 0 이어도 PLC 가 곧바로 지우는 경우가 있다(대기압·RF 전력 0) — 다시 읽어 본다.
+            # 결과 0 이어도 PLC 가 곧바로 지우는 경우가 있다(대기압·RF 전력 0 · v0.8.2 Valve Permit 없음 · RF 허가 없음)
+            # — 다시 읽어 본다.
             try:
                 await asyncio.sleep(APPLY_SETTLE_S)
                 self._set_applied(await self.client.read_holding(A.APPLIED_BASE, A.APPLIED_COUNT))
@@ -798,7 +816,9 @@ class PlcLink:
 
     async def _send_locked(self, code: int, args: dict = None):
         """명령 잠금을 쥔 채로 부른다."""
-        self._cmd_seq += 1
+        bump = code in SEQ_CODES            # v0.8.2: 반영 영역을 PC 가 바꾸는 명령만 주기 비교에서 뺀다
+        if bump:
+            self._cmd_seq += 1
         sent = False
         try:
             # ① 인자 레지스터 먼저
@@ -829,7 +849,8 @@ class PlcLink:
                 return None, f"PLC 통신 오류: {e} — PLC 가 명령을 받았을 수 있습니다 — 상태를 확인하세요"
             return None, f"PLC 통신 오류: {e}"
         finally:
-            self._cmd_seq += 1
+            if bump:
+                self._cmd_seq += 1
 
 
 def same_manual(new: dict, cur: dict) -> bool:

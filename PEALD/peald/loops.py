@@ -145,6 +145,11 @@ async def event_loop():
             while toasts:
                 level, msg = toasts.pop(0)
                 await push_notice(msg, level)
+            # v0.8.2: PLC 가 스스로 지운 수동 요청(래더 P50 — 허가가 돌아와도 되살아나지 않는다)도 모든 화면에
+            ltoasts = getattr(state.link, "pending_toasts", None) if state.link else None
+            while ltoasts:
+                level, msg = ltoasts.pop(0)
+                await push_notice(msg, level)
             # 잠긴 연결(공정 시작·시간 만료)에 상태를 알린다
             locked = _admin_lock_pending[:] + admin.expired()
             del _admin_lock_pending[:]

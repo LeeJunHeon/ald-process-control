@@ -12,8 +12,9 @@
  *
  * ★ 명령은 「수동 조작…」 창과 같은 것을 같은 인자로 보낸다(ops.js 한 곳). 확인 창도 같은 것.
  * ★ 공정 중 · 원격 보기 · PLC 끊김 · 하트비트 멈춤 · 다른 장비 · 서버 끊김이면 창은 열리되 단추는 막히고 이유가 보인다.
- * ★ v0.8.0: 밸브 Open 은 Valve Permit 이 있어야(없으면 서버도 보내지 않는다 — 허가가 생길 때 저절로 열리는 Pending 을 만들지
- *   않게). 이미 요청 · 열림이면 Open 막힘, Close 는 요청이나 출력이 있을 때만. 이미 그 상태인 펌핑 · 벤트는 막힘.
+ * ★ v0.8.0: 밸브 Open 은 Valve Permit 이 있어야(없으면 서버도 보내지 않는다 — v0.8.2 래더 P50 은 허가 없는 요청을 같은
+ *   스캔에 지운다). 이미 요청 · 열림이면 Open 막힘, Close 는 요청이나 출력이 있을 때만. 이미 그 상태인 펌핑 · 벤트는 막힘.
+ *   Pending 경고는 서버가 1 s 넘게 이어진 것만 주는 manual.pending 으로(v0.8.2 — PLC 가 지우지 않은 요청).
  *   Powder O3 ON 은 O3 Permit 으로 막지 않는다(ON 이 그 허가를 만드는 순서다 — 바이패스 펌프 → IV-B → 5 s → 허가 → 발생기).
  *   v0.8.1: PLC 설정값(o3_sv)으로도 막지 않는다 — ON 은 입력 칸 값으로 보낸다(RF 와 같은 규칙, 비었거나 0 이면 '값을 넣으세요').
  * ★ v0.8.1: 응답(done)이 왔는데 그 rid 의 알림이 없었으면 결과 줄의 '기다리는 중' 을 비운다.
@@ -65,8 +66,8 @@
       m.rows.push(['Valve Lock', mn.unlocked ? T_('s.unlocked') + ' · ' + (mn.unlock_left_s || 0) + ' s' : T_('s.locked')]);
       if (auto) extraWhy = 'PLC 가 자동으로 다루는 밸브입니다 — 수동으로 열고 닫지 않습니다';
       else if (!mn.unlocked) extraWhy = '밸브 조작 잠금이 걸려 있습니다 — Unlock 을 먼저 누르세요';
-      else if (conn && req && !out) {
-        extraWhy = '요청은 남아 있지만 Valve Permit 이 없어 출력이 꺼져 있습니다. 허가가 생기면 바로 열립니다 — 필요 없으면 Close';
+      else if (conn && !out && (mn.pending || []).indexOf(key) >= 0) {
+        extraWhy = 'PLC 가 지우지 않은 요청이 남아 있습니다(출력 꺼짐 · 래더 P50 확인) — 허가가 생기면 열릴 수 있습니다. 필요 없으면 Close';
         extraLvl = 'warn';
       } else if (conn && !permit && !out) {
         extraWhy = 'Valve Permit 이 없어 열 수 없습니다 — 필요: ' + (miss.length ? miss.join(' · ') : 'Pump 운전 · IV-E 열림');

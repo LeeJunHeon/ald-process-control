@@ -85,6 +85,7 @@ FAULTS = [
     {"key": "ive_stuck", "name": "IV-E 리미트 입력 안 따라옴 (5 s 뒤 알람1 b0)"},
     {"key": "pump_nofb", "name": "펌프 운전 피드백 없음 (10 s 뒤 알람0 b5)"},
     {"key": "bp_nofb",   "name": "바이패스 펌프 운전 피드백 없음 (10 s 뒤 알람1 b5)", "dev": "powderald"},
+    {"key": "old_p50",   "name": "고치기 전 래더 P50 (시험 — 허가가 꺼져도 수동 요청을 지우지 않음)"},
 ]
 
 
@@ -576,7 +577,13 @@ class PlcSim:
         self.man_valve = 0
 
     def _auto_clear(self):
-        """P50. 수동 · 히터 · MFC 명령(P40 뒤의 공정 중 여부로) → PLC 가 스스로 지우는 것 — 내부 사본뿐이다."""
+        """P50. 수동 · 히터 · MFC 명령(P40 뒤의 공정 중 여부로) → PLC 가 스스로 지우는 것 — 내부 사본뿐이다.
+        ★ v0.8.2 (래더 P50 스텝 68 · Powder 스텝 63): 전체 닫기 ∥ 공정 시작 ∥ 안전 정지 요구 ∥ 챔버 대기압 ∥ NOT Valve Permit(M00044)
+          → D04012 = 0. PEALD 스텝 75: 전체 닫기 ∥ 공정 시작 ∥ 안전 정지 요구 ∥ NOT RF 허가(M00048) → D04050 = 0.
+          Powder 스텝 70(O3 라인)은 그대로 — 발생기는 IV-B 뒤 5 s 에 켜지는 순서라 허가 전 요청이 정상이다.
+          명령 12 복사(스텝 9 · 21) 뒤에 지우므로 허가 없이 받은 명령 12 는 결과 0 이어도 같은 스캔에 지워져 P60 에 닿지 않는다.
+          전체 닫기 · 공정 시작은 그 명령을 처리하는 자리(_execute · _process_start)에서 지운다.
+          결함 old_p50(시험)이면 고치기 전 래더처럼 허가로는 지우지 않는다(PC 의 Pending 안전망 시험용)."""
         self._run_cmd(MANUAL_CMDS)
         atm = bool((self.reg[A.D_INPUT0] >> A.IN0_ATM) & 1)
         if self.safe_stop:
@@ -584,6 +591,12 @@ class PlcSim:
             self.man_aux = 0
         elif atm:
             self.man_valve = 0
+        if not self.faults.get("old_p50"):
+            ilk = self.reg[A.D_INTERLOCK]            # 이번 스캔 P30 이 정한 허가(래더 M0004)
+            if not (ilk >> A.ILK_VALVE_OK) & 1:
+                self.man_valve = 0
+            if DEV.HAS_RF and not (ilk >> A.ILK_RF_OK) & 1:
+                self.man_aux = 0
 
     # ===================== 공정 시퀀서 =====================
     def _w(self, addr: int) -> int:
@@ -1057,7 +1070,8 @@ class PlcSim:
             out = 0
         elif not (ilk >> A.ILK_VALVE_OK) & 1:
             # 공정 밸브 허가(인터락 b4)가 없으면 모든 밸브 출력 0
-            # (펌프 정지·IV-E 닫힘·안전 정지 요구·챔버 대기압) — 화면에는 '대기'
+            # (펌프 정지·IV-E 닫힘·안전 정지 요구·챔버 대기압). ★ v0.8.2: 수동 요청은 P50 이 같은 스캔에 지운다
+            # (공정 중 시퀀서 마스크는 여기서 막힌다). 결함 old_p50 이면 요청이 남아 화면이 Pending
             out = 0
         else:
             out = req

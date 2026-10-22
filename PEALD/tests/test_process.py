@@ -770,9 +770,9 @@ async def _notice(msg, level="info", ws=None):
 
 # ===================== v0.4.1 출력 단계 · 대기 표시 =====================
 async def test_manual_valve_waits_without_permit(wired, notices):
-    """v0.8.0: 공정 밸브 허가가 없으면(펌프 정지) 열기는 보내지 않는다(요청 0 · 알림에 빠진 조건) — 허가가 생길 때 운전자 조작
-    없이 저절로 열리는 Pending 을 만들지 않게. 허가가 있을 때 연 밸브는 허가가 사라지면(Pumping Stop) Pending(요청은 남고 출력
-    꺼짐), 허가가 다시 생기면(Pumping Start) PLC 가 다시 연다(래더 동작 그대로)."""
+    """v0.8.0: 공정 밸브 허가가 없으면(펌프 정지) 열기는 보내지 않는다(요청 0 · 알림에 빠진 조건).
+    ★ v0.8.2: 허가가 있을 때 연 밸브는 허가가 사라지면(Pumping Stop) 래더 P50 이 요청을 같은 스캔에 지운다(요청 0 · 출력 0 ·
+    PC 는 지운 사유를 토스트로) — 허가가 다시 생겨도(Pumping Start) 저절로 열리지 않는다(Pending 도 없음)."""
     lk, sim, _cfg = wired
     await at_vacuum(lk, sim)
     state.manual_unlock_until = 9e9
@@ -784,13 +784,18 @@ async def test_manual_valve_waits_without_permit(wired, notices):
     await valve_permit(lk, sim)
     await C.handle_command({"cmd": "manual_valve", "tag": tag, "on": True})
     assert await wait_until(lambda: A.bit(sim.reg[A.D_VALVE_OUT], DEV.valve_bit(tag)), 2)
+    del lk.pending_toasts[:]
     r, _ = await lk.send_command(A.CMD_PUMP_STOP)
     assert r == A.RESULT_OK
-    assert await wait_until(lambda: tag in state.manual_state()["pending"], 5), "대기 표시가 없다"
+    assert await wait_until(lambda: not A.bit(lk.status[A.D_INTERLOCK], A.ILK_VALVE_OK), 5)
+    assert await wait_until(lambda: lk.applied_valve == 0, 3), "PLC 가 요청을 지우지 않았다"
     assert not A.bit(sim.reg[A.D_VALVE_OUT], DEV.valve_bit(tag)), "허가 없이 밸브가 나갔다"
+    assert await wait_until(lambda: any(tag in m and "Valve Permit 없음" in m for _l, m in lk.pending_toasts), 3),         lk.pending_toasts
     await valve_permit(lk, sim)
-    assert await wait_until(lambda: A.bit(sim.reg[A.D_VALVE_OUT], DEV.valve_bit(tag)), 2)
-    assert await wait_until(lambda: tag not in state.manual_state()["pending"], 2)
+    await asyncio.sleep(1.5)
+    assert not A.bit(sim.reg[A.D_VALVE_OUT], DEV.valve_bit(tag)), "지운 요청이 허가 뒤 저절로 열렸다"
+    assert lk.applied_valve == 0
+    assert tag not in state.manual_state()["pending"]
 
 
 

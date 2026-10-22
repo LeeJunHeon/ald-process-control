@@ -5,7 +5,7 @@
  *   모델은 포트 기반(배관 끝 = 상자 포트 · 갈래 · 열린 끝)이고 검사기(js/pidcheck.js)가 규칙 11 가지를 본다 —
  *   끝과 끝이 맞지 않거나 배관이 상자를 지나는 그림은 시험에서 걸린다.
  * ★ 밸브 열림/닫힘은 D00010(실제 출력)을, VV·IV-E·IV-B·펌프는 D00014 를 본다. '요청'이 아니라 '실제 출력'.
- *   요청했는데 출력이 없는 밸브(허가 대기)는 노랑 점선(Pending). 끊김 · 멈춤이면 흐린 점선(Unknown).
+ *   요청은 있는데 출력이 1 s 넘게 없는 것(서버 manual.pending — v0.8.2)은 노랑 점선(Pending). 끊김 · 멈춤이면 흐린 점선(Unknown).
  * ★ 색은 CSS 변수만. 글자는 13 단위 이상 · 굵기 400 · 700.
  * ★ 조작 가능한 요소(data-fp)를 누르면 그 옆에 조작 창(faceplate.js)이 뜬다. 누르기 영역 · Tab 순서는
  *   검사기와 같은 규칙(PidCheck.hitAreas) — 무리(Precursor → Reactant → Chamber → Exhaust) 다음 위 → 아래, 왼쪽 → 오른쪽.
@@ -210,7 +210,7 @@
   var LEGEND = [
     ['s.open', 'valve-open', '', '밸브 출력 켜짐(열림)'],
     ['s.closed', 'closed', '', '밸브 출력 꺼짐(닫힘)'],
-    ['s.pending', 'pending', '', '요청은 들어갔지만 PLC 허가(Valve Permit)가 없어 출력이 꺼져 있음 — 허가가 생기면 바로 열림'],
+    ['s.pending', 'pending', '', '요청은 남아 있는데 출력이 1 s 넘게 꺼져 있음(허가 · 조건 대기) — 수동 밸브라면 PLC 가 지우지 않은 요청(래더 P50 확인)'],
     ['s.unknown', 'unknown', '', '연결이 끊겨 상태를 모름'],
     ['s.flow', 'flow', '', '가스가 흐르는 배관(MFC 유량 또는 열린 밸브)'],
     ['s.auto', 'auto', 'o3', 'PLC 가 자동으로 다루는 밸브(PV-B)']

@@ -179,6 +179,8 @@ async def test_reconnect_sync_uses_applied_area(sim):
     s.base_pressure = 1.0
     assert await wait_until(lambda: not A.bit(s.reg[A.D_INPUT0], A.IN0_ATM), 2)
     s.write(A.D_MANUAL_VALVE, [0x0002])         # 옛 요청 — PLC 가 이미 지운 것
+    s.pump_req = s.exh_req = True                # v0.8.2: 허가가 있어야 반영이 남는다(래더 P50)
+    assert await wait_until(lambda: A.bit(s.reg[A.D_INTERLOCK], A.ILK_VALVE_OK), 10)
     s.man_valve = 0x0001                         # PLC 가 지금 반영하고 있는 것
     assert await wait_until(lambda: s.reg[A.D_APPLIED_VALVE] == 0x0001, 1)
     lk = await new_link(sim)
@@ -243,6 +245,8 @@ async def test_periodic_compare_logs_plc_clear(sim):
     lk = await new_link(sim, events)
     try:
         assert await wait_until(lambda: not A.bit(lk.status[A.D_INPUT0], A.IN0_ATM), 3)
+        s.pump_req = s.exh_req = True            # v0.8.2: 허가가 있어야 반영이 남는다(래더 P50)
+        assert await wait_until(lambda: A.bit(s.reg[A.D_INTERLOCK], A.ILK_VALVE_OK), 10)
         res = await lk.manual_apply(lambda cur: ({**cur, "valve": 0x0002}, ""))
         assert res["result"] == A.RESULT_OK and not res["lost_valve"]
         await asyncio.sleep(0.7)                   # 주기 읽기 한 번 이상

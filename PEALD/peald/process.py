@@ -1423,6 +1423,40 @@ def valve_permit_missing(s) -> list:
     return miss or ["PLC 허가 조건 확인"]
 
 
+def rf_permit_missing(s, prm=None, conv=None) -> list:
+    """v0.8.2: RF 허가(인터락 b8)에 빠진 조건 — 래더 P30 RF 허가 렁과 같은 조건(Valve Permit · RF 준비 입력 ·
+    RF 알람 입력 없음 · 반사 전력 알람 없음 · PRM_RF_MAX > 0 · 베이스 압력 < CVG ≤ RF 최대 압력). RF 가 없는 장비이거나
+    허가가 있으면 []. 위가 다 맞는데 허가가 없으면 ['PLC 허가 조건 확인'].
+    prm: 되읽은 PRM {주소: 원시값}(PlcLink.prm_readback), conv: 압력 글을 Torr 로(없으면 원시값 비교만)."""
+    if not DEV.HAS_RF:
+        return []
+    ilk, i1 = s[A.D_INTERLOCK], s[A.D_INPUT1]
+    if A.bit(ilk, A.ILK_RF_OK):
+        return []
+    miss = []
+    if not A.bit(ilk, A.ILK_VALVE_OK):
+        miss.append("Valve Permit")
+    if not A.bit(i1, A.IN1_RF_READY):
+        miss.append("RF 준비 입력")
+    if A.bit(i1, A.IN1_RF_ALM):
+        miss.append("RF 알람 입력 꺼짐")
+    if A.bit(s[A.D_ALARM1], A.ALM1_RF_REF):
+        miss.append("반사 전력 알람 리셋")
+    prm = prm or {}
+    rf_max = prm.get(A.D_PRM_RF_MAX)
+    if rf_max is not None and A.to_signed16(rf_max) <= 0:
+        miss.append("PLC 의 RF 상한(PRM_RF_MAX) > 0")
+    base, pmax, cvg = prm.get(A.D_PRM_BASE_PRESS), prm.get(A.D_PRM_RF_MAX_PRESS), s[A.D_CVG_RAW]
+    if base is not None and pmax is not None and not (A.to_signed16(cvg) > A.to_signed16(base)
+                                                      and A.to_signed16(cvg) <= A.to_signed16(pmax)):
+        if conv is not None and getattr(conv, "cvg", None) is not None:
+            miss.append(f"압력 {_torr(conv.cvg.to_torr(base))} < P ≤ {_torr(conv.cvg.to_torr(pmax))} Torr"
+                        f"(지금 {_torr(conv.cvg.to_torr(cvg))} Torr)")
+        else:
+            miss.append("압력 범위(베이스 < P ≤ RF 최대 압력)")
+    return miss or ["PLC 허가 조건 확인"]
+
+
 def trip_pending(s) -> bool:
     """v0.7.2: 시퀀서 8 로 끝났고 PC 끊김 트립(b6)이 남았는데 아직 안전 정지 전(장비 상태 ≠ 6) · 중대 알람 없음 —
     다음 스캔에 트립만으로 안전 정지한다."""

@@ -697,17 +697,27 @@ async def _manual_send(ws, what: str, mutate, ok_text=None):
 
 
 def _lost_reason(box) -> str:
-    """명령 12 는 받았는데 반영 영역에 없는 비트의 이유."""
+    """명령 12 는 받았는데 반영 영역에 없는 비트의 이유.
+    ★ v0.8.2: 래더 P50 은 Valve Permit 이 없으면 밸브 요청을, RF 허가가 없으면 RF 요청을 같은 스캔에 지운다."""
+    from .process import valve_permit_missing, rf_permit_missing
     link = state.link
     s = link.status
+    ilk = s[A.D_INTERLOCK]
+    safe = A.bit(ilk, A.ILK_SAFE_STOP_REQ)
     why = []
     if box.get("lost_valve") and A.bit(s[A.D_INPUT0], A.IN0_ATM):
         why.append("챔버 대기압 입력이면 PLC 가 밸브 요청을 바로 지웁니다")
+    elif box.get("lost_valve") and not safe and not A.bit(ilk, A.ILK_VALVE_OK):
+        why.append("Valve Permit 이 없으면 PLC 가 밸브 요청을 바로 지웁니다 — 필요: "
+                   + " · ".join(valve_permit_missing(s)))
     if box.get("lost_aux") and DEV.HAS_RF and not (box.get("sent") or {}).get("rf"):
         why.append("RF 전력이 0 이면 PLC 가 RF 요청을 버립니다")
-    if A.bit(s[A.D_INTERLOCK], A.ILK_SAFE_STOP_REQ):
+    elif box.get("lost_aux") and DEV.HAS_RF and not safe and not A.bit(ilk, A.ILK_RF_OK):
+        why.append("RF 허가가 없으면 PLC 가 RF 요청을 바로 지웁니다 — 필요: "
+                   + " · ".join(rf_permit_missing(s, link.prm_readback, state.conv)))
+    if safe:
         why.append("안전 정지 요구 중")
-    return " · ".join(why) if why else link.clear_reason(bool(box.get("lost_valve")))
+    return " · ".join(why) if why else link.clear_reason(bool(box.get("lost_valve")), bool(box.get("lost_aux")))
 
 
 async def _cmd_manual_valve(d, ws):
@@ -734,7 +744,8 @@ async def _cmd_manual_valve(d, ws):
         if not want and not was["open"]:
             return None, "이미 닫힘(요청 없음) — 다시 보내지 않았습니다", True
         if want and not A.bit(state.link.status[A.D_INTERLOCK], A.ILK_VALVE_OK):
-            # PLC 는 요청을 남기고 출력만 막는다(Pending) — 허가가 생기면(펌핑 등) 운전자 조작 없이 저절로 열린다. 보내지 않는다
+            # ★ v0.8.2: 래더 P50 은 허가가 없으면 받은 요청을 같은 스캔에 지운다 — 보내도 반영되지 않으니 보내지 않는다
+            #   (고치기 전 래더는 요청을 남겨 허가가 생길 때 저절로 열었다)
             miss = valve_permit_missing(state.link.status)
             return None, "Valve Permit 이 없어 보내지 않았습니다 — 필요: " + " · ".join(miss)
         new = (cur["valve"] | bit) if want else (cur["valve"] & ~bit)
@@ -965,6 +976,11 @@ async def _cmd_manual_rf(d, ws):
 
     def mutate(cur):
         if on:
+            # ★ v0.8.2: RF 허가(인터락 b8)가 없으면 보내지 않는다 — 래더 P50 이 같은 스캔에 지운다(화면만 막고 있었다)
+            if not A.bit(state.link.status[A.D_INTERLOCK], A.ILK_RF_OK):
+                from .process import rf_permit_missing
+                miss = rf_permit_missing(state.link.status, state.link.prm_readback, state.conv)
+                return None, "RF Permit 이 없어 보내지 않았습니다 — 필요: " + " · ".join(miss)
             cur["aux"] |= 1 << A.AUX_RF
             cur["rf"] = raw
         else:

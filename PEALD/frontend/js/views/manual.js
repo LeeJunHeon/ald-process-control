@@ -170,12 +170,14 @@
       if (!vd) return;
       var req = conn && core.bit(mn.valve_request, vd.bit);
       var app = conn && core.bit(mn.valve_out, vd.bit);
+      // ★ v0.8.2: Pending 은 서버가 1 s 넘게 이어진 것만 준다(manual.pending) — 읽는 때가 달라 생기는 한순간은 그리지 않는다
+      var pend = conn && !app && (mn.pending || []).indexOf(tag) >= 0;
       // 열기는 허가가 있어야(없으면 서버도 보내지 않는다). 이미 요청 · 열림이면 누르면 닫기
       var noPermit = conn && !mn.valve_permit && !req && !app;
       var wait = busy('valve:' + tag);
       var off = !can || !mn.unlocked || noPermit || wait;
       e.classList.toggle('on', app);
-      e.classList.toggle('req', req && !app);
+      e.classList.toggle('req', pend);
       e.classList.toggle('dis', off);
       e.tabIndex = off ? -1 : 0;
       var tip = wait ? BUSY_TIP : (can && mn.unlocked && noPermit) ? noPermitTip : '';
@@ -184,7 +186,7 @@
       if (st) {
         core.html(st, !conn ? fmt.DASH
           : app ? core.chip('● ' + T('s.open'), 'ok')
-            : req ? core.chip('◐ ' + T('s.pending'), 'warn', 'Valve Permit 이 없어 출력이 꺼져 있습니다 — 허가가 생기면 바로 열립니다')
+            : pend ? core.chip('◐ ' + T('s.pending'), 'warn', 'PLC 가 지우지 않은 요청이 남아 있습니다(출력 꺼짐 1 s 넘음 · 래더 P50 확인) — 허가가 생기면 열릴 수 있으니 필요 없으면 Close')
               : core.chip('○ ' + T('s.closed'), 'off'));
       }
     });
@@ -217,7 +219,7 @@
 
     var ap = mn.aux_pending || [];
     core.setText('mnAuxPending', conn && ap.length
-      ? '허가 대기(요청했지만 출력 안 나감): ' + ap.join(' · ') : '');
+      ? '허가 대기(요청했지만 1 s 넘게 출력 안 나감): ' + ap.join(' · ') : '');
     if ((s.device || {}).has_o3) {
       var left = mn.o3_off_left_s || 0;
       core.setText('mnO3Note', left > 0

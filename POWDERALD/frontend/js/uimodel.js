@@ -336,7 +336,7 @@
   var STATE_TIP = {
     open: 'Open — 출력 켜짐',
     closed: 'Closed — 출력 꺼짐',
-    pending: 'Pending — 요청은 들어갔지만 Valve Permit 이 없어 출력이 꺼져 있음. 허가가 생기면 바로 열립니다',
+    pending: 'Pending — 요청은 남아 있는데 출력이 1 s 넘게 꺼져 있음(허가 · 조건 대기). 수동 밸브라면 PLC 가 지우지 않은 요청(래더 P50 확인) — 허가가 생기면 열릴 수 있으니 필요 없으면 Close',
     unknown: 'Unknown — 연결이 끊겨 상태를 모름',
     auto: 'PLC 가 자동으로 다루는 밸브(O3 발생기 켜짐 · PV-R 닫힘이면 열림)'
   };

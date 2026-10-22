@@ -26,6 +26,10 @@ PC_NOTICE_KEYS = ("plc_disconnected", "plc_hb_stall", "prm_mismatch",
 
 
 ALARM_LOAD_MAX = 200
+# v0.8.2: 요청은 있는데 출력이 꺼진 상태가 이만큼 이어져야 Pending 으로 친다 — 래더 P50 은 허가가 꺼지면 요청을 같은
+#   스캔에 지우는데, PC 는 반영 영역(500 ms)과 출력(100 ms)을 다른 때 읽어 그 사이 잠깐 '요청 있음 · 출력 꺼짐' 으로 보인다
+PENDING_HOLD_S = 1.0
+_now = time.monotonic            # 시험이 가짜 시계를 넣는다
 # ★ v0.4.12: 알람 CSV 는 끝에서 이만큼만 읽는다(10 만 줄을 통째로 읽던 것 — create_app 안에서 1.65 s · 72 MB).
 #   한 줄 ≈ 60~100 B 라 1 MB 면 1 만 줄 이상 — 최근 200 건과 그 해제에 넉넉하다
 ALARM_TAIL_BYTES = 1 << 20
@@ -217,6 +221,7 @@ class State:
         self.manual_unlock_until = 0.0  # 수동 밸브 잠금 해제 만료 시각
         self.o3_off_at = 0.0            # O3 바이패스 라인을 닫을 시각 (서버 타이머)
         self.o3_off_task = None
+        self._pend_since = {}           # v0.8.2: (v|a, 이름) → 요청 있음 · 출력 꺼짐을 처음 본 시각(_now)
 
     # ===================== 설정 =====================
     def install_config(self, cfg: dict, problems: list, source: str):
@@ -482,15 +487,20 @@ class State:
                                            + (" · ".join(cause) or "중대 알람") + " 입니다 — 원인을 없앤 뒤 [Alarm Reset]",
                                     "plc"])
             if conn and link.status[A.D_STATE] not in (A.STATE_READY, A.STATE_RUN, A.STATE_PAUSE, A.STATE_STOPPING):
-                # ★ v0.8.0: 허가가 없어 출력이 꺼진 수동 밸브 요청 — 허가가 다시 생기면(펌핑 등) 운전자 조작 없이 열린다
+                # ★ v0.8.2: 래더 P50 은 허가가 꺼지면 수동 요청을 지운다 — 그런데도 1 s 넘게 남은 밸브 · RF 요청은 PLC 가
+                #   지우지 않은 것(고치기 전 래더). 허가가 다시 생기면 운전자 조작 없이 열리거나 켜진다 — 안전망 알림.
+                #   Powder O3 라인(발생기 · IV-B)은 원래 허가를 기다리는 순서라 넣지 않는다
                 try:
-                    pend = self.manual_state().get("pending") or []
+                    ms = self.manual_state()
+                    pend = list(ms.get("pending") or [])
+                    if DEV.HAS_RF and "RF" in (ms.get("aux_pending") or []):
+                        pend.append("RF")
                 except Exception:  # noqa: BLE001 — 다른 알림(트립 · 정비)을 막지 않게
                     pend = []
                 if pend:
-                    out.append(["warn", "수동 밸브 요청이 허가를 기다립니다: " + " · ".join(pend) +
-                                " — Valve Permit 이 다시 생기면 그 밸브가 바로 열립니다. 필요 없으면 그 밸브 [Close] 또는 "
-                                "[Close All Valves]", "plc"])
+                    out.append(["warn", "PLC 가 지우지 않은 수동 요청: " + " · ".join(pend) +
+                                " — 허가가 없는데 요청이 남아 있습니다(래더 P50 확인). 허가가 다시 생기면 열리거나 켜집니다"
+                                " — 필요 없으면 그 밸브 [Close](RF 는 OFF) 또는 [Close All Valves]", "plc"])
             if self.runner is not None:
                 out += [list(x) for x in getattr(self.runner, "watch_notices", [])]
             from .maintenance import maint
@@ -537,7 +547,7 @@ class State:
     def manual_state(self) -> dict:
         """수동 조작 화면이 쓰는 값. 요청(PLC 반영 영역 D04012·D04050)과
         출력(D00010·D00014)을 나란히 보여 준다 — 요청했는데 안 나간 것(허가 대기)을
-        운전자가 알아야 한다."""
+        운전자가 알아야 한다(v0.8.2: 1 s 넘게 이어진 것만 pending · aux_pending)."""
         import time as _t
         link = self.link
         conn = bool(link and link.connected)
@@ -545,10 +555,18 @@ class State:
         out = link.status[A.D_VALVE_OUT] if conn else 0
         aux_req = link.applied_aux if conn else 0
         aux_out = (link.status[A.D_AUX_OUT] & DEV.AUX_CMD_MASK) if conn else 0
-        pending = [v["tag"] for v in DEV.VALVES
-                   if (req >> v["bit"]) & 1 and not (out >> v["bit"]) & 1]
-        aux_pending = [a["tag"] for a in DEV.AUX
-                       if (aux_req >> a["bit"]) & 1 and not (aux_out >> a["bit"]) & 1]
+        raw_v = [v["tag"] for v in DEV.VALVES if (req >> v["bit"]) & 1 and not (out >> v["bit"]) & 1]
+        raw_a = [a["tag"] for a in DEV.AUX if (aux_req >> a["bit"]) & 1 and not (aux_out >> a["bit"]) & 1]
+        # ★ v0.8.2: PENDING_HOLD_S 넘게 이어진 것만 Pending — 읽는 때가 달라 생기는 한순간을 빼고, 래더가 지우지 않은
+        #   요청(고치기 전 래더 · 시험 결함 old_p50)이나 Powder O3 라인처럼 정말 기다리는 것만 남긴다
+        now = _now()
+        cur = {("v", t) for t in raw_v} | {("a", t) for t in raw_a}
+        for k in [k for k in self._pend_since if k not in cur]:
+            del self._pend_since[k]
+        for k in cur:
+            self._pend_since.setdefault(k, now)
+        pending = [t for t in raw_v if now - self._pend_since[("v", t)] >= PENDING_HOLD_S]
+        aux_pending = [t for t in raw_a if now - self._pend_since[("a", t)] >= PENDING_HOLD_S]
         o3_left = max(0, int(round(self.o3_off_at - _t.monotonic()))) if self.o3_off_at else 0
         permit = bool(conn and A.bit(link.status[A.D_INTERLOCK], A.ILK_VALVE_OK))
         missing = []

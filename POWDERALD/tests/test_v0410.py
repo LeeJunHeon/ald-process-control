@@ -1049,7 +1049,11 @@ def test_e7_result_level_shared(res, lv):
     assert logview.result_level(res) == lv and P.result_level(res) == lv
 
 
-def test_e7_log_level_and_list_level(cfg):
+def test_e7_log_level_and_list_level(cfg, monkeypatch):
+    # v0.8.2: 정비 카운터 글('run-<초>' key — 앞 시험이 같은 초에 세어 두었는지에 따라 info 가 나오거나 안 나온다)은
+    #   이 시험의 뜻(끝 결과 수준)이 아니다 — 빈 글로 돌려 혼자 돌려도 · 순서가 바뀌어도 같게
+    from powderald import maintenance
+    monkeypatch.setattr(maintenance.maint, "count_run", lambda *a, **k: "")
     r, _t = _runner_with(cfg, blocks=2, repeat=7)
     got = []
     r._finish(_s(6, blk=2, cyc=7), time.time(), lambda lv, m: got.append(lv))
