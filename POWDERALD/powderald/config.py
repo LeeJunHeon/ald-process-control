@@ -42,7 +42,8 @@ DEFAULTS = {
         "base_wait_timeout_s": 1800,     # 베이스 압력 대기 제한
         "base_stable_s": 3,              # 이만큼 계속 도달해 있어야 시작한다
         "heater_ready": {"enabled": False, "band_c": 2.0, "stable_s": 60},
-        "o3_off_delay_s": 10,
+        # O3 끄기 뒤 바이패스 라인 닫기 지연(s) — O3 장비(Powder)만
+        **({"o3_off_delay_s": 10} if DEV.HAS_O3 else {}),
         # v0.7.0(A5): 공정 중 압력 상한 · 히터 이탈 경고 — PC 감시(PC 가 없으면 동작하지 않는다). 0 = 끔
         "press_high_torr": 10, "press_high_s": 5, "press_high_abort": False,
         "heater_dev_c": 15, "heater_dev_s": 120,

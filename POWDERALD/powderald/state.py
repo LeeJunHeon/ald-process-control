@@ -500,7 +500,8 @@ class State:
                 if pend:
                     out.append(["warn", "PLC 가 지우지 않은 수동 요청: " + " · ".join(pend) +
                                 " — 허가가 없는데 요청이 남아 있습니다(래더 P50 확인). 허가가 다시 생기면 열리거나 켜집니다"
-                                " — 필요 없으면 그 밸브 [Close](RF 는 OFF) 또는 [Close All Valves]", "plc"])
+                                " — 필요 없으면 그 밸브 [Close]" + ("(RF 는 OFF)" if "RF" in pend else "") +
+                                " 또는 [Close All Valves]", "plc"])
             if self.runner is not None:
                 out += [list(x) for x in getattr(self.runner, "watch_notices", [])]
             from .maintenance import maint

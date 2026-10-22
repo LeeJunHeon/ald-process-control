@@ -115,6 +115,38 @@ def load_config(path: str = ""):
     return cfg, used, what
 
 
+LOCAL_HOSTS = ("127.0.0.1", "localhost")
+FAKE_HINT = ("이 폴더의 config/config.example.json 을 config.json 으로 복사해 plc 의 host 127.0.0.1 · port · simulate false 만 "
+             "바꾸세요(두 프로그램 폴더 모두 — 포트는 PEALD 15301 · Powder 15401)")
+
+
+def fake_target(cfg: dict, what: str):
+    """config.json 이 가짜 PLC 를 가리키면 (host, port), 아니면 None — 가리킨다 = 프로그램 설정 파일(예시 설정 아님) ·
+    plc.simulate false · plc.host 가 이 PC(127.0.0.1 · localhost).
+    ★ v0.8.2(짝 맞춤): 가짜 PLC · plc_ctl 의 포트를 config.json 한곳에서 정한다 — 명령줄 포트가 config.json 과 어긋나거나,
+      config.json 없이 가짜 PLC 만 띄워 프로그램은 예시 설정(내장 시뮬레이터)으로 뜨는 일이 없게."""
+    plc = cfg.get("plc") or {}
+    if what != "설정 파일" or plc.get("simulate", True) or str(plc.get("host", "")).strip() not in LOCAL_HOSTS:
+        return None
+    try:
+        port = int(plc.get("port"))
+    except (TypeError, ValueError):
+        return None
+    return (str(plc.get("host")).strip(), port) if 0 < port < 65535 else None
+
+
+def why_not_fake(cfg: dict, what: str, used: str) -> str:
+    """fake_target 이 None 인 까닭 한 줄."""
+    plc = cfg.get("plc") or {}
+    if what != "설정 파일":
+        return f"이 폴더에 config.json 이 없습니다(예시 설정 {os.path.basename(used)} — 프로그램이 내장 시뮬레이터로 뜹니다)"
+    if plc.get("simulate", True):
+        return "config.json 의 plc.simulate 가 true 입니다(프로그램이 내장 시뮬레이터로 뜹니다)"
+    if str(plc.get("host", "")).strip() not in LOCAL_HOSTS:
+        return f"config.json 의 plc.host 가 {plc.get('host')} 입니다(실제 PLC 자리 — 가짜 PLC 는 127.0.0.1)"
+    return f"config.json 의 plc.port 가 {plc.get('port')!r} 입니다"
+
+
 def ask(prompt: str):
     """입력 한 줄. EOF(Ctrl+Z · Ctrl+D · 닫힌 입력)면 None — traceback 없이 '쓰지 않음'으로 끝나게(C10)."""
     try:

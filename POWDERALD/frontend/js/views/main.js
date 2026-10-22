@@ -477,7 +477,8 @@
       if (!names.length) return null;
       return { t: 'Pumping Start 를 할까요?', ok: T('b.pumpStart'),
         b: 'PLC 가 지우지 않은 수동 요청이 남아 있습니다: <b>' + core.esc(names.join(' · ')) + '</b> — 펌핑으로 허가가 생기면 ' +
-           '바로 열리거나 켜집니다(래더 P50 확인).<br>먼저 그 밸브를 Close(RF 는 OFF) 하거나 [Close All Valves] 로 지우세요. ' +
+           '바로 열리거나 켜집니다(래더 P50 확인).<br>먼저 그 밸브를 Close' + (names.indexOf('RF') >= 0 ? '(RF 는 OFF)' : '') +
+           ' 하거나 [Close All Valves] 로 지우세요. ' +
            '그대로 펌핑할까요?' };
     }
     var cf = CONFIRM[c];

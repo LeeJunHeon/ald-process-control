@@ -7,7 +7,12 @@ PLC 가 서버, 이 프로그램이 클라이언트입니다.
 - 화면: pywebview 창 안의 HTML/CSS/JS (**외부 라이브러리 없음**, 오프라인 전제)
 - 화면 통신: WebSocket 하나 (`/ws`) — 상태의 주인은 서버입니다
 
-> **버전 0.8.2** — Pending 근본 대책: 래더 P50 이 Valve Permit(PEALD 는 RF 허가도)이 꺼지면 수동 요청을 같은 스캔에 지운다
+> **버전 0.8.3** — 두 폴더 짝 맞춤: 두 폴더 비교 시험(`tests/test_pair.py` — 한쪽에만 있는 파일 · 한쪽만 고친 공통 파일 ·
+> 한쪽에만 있거나 예시보다 오래된 config.json) · 가짜 PLC · plc_ctl 의 포트를 config.json 에서(없거나 가짜 PLC 를 가리키지
+> 않으면 가짜 PLC 가 켜지지 않음) · 한쪽만 고쳤던 곳 3 곳 · 안전망 글에서 '(RF 는 OFF)' 빼기(Powder 는 RF 없음) · e2e 의 O3 라인 끄기는
+> 바이패스 라인까지 닫힐 때까지 기다림(manual '같은 열기 두 번' 이 가끔 실패하던 것) · e2e 레시피 저장은 이름이 같아도 내용이
+> 바뀌면 다시(전체를 한 번에 돌리면 maint 정비 카운터가 앞 시나리오 레시피로 FAIL 하던 것) — 아래 '가짜 PLC'.
+> 버전 0.8.2 — Pending 근본 대책: 래더 P50 이 Valve Permit(PEALD 는 RF 허가도)이 꺼지면 수동 요청을 같은 스캔에 지운다
 > (허가가 돌아와도 저절로 열리거나 켜지지 않음) → 가짜 PLC 같은 규칙 · PLC 가 지운 사유와 토스트 · Pending 은 1 s 넘게
 > 남을 때만(고치기 전 래더 안전망) · (PEALD) RF 켜기도 RF 허가 확인 · 시험 — 아래 '출력 단계 (래더 P60)' · '수동 조작' ·
 > '내장 PLC 시뮬레이터'.
@@ -602,17 +607,24 @@ PLC 가 준비되기 전에 '실제 공정처럼' 시험하는 도구다. 내장
 
 ### 1. 가짜 PLC 띄우기 → 프로그램을 가짜 PLC 로
 
+먼저 **이 폴더에 config.json** 을 둔다 — `config/config.example.json` 을 `config.json` 으로 복사해 plc 의 세 값만
+`"host": "127.0.0.1", "port": 15401, "simulate": false` 로 바꾼다(PEALD 는 15301). **두 프로그램 폴더 모두 같은 방식으로** —
+한쪽에만 두면 다른 쪽 프로그램은 예시 설정(내장 시뮬레이터)으로 떠서 가짜 PLC 에 붙지 않는다(`tests/test_pair.py` 가 config.json 이
+한쪽에만 있거나 예시 설정보다 항목이 적으면 실패시킨다).
+
 ```
-python test/fake_plc.py --port 15401 --speed 10 --log fake_plc.log
-python test/fake_plc.py --port 15401 --state vac            (진공에서 시작 · hot = 진공 + 가열됨)
-python test/fake_plc.py --port 15401 --device-id 0x1234     (틀린 장비 ID 시험)
+python test/fake_plc.py --speed 10 --log fake_plc.log
+python test/fake_plc.py --state vac            (진공에서 시작 · hot = 진공 + 가열됨)
+python test/fake_plc.py --device-id 0x1234     (틀린 장비 ID 시험)
 ```
 
-config.json 의 plc 를 `"host": "127.0.0.1", "port": 15401, "simulate": false` 로 바꾸고 프로그램을 실행한다
-(`python run.py`). 가짜 PLC 는 프로그램과 같은 설정을 읽어야 아날로그 환산이 같다 — `--config` 가 없으면 프로그램과 같은 기본 경로
+포트는 `--port` 가 없으면 config.json 의 `plc.port` 다(plc_ctl 도 같다 — 두 프로그램 같은 명령). config.json 이 없거나 가짜 PLC 를
+가리키지 않으면(`simulate` true · 실제 PLC 주소) 가짜 PLC 는 켜지지 않고 까닭과 만드는 법을 찍는다(종료 코드 2). `--port` 를 직접
+주면 그 포트로 켜고, config.json 과 어긋나면 '프로그램은 이 가짜 PLC 에 붙지 않습니다' 경고를 콘솔과 `--log` 에 남긴다.
+그다음 프로그램을 실행한다(`python run.py`). 가짜 PLC 는 프로그램과 같은 설정을 읽어야 아날로그 환산이 같다 — `--config` 가 없으면 프로그램과 같은 기본 경로
 (이 폴더의 config.json, 없으면 예시 설정)를 읽고, 시작할 때 어느 설정을 쓰는지 찍는다(plc_ctl 도 같다).
 `--log` 파일에는 PLC 쪽에서 본 PC 하트비트 공백(600 ms 이상) · 받은 명령(번호 · 코드) · 장비 상태 · 시퀀서 ·
-알람 워드 변화가 남는다. 제어 포트는 `--port + 1`(127.0.0.1 만), 제어 파일(`--ctl-file`)에 JSON 한 줄씩 **덧붙이기(>>, Add-Content)만** 한다 —
+알람 워드 변화가 남는다. 제어 포트는 포트 + 1(127.0.0.1 만), 제어 파일(`--ctl-file`)에 JSON 한 줄씩 **덧붙이기(>>, Add-Content)만** 한다 —
 켤 때 이미 있던 줄은 실행하지 않고(지난번에 남은 `quit` 으로 바로 꺼지지 않게), 파일이 줄어들면(`>` 로 덮어씀) 처음부터
 다시 읽는다. 명령은 ASCII JSON 이라 NUL · BOM 바이트를 지우고 줄을 나눈다 — UTF-8(BOM 있어도) · UTF-16 LE/BE(PowerShell 5
 의 `>>`) · 섞인 파일(cmd `echo` 로 만든 파일에 PowerShell `>>` 로 덧붙인 것)을 모두 읽는다. PowerShell 이면
@@ -622,16 +634,19 @@ config.json 의 plc 를 `"host": "127.0.0.1", "port": 15401, "simulate": false` 
 ### 2. plc_ctl 로 고장 넣기
 
 ```
-python test/plc_ctl.py --port 15401 status                  (1 s 마다 — 상태 · 시퀀서 · 알람 · 입력 · 출력 · 압력 · 온도)
-python test/plc_ctl.py --port 15401 faults                  (고장 목록 · 켜짐 표시)
-python test/plc_ctl.py --port 15401 fault emo on            (끄기는 off)
-python test/plc_ctl.py --port 15401 cut blackhole 2.0       (요청을 받고 답하지 않음 n 초)
-python test/plc_ctl.py --port 15401 cut unplug 2.0          (케이블 뽑힘 — 요청도 버리고 답하지 않음 n 초)
-python test/plc_ctl.py --port 15401 cut refuse 3            (연결을 끊고 n 초 동안 연결 거부)
-python test/plc_ctl.py --port 15401 cut blackhole 2 --on cmd (다음 명령 번호 D01001 쓰기가 오는 그 요청부터 끊기)
-python test/plc_ctl.py --port 15401 id 1234                 (장비 ID 바꾸기 — 16 진, 0x1234 · h1234 도)
-python test/plc_ctl.py --port 15401 speed 20 · plant vac
+python test/plc_ctl.py status                               (1 s 마다 — 상태 · 시퀀서 · 알람 · 입력 · 출력 · 압력 · 온도)
+python test/plc_ctl.py faults                               (고장 목록 · 켜짐 표시)
+python test/plc_ctl.py fault emo on                         (끄기는 off)
+python test/plc_ctl.py cut blackhole 2.0                    (요청을 받고 답하지 않음 n 초)
+python test/plc_ctl.py cut unplug 2.0                       (케이블 뽑힘 — 요청도 버리고 답하지 않음 n 초)
+python test/plc_ctl.py cut refuse 3                         (연결을 끊고 n 초 동안 연결 거부)
+python test/plc_ctl.py cut blackhole 2 --on cmd             (다음 명령 번호 D01001 쓰기가 오는 그 요청부터 끊기)
+python test/plc_ctl.py id 1234                              (장비 ID 바꾸기 — 16 진, 0x1234 · h1234 도)
+python test/plc_ctl.py speed 20 · plant vac
 ```
+
+대상은 `--host` · `--port` 를 둘 다 안 주면 config.json 이 가리키는 가짜 PLC 다(아니면 127.0.0.1:502 와 그 까닭 한 줄).
+실제 PLC 는 4 절처럼 `--host` 를 직접 적는다 — config.json 이 실제 PLC 를 가리켜도 저절로 붙지 않는다.
 
 고장 키: emo · air · n2 · cw · lid · pump_alm · leak · ot · mfc1_stuck · tc1_comm~tc3_comm · pc_hb_stop · chamber_leak(v0.7.0 — 막혀 있을 때 새는 속도 × 100) · plc_stop ·
 ive_stuck · pump_nofb · o3_alm · o3_room · bp_alm · bp_nofb
@@ -995,7 +1010,7 @@ O3 발생기 알람 / 실내 O3 감지 / 바이패스 펌프 알람, 온도조�
 - **Pending · 안전망(v0.8.2)**: 요청은 있는데 출력이 꺼진 상태가 **1 s 넘게** 이어져야 Pending(`state.PENDING_HOLD_S` — PC 는
   반영 영역(500 ms)과 출력(100 ms)을 다른 때 읽어 한순간 '요청 있음 · 출력 꺼짐' 으로 보인다). 1 s 넘게 남은 밸브 요청은
   PLC 가 지우지 않은 것(고치기 전 래더) — 연결됨 · 공정 아님이면 Program Notices 에 'PLC 가 지우지 않은 수동 요청: PV-1 — 허가가
-  없는데 요청이 남아 있습니다(래더 P50 확인). 허가가 다시 생기면 열리거나 켜집니다 — 필요 없으면 그 밸브 [Close](RF 는 OFF) 또는
+  없는데 요청이 남아 있습니다(래더 P50 확인). 허가가 다시 생기면 열리거나 켜집니다 — 필요 없으면 그 밸브 [Close] 또는
   [Close All Valves]'(warn). O3 라인(발생기 · IV-B)은 원래 허가를 기다리는 순서라 넣지 않는다(그대로)
 - **Pumping Start 확인**: PLC 가 지우지 않은 요청(Pending)이 남아 있을 때만 — 고친 래더에서는 뜨지 않는다. 명령줄 · 조작 창
   모두 확인 창('PLC 가 지우지 않은 수동 요청이 남아 있습니다: PV-1 — 펌핑으로 허가가 생기면 바로 열리거나 켜집니다(래더 P50 확인) …')

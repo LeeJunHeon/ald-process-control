@@ -544,7 +544,7 @@ class Run:
     def __init__(self, h: Harness, op: Operator, rep: Report):
         self.h, self.op, self.rep = h, op, rep
         self.scen = ""
-        self.saved = set()
+        self.saved = {}                # 이름 → 저장한 내용(JSON) — 같은 이름이라도 내용이 다르면 다시 저장한다(save)
         self.only_faults = []          # --faults emo,leak — 고장 시나리오를 이것만
 
     def check(self, item, ok, expected, actual):
@@ -618,17 +618,23 @@ class Run:
             await self.op.send("manual_o3", action="on", value=100)
             return await self.op.wait(lambda: self.op.ilk(A.ILK_O3_OK), 20)
         await self.op.send("manual_o3", action="off")
-        return await self.op.wait(lambda: not (self.op.live.get("extra") or {}).get("o3_on"), 20)
+        # ★ v0.8.3: 끄기는 발생기 → process.o3_off_delay_s(10 s, 서버 타이머) 뒤 바이패스 라인(IV-B · BPMP) 닫기 — 라인이 다 닫힐
+        #   때까지 기다린다. 전에는 발생기만 보고 넘어가 타이머의 명령 12 가 다음 시험의 '명령 12 횟수' 창에 들어갈 수 있었다
+        #   (manual '같은 열기 두 번' 이 가끔 2 번으로 실패 — maint 는 따로 기다리고 있었다)
+        return await self.op.wait(lambda: not any(self.op.aux_on(t) for t in ("O3GEN", "IV-B", "BPMP")), 40)
 
     async def save(self, name, rec) -> bool:
-        if name in self.saved:
+        # ★ v0.8.3: 이름만 보고 건너뛰면 같은 이름 · 다른 내용이 저장되지 않아 PLC 는 앞 시나리오의 레시피를 돌린다 — 전체를 한 번에
+        #   돌리면 recipe 의 'E2E TMA-H2O'(3 사이클) 뒤 maint 의 같은 이름(2 사이클)이 저장되지 않아 정비 카운터가 3 대 2 로 FAIL
+        key = json.dumps(rec, sort_keys=True, ensure_ascii=False)
+        if self.saved.get(name) == key:
             return True
         m = await self.op.reply("recipe_saved", "recipe_save", name=name, recipe=rec)
         ok = bool(m and m.get("ok"))
         if not ok:
             self.check(f"레시피 저장 {name}", False, "저장됨", m and m.get("why"))
         else:
-            self.saved.add(name)
+            self.saved[name] = key
         return ok
 
     async def run_recipe(self, name, rec, label="", wait_end=True, end_timeout=None, info=None):
@@ -1217,7 +1223,6 @@ class Run:
         if DEV.HAS_O3:
             # 누설률 점검은 O3 라인이 켜져 있으면 거절한다(명령 11 이 수동 보조 출력을 끈다) — 끄고 바이패스까지 닫힘
             await self.o3_line(False)
-            await op.wait(lambda: not any(op.aux_on(t) for t in ("O3GEN", "IV-B", "BPMP")), 40)
         await self._leak("누설률 점검 PASS(새는 속도 1.2 mTorr/min · 한계 10)", "PASS")
         self.h.ctl({"op": "fault", "key": "chamber_leak", "on": True})
         await self._leak("누설률 점검 FAIL(chamber_leak — × 100)", "FAIL")

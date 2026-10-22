@@ -11,13 +11,16 @@ PLC 가 준비되기 전에 '실제 공정처럼' 시험하려고 실제 PLC 자
   PCV · MFC 지연 · RF 램프)과 래더 타이머 · 스텝 시간은 늘 실제 시간이다 — 배속을 올려도 래더의 MFC 안정 시간 ·
   편차 타이머 · RF 반사 시간이 실제 같은 과도를 본다(v0.6.1 C4).
 
-실행:
-    python test/fake_plc.py --port 15301                       (기본: 실제 시간 · 대기압에서 시작)
-    python test/fake_plc.py --port 15301 --speed 10 --state vac --log fake_plc.log
-    python test/fake_plc.py --port 15301 --device-id 0x1234    (틀린 장비 ID 시험)
-제어(고장 넣기 · 끊기 · ID 바꾸기)는 test/plc_ctl.py 가 제어 포트(기본 --port + 1)로 보낸다.
-    python test/plc_ctl.py --port 15301 fault emo on
-    python test/plc_ctl.py --port 15301 cut blackhole 2.0      (unplug = 케이블 뽑힘: 요청도 버림)
+실행(프로그램 폴더에서 — 두 프로그램 같은 명령):
+    python test/fake_plc.py                                    (기본: 실제 시간 · 대기압에서 시작)
+    python test/fake_plc.py --speed 10 --state vac --log fake_plc.log
+    python test/fake_plc.py --device-id 0x1234                 (틀린 장비 ID 시험)
+포트: --port 가 없으면 config.json 의 plc.port(PEALD 15301 · Powder 15401 로 맞춰 둔다). config.json 이 없거나
+  가짜 PLC 를 가리키지 않으면(simulate true · 실제 PLC 주소) 켜지지 않고 이유와 만드는 법을 찍는다 — 프로그램이 붙지 않을
+  가짜 PLC 를 띄우지 않게. --port 를 직접 주면 그 포트로 켜고, config.json 과 어긋나면 경고를 찍는다(시험 틀은 직접 준다).
+제어(고장 넣기 · 끊기 · ID 바꾸기)는 test/plc_ctl.py 가 제어 포트(기본 포트 + 1)로 보낸다.
+    python test/plc_ctl.py fault emo on
+    python test/plc_ctl.py cut blackhole 2.0                   (unplug = 케이블 뽑힘: 요청도 버림)
 설정: --config 가 없으면 프로그램과 같은 기본 설정(config.json, 없으면 예시 설정)을 읽고, 시작할 때 어느 것인지 찍는다.
 제어 파일(--ctl-file)을 주면 그 파일에 한 줄씩 JSON 명령을 덧붙여도 된다(결과는 같은 이름 + .out).
     {"op": "fault", "key": "emo", "on": true}
@@ -550,8 +553,9 @@ def _lines(chunk: bytes, path: str = "") -> list:
 def parse_args(argv=None):
     ap = argparse.ArgumentParser(description=f"가짜 PLC ({DEV.KEY}) — 실제 PLC 자리에 두는 Modbus TCP 서버")
     ap.add_argument("--host", default="127.0.0.1")
-    ap.add_argument("--port", type=int, required=True, help="Modbus TCP 포트(프로그램 plc.port)")
-    ap.add_argument("--ctl-port", type=int, default=0, help="제어 포트(기본 --port + 1)")
+    ap.add_argument("--port", type=int, default=0,
+                    help="Modbus TCP 포트(기본: config.json 의 plc.port — config.json 이 가짜 PLC 를 가리킬 때)")
+    ap.add_argument("--ctl-port", type=int, default=0, help="제어 포트(기본 포트 + 1)")
     ap.add_argument("--speed", type=_pkg.parse_speed, default=1.0, help="물리 배속(1 = 실제 시간, 빨리 볼 때 2~20 · 0.1~1000)")
     ap.add_argument("--device-id", default="", help=f"장비 ID — 16 진(기본 {DEV.DEVICE_ID:04X} — 틀린 ID 시험용)")
     ap.add_argument("--state", default="atm", help="시작 상태: atm · vac · hot 또는 JSON 파일")
@@ -572,6 +576,19 @@ async def amain(args) -> int:
     # 기본 설정(config.json, 없으면 예시) — 아날로그 환산이 프로그램과 같아야 한다(C5)
     cfg, cfg_used, cfg_what = _pkg.load_config(args.config)
     print(f"[info] 설정: {cfg_what} {cfg_used}", flush=True)
+    # ★ v0.8.2(짝 맞춤): 포트는 config.json 한곳에서 — 없으면 켜지 않는다, 직접 준 포트가 어긋나면 경고
+    target = _pkg.fake_target(cfg, cfg_what)
+    warn = ""
+    if not args.port:
+        if target is None:
+            print(f"[error] --port 가 없고 {_pkg.why_not_fake(cfg, cfg_what, cfg_used)} — {_pkg.FAKE_HINT}", flush=True)
+            return 2
+        args.port = target[1]
+    elif target is None or target[1] != args.port:
+        warn = ("프로그램은 이 가짜 PLC(포트 %d)에 붙지 않습니다 — %s" % (
+            args.port, _pkg.why_not_fake(cfg, cfg_what, cfg_used) if target is None
+            else f"config.json 의 plc.port 는 {target[1]} 입니다"))
+        print(f"[warn] {warn}", flush=True)
     plant = load_plant(args.plant)
     sim = PlantSim(cfg, plant, args.speed, args.seed)
     if args.device_id:
@@ -596,6 +613,8 @@ async def amain(args) -> int:
         tasks.append(asyncio.create_task(ctl.watch_file(args.ctl_file)))
     srv.log(f"가짜 PLC 시작 — {DEV.KEY} · {args.host}:{args.port} · 제어 {ctl_port} · 배속 {sim.speed:g} · "
             f"ID 0x{sim.device_id:04X} · 상태 {args.state} · {cfg_what} {os.path.basename(cfg_used)}")
+    if warn:
+        srv.log("경고 — " + warn)
     print(f"[info] 가짜 PLC {DEV.KEY} — modbus {args.host}:{args.port} · 제어 127.0.0.1:{ctl_port} · "
           f"배속 {sim.speed:g}", flush=True)
     loop = asyncio.get_event_loop()

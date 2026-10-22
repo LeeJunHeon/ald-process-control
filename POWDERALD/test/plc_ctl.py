@@ -18,15 +18,17 @@
   --yes(y 확인 생략)는 가짜 PLC 에만 듣는다(제어 포트가 답하면 가짜 PLC). 'WRITE' · 주소 다시 치기는 생략하지 않는다.
 ★ status 는 Modbus TCP 연결을 하나 잡는다 — 실제 PLC 의 동시 연결 수를 확인하고 쓴다.
 
-예:
-    python test/plc_ctl.py --port 15301 status                  (1 s 마다, Ctrl+C 로 끝)
-    python test/plc_ctl.py --host 192.168.10.12 status --count 1 (실제 PLC 한 번)
-    python test/plc_ctl.py --port 15301 read D00000 20
-    python test/plc_ctl.py --port 15301 write D01040 0          (확인 질문 — 요청만 놓음, 명령 12 가 반영)
-    python test/plc_ctl.py --port 15301 faults                  (가짜 PLC 전용 ↓)
-    python test/plc_ctl.py --port 15301 fault emo on
-    python test/plc_ctl.py --port 15301 cut blackhole 2.0       (unplug 2 = 케이블 뽑힘 · refuse 3 = 연결 거부 3 s)
-    python test/plc_ctl.py --port 15301 id 1234                 (16 진 — 0x1234 · h1234 도)
+예(프로그램 폴더에서 — 두 프로그램 같은 명령):
+    python test/plc_ctl.py status                               (1 s 마다, Ctrl+C 로 끝)
+    python test/plc_ctl.py --host 192.168.10.12 status --count 1 (실제 PLC 한 번 — 실제 PLC 는 --host 를 직접 적는다)
+    python test/plc_ctl.py read D00000 20
+    python test/plc_ctl.py write D01040 0                       (확인 질문 — 요청만 놓음, 명령 12 가 반영)
+    python test/plc_ctl.py faults                               (가짜 PLC 전용 ↓)
+    python test/plc_ctl.py fault emo on
+    python test/plc_ctl.py cut blackhole 2.0                    (unplug 2 = 케이블 뽑힘 · refuse 3 = 연결 거부 3 s)
+    python test/plc_ctl.py id 1234                              (16 진 — 0x1234 · h1234 도)
+대상: --host · --port 를 둘 다 안 주면 config.json 이 가리키는 가짜 PLC(127.0.0.1 · plc.port — fake_plc 와 같은 규칙).
+  config.json 이 가짜 PLC 를 가리키지 않으면 예전 기본값(127.0.0.1:502)이고 그 까닭을 한 줄 찍는다.
 """
 import sys
 import json
@@ -203,9 +205,10 @@ def _bits(word, defs, ok_key=None):
     return " ".join(on) if on else "—"
 
 
-def _conv(config_path: str):
+def _conv(loaded):
     # 설정만 읽고 data/ 에는 쓰지 않는다. --config 가 없으면 프로그램과 같은 기본 설정(config.json, 없으면 예시)(C5)
-    cfg, used, what = _pkg.load_config(config_path)
+    # ★ v0.8.2: main 이 한 번 읽은 것을 쓴다 — _pkg.load_config 는 데이터 자리를 옮겨 두 번째 기본 경로 읽기가 예시로 간다
+    cfg, used, what = loaded
     print(f"설정: {what} {used}", flush=True)
     return _pkg.mod("convert").Converters(cfg)
 
@@ -373,6 +376,24 @@ def revert_line(args, addr: int, old: list) -> str:
     return f"python test/plc_ctl.py {host}--port {args.port} write D{addr:05d} " + " ".join(str(v) for v in old)
 
 
+def resolve_target(args):
+    """설정을 한 번 읽어 (cfg, 읽은 파일, 설명)을 돌려준다.
+    ★ v0.8.2(짝 맞춤): --host · --port 를 둘 다 안 주면 config.json 이 가리키는 가짜 PLC — fake_plc 와 같은 규칙.
+    실제 PLC 는 --host 를 직접 적어야 한다(config.json 이 실제 PLC 를 가리켜도 저절로 붙지 않는다)."""
+    loaded = _pkg.load_config(args.config)
+    if not args.host and not args.port:
+        cfg, used, what = loaded
+        t = _pkg.fake_target(cfg, what)
+        if t:
+            args.host, args.port = t
+            print(f"대상: {args.host}:{args.port} (config.json 이 가리키는 가짜 PLC)", flush=True)
+        else:
+            print(f"대상: 127.0.0.1:502 (기본 — {_pkg.why_not_fake(cfg, what, used)}. 실제 PLC 는 --host 로)", flush=True)
+    args.host = args.host or "127.0.0.1"
+    args.port = args.port or 502
+    return loaded
+
+
 def check_range(addr: int, count: int) -> str:
     """주소 0~65535 · 개수 1 이상 — 아니면 이유."""
     if count < 1:
@@ -384,8 +405,8 @@ def check_range(addr: int, count: int) -> str:
 
 def parse_args(argv=None):
     ap = argparse.ArgumentParser(description=f"PLC 시험 콘솔 ({DEV.KEY})")
-    ap.add_argument("--host", default="127.0.0.1")
-    ap.add_argument("--port", type=int, default=502)
+    ap.add_argument("--host", default="", help="PLC 주소(기본: config.json 이 가리키는 가짜 PLC, 아니면 127.0.0.1)")
+    ap.add_argument("--port", type=int, default=0, help="Modbus TCP 포트(기본: config.json 의 plc.port, 아니면 502)")
     ap.add_argument("--unit", type=int, default=1)
     ap.add_argument("--ctl-port", type=int, default=0, help="가짜 PLC 제어 포트(기본 --port + 1)")
     ap.add_argument("--config", default="", help="환산에 쓸 설정 파일(기본: 프로그램 config.json, 없으면 예시 설정)")
@@ -425,6 +446,7 @@ def main(argv=None) -> int:
     args = parse_args(argv)
     if args.config:
         _pkg.check_config(args.config)        # ★ v0.6.2(D8): 직접 준 --config 를 못 읽으면 예시로 넘어가지 않고 종료 코드 2
+    loaded = resolve_target(args)
     ctl_port = args.ctl_port or (args.port + 1)
     fake_ops = {"ping": {"op": "ping"}, "faults": {"op": "faults"}}
     if args.cmd in fake_ops or args.cmd in ("fault", "cut", "id", "speed", "plant"):
@@ -457,7 +479,7 @@ def main(argv=None) -> int:
         return 2
     try:
         if args.cmd == "status":
-            conv = _conv(args.config)
+            conv = _conv(loaded)
             n = 0
             while True:
                 print(status_text(mb, conv), flush=True)

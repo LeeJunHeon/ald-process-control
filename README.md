@@ -10,9 +10,10 @@ PEALD 와 Powder ALD 두 장비의 제어 프로그램입니다.
 | 테마 · 고유색 | 밝은 테마(기본) · 청록 | 밝은 테마(기본) · 보라 |
 | 기본 창 위치 | 왼쪽 절반 | 오른쪽 절반 |
 | 웹 포트 / 시뮬레이터 포트 | 8101 / 15101 | 8201 / 15201 |
+| 가짜 PLC 포트 (시험 — config.json 의 `plc.port`) | 15401 | 15301 |
 | exe | `POWDERALD_Control.exe` | `PEALD_Control.exe` |
 
-> **현재 단계 (v0.4.11 — 3단계 뒤 추가 수정)**
+> **v0.4.11 까지의 변경 (1~3단계와 그 뒤 수정 — 지금 버전은 아래 v0.8 절)**
 > 1단계(저장소 분리 · 장비 정체성 · 설정 · PLC 통신 · 내장 시뮬레이터 · 운전 화면)에 더해
 > 수동 조작 전체(밸브·MFC·히터·PCV/RF·O3 라인), 레시피(편집·검증·PLC 표 변환·올리기·
 > 베이스 압력 대기 후 시작·진행 표시), 시뮬레이터 공정 실행, 공정 데이터 로그까지입니다.
@@ -106,6 +107,13 @@ v0.8.2 — Pending 근본 대책(두 장비 같게): Valve Permit(PEALD 는 RF �
 (1 s 넘게 남은 요청 = Pending · Program Notices · Pumping Start 확인 창)으로 알립니다. 자세한 것은 각 프로그램 README 의
 '출력 단계 (래더 P60)' · '수동 조작'.
 
+v0.8.3 — 두 폴더 짝 맞춤: 두 폴더 비교 시험(`tests/test_pair.py` — 아래 '두 프로그램은 완전히 독립입니다') · 가짜 PLC · plc_ctl 의
+포트를 config.json 의 `plc.port` 에서(config.json 이 없거나 가짜 PLC 를 가리키지 않으면 가짜 PLC 가 켜지지 않고 까닭을 찍음 — 두
+프로그램 같은 명령) · 한쪽만 고쳤던 곳 3 곳(`commands.py` 머리 주석 · `config.py` O3 끄기 지연 기본값 · `tests/conftest.py`) ·
+안전망 글의 '(RF 는 OFF)' 는 RF 요청이 남았을 때만(Powder 에 나오던 것) · e2e 의 O3 라인 끄기는 바이패스 라인까지 닫힐 때까지
+기다림(서버 타이머의 명령 12 가 다음 시험 창에 들어가 Powder manual 이 가끔 실패하던 것) · e2e 레시피 저장은 이름이 같아도
+내용이 바뀌면 다시(전체를 한 번에 돌리면 maint 가 앞 시나리오의 같은 이름 레시피를 돌리던 것). 자세한 것은 각 프로그램 README 의 '가짜 PLC'.
+
 ## ★ v0.7.0 — PC 끊김 정책 (두 장비 같게)
 
 PC 가 끊기거나 꺼져도(프로그램 꺼짐 · PC 절전/재부팅 · 네트워크) **PLC 는 이미 받은 레시피를 끝까지 돌립니다.**
@@ -131,6 +139,11 @@ PC 가 끊기거나 꺼져도(프로그램 꺼짐 · PC 절전/재부팅 · 네�
 - 런타임 자원도 전부 따로입니다: 웹 포트, 시뮬레이터 포트, 단일 실행 뮤텍스,
   Windows AppUserModelID, 데이터 폴더, 로그 파일 이름, exe 이름, 창 제목.
 - 실행·검증·빌드는 **폴더마다 따로** 합니다. 루트에서 두 테스트를 한꺼번에 돌리지 않습니다.
+- **짝 맞춤(v0.8.3)** — 따로 돌지만 같은 방식으로 만듭니다. 두 폴더는 같은 파일을 가지고, 장비마다 내용이 다른 것은
+  `README.md` · `config/config.example.json` · `<패키지>/device.py` · `frontend/js/views/pid_model.js` · 아이콘 ·
+  (추적 안 하는) `config.json` 뿐입니다. 나머지는 이름(패키지 · 폴더 · 표시 이름)만 빼고 같습니다. 한쪽에만 있는 파일 ·
+  한쪽만 고친 공통 파일 · 한쪽에만 있거나 예시 설정보다 항목이 적은 config.json 은 `tests/test_pair.py`(두 폴더 같은 파일)가
+  잡습니다 — 짝 폴더가 옆에 없으면(현장 PC) 건너뜁니다.
 
 장비 이름·고유색·아이콘은 설정이 아니라 각 프로그램의 **장비 정의 모듈**에 고정되어
 있습니다(`<패키지>/device.py`). 설정 파일을 잘못 복사해도 장비가 바뀌어 보이지 않습니다.
@@ -158,7 +171,8 @@ python run.py
 
 `config.json` 이 없으면 `config/config.example.json` 으로 기동하고 화면에
 **"예시 설정으로 실행 중"** 경고를 띄웁니다. 예시 설정은 내장 PLC 시뮬레이터를 켜 두었으므로
-실장비 없이 바로 화면을 확인할 수 있습니다.
+실장비 없이 바로 화면을 확인할 수 있습니다. 가짜 PLC 로 시험할 때는 **두 폴더 모두** config.json 을 둡니다(예시를 복사해
+plc 의 host 127.0.0.1 · port — Powder 15401 · PEALD 15301 · simulate false 만 바꿈) — 각 프로그램 README 의 '가짜 PLC'.
 
 ## 검증
 
@@ -194,6 +208,7 @@ POWDERALD/                  Powder ALD 제어 프로그램
   assets/                   아이콘
   config/config.example.json
   tests/                    pytest (이 폴더에서만 실행)
+  test/                     시험 도구 — 가짜 PLC · plc_ctl · e2e (두 폴더 같은 파일, exe 에 넣지 않음)
   pytest.ini  requirements.txt  requirements-dev.txt  build.spec
 PEALD/                      PEALD 제어 프로그램 — 같은 구조, 패키지 이름 peald
 ```
@@ -202,7 +217,8 @@ PEALD/                      PEALD 제어 프로그램 — 같은 구조, 패키�
 
 현장 값과 운전 기록은 저장소에 올리지 않습니다(`.gitignore`).
 
-- `*/config.json` — 현장 IP·환산·풀스케일이 들어갑니다. 예시는 `config/config.example.json`
+- `*/config.json` — 현장 IP·환산·풀스케일이 들어갑니다. 예시는 `config/config.example.json`.
+  한 PC 에서 두 프로그램을 돌리면 두 폴더 모두 둡니다(한쪽에만 두지 않음 — `tests/test_pair.py` 가 확인)
 - `*/data/` — 프로그램 로그 · 알람 이력 · 데이터 로그 · 레시피 · (나중의) 관리자 PIN 해시
 - `*/build/`, `*/dist/` — 빌드 산출물
 - 스크린샷·임시 파일
