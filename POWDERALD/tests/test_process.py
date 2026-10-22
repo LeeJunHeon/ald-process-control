@@ -68,9 +68,13 @@ async def at_vacuum(lk, sim):
 
 
 async def valve_permit(lk, sim):
-    """펌핑해 공정 밸브 허가(인터락 b4)를 받는다 — 허가가 없으면 PLC 가 밸브를 내보내지 않는다."""
+    """펌핑해 공정 밸브 허가(인터락 b4)를 받는다 — 허가가 없으면 PLC 가 밸브를 내보내지 않는다.
+    ★ v0.8.2: PLC(시뮬레이터) 쪽 허가와 PC 가 읽은 허가(link.status)를 함께 기다린다. PC 의 주기 읽기(100 ms)가 방금 일
+      (비상정지 · 리셋 · 펌핑 정지)을 아직 못 봤으면 옛 허가로 곧바로 통과하는데, 그때 보낸 명령 12 는 래더 P50 이 같은
+      스캔에 지운다."""
     await lk.send_command(A.CMD_PUMP_START)
-    assert await wait_until(lambda: A.bit(lk.status[A.D_INTERLOCK], A.ILK_VALVE_OK), 20), \
+    assert await wait_until(lambda: A.bit(sim.reg[A.D_INTERLOCK], A.ILK_VALVE_OK)
+                            and A.bit(lk.status[A.D_INTERLOCK], A.ILK_VALVE_OK), 20), \
         "공정 밸브 허가가 나오지 않았다"
 
 
@@ -353,6 +357,8 @@ async def test_valve_not_revived_after_emo(wired):
     assert await wait_until(lambda: A.bit(sim.reg[A.D_VALVE_OUT], DEV.valve_bit(a)), 2)
     sim.set_fault("emo", True)
     assert await wait_until(lambda: sim.man_valve == 0, 2)
+    # PC 가 안전 정지를 읽은 뒤 리셋한다 — 그래야 아래 '안전 정지 요구 꺼짐' 기다림이 리셋 뒤 새로 읽은 값을 본다
+    assert await wait_until(lambda: A.bit(lk.status[A.D_INTERLOCK], A.ILK_SAFE_STOP_REQ), 3), "PC 가 안전 정지 요구를 읽지 못했다"
     sim.set_fault("emo", False)
     await lk.send_command(A.CMD_ALARM_RESET)
     assert await wait_until(lambda: not A.bit(lk.status[A.D_INTERLOCK], A.ILK_SAFE_STOP_REQ), 3)
@@ -360,7 +366,8 @@ async def test_valve_not_revived_after_emo(wired):
     await C.handle_command({"cmd": "manual_valve", "tag": b, "on": True})
     want = 1 << DEV.valve_bit(b)
     assert await wait_until(lambda: sim.reg[A.D_VALVE_OUT] == want, 2), \
-        f"이전 밸브가 되살아났다 (D00010 = {sim.reg[A.D_VALVE_OUT]:#06x})"
+        (f"{b} 만 열려야 한다 (D00010 = {sim.reg[A.D_VALVE_OUT]:#06x}) — 0 이면 {b} 가 열리지 않음, "
+         f"다른 비트가 있으면 이전 밸브가 되살아남")
 
 
 @pytest.mark.skipif(not DEV.HAS_O3, reason="O3 라인이 있는 장비")
@@ -374,6 +381,8 @@ async def test_o3_line_not_revived_after_safe_stop(wired):
     assert await wait_until(lambda: sim.man_aux != 0, 2)
     sim.set_fault("emo", True)
     assert await wait_until(lambda: sim.man_aux == 0, 2)
+    # PC 가 안전 정지를 읽은 뒤 리셋한다 — 그래야 아래 '안전 정지 요구 꺼짐' 기다림이 리셋 뒤 새로 읽은 값을 본다
+    assert await wait_until(lambda: A.bit(lk.status[A.D_INTERLOCK], A.ILK_SAFE_STOP_REQ), 3), "PC 가 안전 정지 요구를 읽지 못했다"
     sim.set_fault("emo", False)
     await lk.send_command(A.CMD_ALARM_RESET)
     assert await wait_until(lambda: not A.bit(lk.status[A.D_INTERLOCK], A.ILK_SAFE_STOP_REQ), 3)
@@ -790,7 +799,8 @@ async def test_manual_valve_waits_without_permit(wired, notices):
     assert await wait_until(lambda: not A.bit(lk.status[A.D_INTERLOCK], A.ILK_VALVE_OK), 5)
     assert await wait_until(lambda: lk.applied_valve == 0, 3), "PLC 가 요청을 지우지 않았다"
     assert not A.bit(sim.reg[A.D_VALVE_OUT], DEV.valve_bit(tag)), "허가 없이 밸브가 나갔다"
-    assert await wait_until(lambda: any(tag in m and "Valve Permit 없음" in m for _l, m in lk.pending_toasts), 3),         lk.pending_toasts
+    assert await wait_until(lambda: any(tag in m and "Valve Permit 없음" in m for _l, m in lk.pending_toasts), 3), \
+        lk.pending_toasts
     await valve_permit(lk, sim)
     await asyncio.sleep(1.5)
     assert not A.bit(sim.reg[A.D_VALVE_OUT], DEV.valve_bit(tag)), "지운 요청이 허가 뒤 저절로 열렸다"
