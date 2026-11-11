@@ -576,7 +576,7 @@ async def amain(args) -> int:
     # 기본 설정(config.json, 없으면 예시) — 아날로그 환산이 프로그램과 같아야 한다(C5)
     cfg, cfg_used, cfg_what = _pkg.load_config(args.config)
     print(f"[info] 설정: {cfg_what} {cfg_used}", flush=True)
-    # ★ v0.8.2(짝 맞춤): 포트는 config.json 한곳에서 — 없으면 켜지 않는다, 직접 준 포트가 어긋나면 경고
+    # ★ v0.8.3(짝 맞춤): 포트는 config.json 한곳에서 — 없으면 켜지 않는다, 직접 준 포트가 어긋나면 경고
     target = _pkg.fake_target(cfg, cfg_what)
     warn = ""
     if not args.port:

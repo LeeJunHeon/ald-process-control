@@ -809,13 +809,27 @@ class Run:
     # ---------- 5) 공정 중 고장 ----------
     FAULT_CASES = [("emo", "EMO"), ("pump_alm", "펌프 알람"), ("leak", "가스 누출"), ("ot", "히터 과온")] + (
         [("rf_ref", "RF 반사")] if DEV.HAS_RF else [("o3_room", "실내 O3 감지")]) + [
-        ("mfc1_stuck", "MFC 막힘"), ("mfc1_stuck_prep", "블록 준비 중 MFC 막힘")]
+        ("mfc1_stuck", "MFC 막힘"), ("mfc1_stuck_prep", "블록 준비 중 MFC 막힘")] + [
+        # v0.8.4: 고장 키를 빠짐없이 — 공압(1 s 뒤) · 냉각수 · 공정 중 리드 · IV-E 리미트(5 s 뒤) · 펌프 운전 피드백(10 s 뒤)
+        ("air", "공압 저하"), ("cw", "냉각수 이상"), ("lid", "리드 열림"), ("ive_stuck", "IV-E 리미트 안 따라옴"),
+        ("pump_nofb", "펌프 운전 피드백 없음")] + (
+        [("rf_alm", "RF 알람")] if DEV.HAS_RF else [("o3_alm", "O3 발생기 알람"), ("bp_alm", "바이패스 펌프 알람")])
+    # v0.8.4: 대기 중 고장 (키, 이름, 기다릴 s) — 수동으로 연 밸브가 닫히고(PLC 가 요청을 지운다) 풀고 리셋해도 저절로 다시
+    #   열리지 않는다. 리드는 대기 중에는 알람이 없다(Valve Permit 만 꺼진다)
+    IDLE_FAULTS = [("emo", "EMO", 10), ("air", "공압 저하", 10), ("n2", "N2 저하", 10), ("cw", "냉각수 이상", 10),
+                   ("pump_alm", "펌프 알람", 10), ("leak", "가스 누출", 10), ("ot", "히터 과온", 10),
+                   ("ive_stuck", "IV-E 리미트 안 따라옴", 20), ("pump_nofb", "펌프 운전 피드백 없음", 25)] + (
+        [("rf_alm", "RF 알람", 10)] if DEV.HAS_RF else [("o3_room", "실내 O3 감지", 10), ("bp_alm", "바이패스 펌프 알람", 10)]) + [
+        ("lid", "리드 열림", 10)]
     # 시험 경우 → 가짜 PLC 고장 키(같은 고장을 다른 때에 넣는 경우)
     FAULT_KEY = {"mfc1_stuck_prep": "mfc1_stuck"}
     # ★ v0.6.1(C11): 고장마다 기대 알람(워드, 비트) — 이름은 장비 정의(DEV.ALARMS0/1)에서
     FAULT_ALARM = {"emo": (0, A.ALM0_EMO), "pump_alm": (0, A.ALM0_PUMP), "leak": (0, A.ALM0_LEAK),
                    "ot": (0, A.ALM0_OT), "mfc1_stuck": (0, A.ALM0_MFC), "mfc1_stuck_prep": (0, A.ALM0_MFC),
-                   "rf_ref": (1, A.ALM1_RF_REF), "o3_room": (1, A.ALM1_O3_ROOM)}
+                   "rf_ref": (1, A.ALM1_RF_REF), "o3_room": (1, A.ALM1_O3_ROOM),
+                   "air": (0, A.ALM0_AIR), "n2": (0, A.ALM0_N2), "cw": (0, A.ALM0_CW), "lid": (0, A.ALM0_LID),
+                   "ive_stuck": (1, A.ALM1_IVE), "pump_nofb": (0, A.ALM0_PUMP), "rf_alm": (1, A.ALM1_RF),
+                   "o3_alm": (1, A.ALM1_O3_GEN), "bp_alm": (1, A.ALM1_BYPASS_PUMP)}
     RECIPE_VALVES = ("PV-1", "PV-R", "PV-R2", "PV-R3")      # 시험 레시피가 여는 밸브(정지 뒤 출력 0 이어야)
 
     @staticmethod
@@ -825,9 +839,62 @@ class Run:
     def recipe_valves_on(self) -> list:
         return [v["tag"] for v in DEV.VALVES if v["tag"] in self.RECIPE_VALVES and self.op.valve_on(v["tag"])]
 
+    async def faults_idle(self):
+        """v0.8.4: 대기 중 고장 — 고장마다 안전 정지 · 알람 이름 · 수동으로 연 밸브가 닫힘(PLC 가 요청을 지우고 프로그램이
+        알림) · 고장을 풀고 리셋한 뒤 허가가 돌아와도 저절로 다시 열리지 않음."""
+        op = self.op
+        for key, label, wait_s in self.IDLE_FAULTS:
+            if self.only_faults and key not in self.only_faults:
+                continue
+            label = "대기 중 " + label
+            await self.plc_ready()
+            await self.clear_alarms()
+            await self.pumped(f"{label} → 준비: 베이스 압력")
+            await op.send("manual_unlock", on=True)
+            await op.send("manual_valve", tag="PV-1", on=True)
+            opened = await op.wait(lambda: op.valve_on("PV-1"), 5)
+            t0 = time.monotonic()
+            self.h.ctl({"op": "fault", "key": key, "on": True})
+            if key == "lid":
+                ok = await op.wait(lambda: not op.ilk(A.ILK_VALVE_OK), wait_s)
+                await asyncio.sleep(0.5)
+                names = [a.get("name") for a in op.live.get("alarms") or []]
+                self.check(f"{label} → Valve Permit 꺼짐 · 알람 없음 · 대기", opened and ok and not names
+                           and self.state_code() == A.STATE_IDLE, "Valve Permit 꺼짐 · 알람 없음 · Idle",
+                           f"연 밸브 {opened} · 허가 {op.ilk(A.ILK_VALVE_OK)} · {names or '알람 없음'} · "
+                           f"{(op.live.get('state') or {}).get('name')}")
+            else:
+                want = self.alarm_name(*self.FAULT_ALARM[key])
+                ok = await op.wait(lambda: self.state_code() == A.STATE_SAFE_STOP
+                                   and want in [a.get("name") for a in op.live.get("alarms") or []], wait_s)
+                names = [a.get("name") for a in op.live.get("alarms") or []]
+                self.check(f"{label} → 안전 정지 · 알람 '{want}'", opened and ok, f"Safe Stop · '{want}'",
+                           f"연 밸브 {opened} · {(op.live.get('state') or {}).get('name')} · {names or '(알람 없음)'}")
+
+            def told():
+                return [n for n in op.logs_since(t0) if "수동 요청을 지웠습니다" in n[2] and "PV-1" in n[2]]
+            closed = await op.wait(lambda: not op.valve_on("PV-1")
+                                   and not (op.live.get("manual") or {}).get("valve_request"), 5)
+            await op.wait(lambda: bool(told()), 4)
+            lg = told()
+            self.check(f"{label} → PV-1 닫힘 · 요청 지움 · 알림", closed and bool(lg),
+                       "출력 꺼짐 · 요청 0 · 'PLC 가 수동 요청을 지웠습니다 — PV-1 …' 로그",
+                       f"출력 {op.valve_on('PV-1')} · 요청 {(op.live.get('manual') or {}).get('valve_request')} · "
+                       f"{lg[-1][2] if lg else '(로그 없음)'}")
+            self.h.ctl({"op": "fault", "key": key, "on": False})
+            await self.clear_alarms()
+            await op.send("pump_start")
+            back = await op.wait(lambda: op.ilk(A.ILK_VALVE_OK) and self.state_code() == A.STATE_IDLE, self.t(420, 30))
+            await asyncio.sleep(1.5)
+            self.check(f"{label} → 풀고 리셋 뒤 허가가 돌아와도 PV-1 안 열림", back and not op.valve_on("PV-1"),
+                       "Valve Permit · Idle · PV-1 닫힘",
+                       f"허가 {op.ilk(A.ILK_VALVE_OK)} · {(op.live.get('state') or {}).get('name')} · "
+                       f"PV-1 {op.valve_on('PV-1')}")
+
     async def faults(self):
         op = self.op
         only = self.only_faults
+        await self.faults_idle()
         for key, label in self.FAULT_CASES:
             if only and key not in only:
                 continue
@@ -856,7 +923,7 @@ class Run:
                 #   블록 준비가 약 4.4 s 걸려, 시작 3 s 뒤에 넣으면 블록 준비 중 막힘이 된다
                 at = await op.wait(lambda: self.state_code() == A.STATE_RUN and self.seq_code() == SEQ_STEP_RUN, 30)
                 await asyncio.sleep(1.0 if key != "rf_ref" else 0.5)
-                timeout = 40 if key in ("mfc1_stuck", "rf_ref") else 15
+                timeout = 40 if key in ("mfc1_stuck", "rf_ref", "ive_stuck", "pump_nofb") else 15
             if not at:
                 self.check(f"{label} → 고장 넣을 때", False,
                            "블록 준비" if key == "mfc1_stuck_prep" else "Running · 스텝 실행",

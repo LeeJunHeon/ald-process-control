@@ -155,10 +155,14 @@ class Modbus:
         self.tid = (self.tid + 1) & 0xFFFF
         self.sock.sendall(struct.pack(">HHHB", self.tid, 0, len(pdu) + 1, self.unit) + pdu)
         head = self._recv(7)
-        _tid, _p, length, _u = struct.unpack(">HHHB", head)
-        body = self._recv(length - 1)
+        tid, _p, length, _u = struct.unpack(">HHHB", head)
+        body = self._recv(max(0, length - 1))
+        # ★ v0.8.4: 형식이 틀린 응답(PDU 없음 · 번호 · 기능 코드가 다름)은 traceback 대신 통신 오류로 — 엉뚱한 응답을
+        #   그 주소의 값으로 읽지 않는다
+        if not body or tid != self.tid or (body[0] & 0x7F) != pdu[0]:
+            raise IOError("응답 형식 오류(PDU 없음 · 트랜잭션 번호 · 기능 코드 불일치)")
         if body[0] & 0x80:
-            raise IOError(f"PLC 예외 응답 코드 {body[1]}")
+            raise IOError(f"PLC 예외 응답 코드 {body[1] if len(body) > 1 else '?'}")
         return body
 
     def _recv(self, n: int) -> bytes:
@@ -175,6 +179,8 @@ class Modbus:
         while count > 0:
             n = min(125, count)
             body = self._req(struct.pack(">BHH", 3, addr, n))
+            if len(body) < 2 + 2 * n:
+                raise IOError(f"읽기 응답이 짧습니다 (자료 {max(0, len(body) - 2)} / {2 * n} 바이트)")
             out += list(struct.unpack(">" + "H" * n, body[2:2 + 2 * n]))
             addr += n
             count -= n
@@ -182,7 +188,9 @@ class Modbus:
 
     def write(self, addr: int, values: list):
         vals = [int(v) & 0xFFFF for v in values]
-        self._req(struct.pack(">BHHB", 16, addr, len(vals), 2 * len(vals)) + struct.pack(">" + "H" * len(vals), *vals))
+        body = self._req(struct.pack(">BHHB", 16, addr, len(vals), 2 * len(vals)) + struct.pack(">" + "H" * len(vals), *vals))
+        if len(body) < 5 or struct.unpack(">HH", body[1:5]) != (addr, len(vals)):
+            raise IOError("쓰기 응답이 올바르지 않습니다 — 썼는지 알 수 없습니다(되읽어 확인하세요)")
 
 
 def fake_ctl(port: int, req: dict, timeout: float = 2.0):
@@ -378,7 +386,7 @@ def revert_line(args, addr: int, old: list) -> str:
 
 def resolve_target(args):
     """설정을 한 번 읽어 (cfg, 읽은 파일, 설명)을 돌려준다.
-    ★ v0.8.2(짝 맞춤): --host · --port 를 둘 다 안 주면 config.json 이 가리키는 가짜 PLC — fake_plc 와 같은 규칙.
+    ★ v0.8.3(짝 맞춤): --host · --port 를 둘 다 안 주면 config.json 이 가리키는 가짜 PLC — fake_plc 와 같은 규칙.
     실제 PLC 는 --host 를 직접 적어야 한다(config.json 이 실제 PLC 를 가리켜도 저절로 붙지 않는다)."""
     loaded = _pkg.load_config(args.config)
     if not args.host and not args.port:

@@ -123,7 +123,7 @@ FAKE_HINT = ("이 폴더의 config/config.example.json 을 config.json 으로 �
 def fake_target(cfg: dict, what: str):
     """config.json 이 가짜 PLC 를 가리키면 (host, port), 아니면 None — 가리킨다 = 프로그램 설정 파일(예시 설정 아님) ·
     plc.simulate false · plc.host 가 이 PC(127.0.0.1 · localhost).
-    ★ v0.8.2(짝 맞춤): 가짜 PLC · plc_ctl 의 포트를 config.json 한곳에서 정한다 — 명령줄 포트가 config.json 과 어긋나거나,
+    ★ v0.8.3(짝 맞춤): 가짜 PLC · plc_ctl 의 포트를 config.json 한곳에서 정한다 — 명령줄 포트가 config.json 과 어긋나거나,
       config.json 없이 가짜 PLC 만 띄워 프로그램은 예시 설정(내장 시뮬레이터)으로 뜨는 일이 없게."""
     plc = cfg.get("plc") or {}
     if what != "설정 파일" or plc.get("simulate", True) or str(plc.get("host", "")).strip() not in LOCAL_HOSTS:
