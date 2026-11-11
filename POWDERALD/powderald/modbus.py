@@ -102,6 +102,14 @@ class ModbusClient:
         self.drop_reason = why
         self.close_sync()
 
+    def _bad_frame(self, why: str) -> ModbusTimeout:
+        """응답 형식이 틀렸다(PDU 없음 · 짧음 · 기능 코드가 다름) — 소켓을 버리고 재연결 대상 오류를 만든다.
+        ★ v0.8.4: 형식이 틀린 응답 뒤의 바이트는 믿을 수 없다(트랜잭션 번호 불일치와 같은 처리). 예전에는 빈 PDU 가
+          IndexError 로 새서 명령 핸드셰이크의 오류 처리('받았을 수 있습니다')를 건너뛰었고, 짧은 쓰기 응답은
+          성공으로 읽었다."""
+        self._drop("응답 형식 오류")
+        return ModbusTimeout(f"응답 형식 오류: {why}")
+
     async def _request(self, pdu: bytes) -> bytes:
         """요청 한 번. 응답 PDU(기능 코드 포함)를 돌려준다."""
         if not self.connected:
@@ -138,7 +146,11 @@ class ModbusClient:
             if unit != self.unit_id:
                 raise ModbusError(f"유닛 번호 불일치 ({unit})")
 
+            if not body:
+                raise self._bad_frame("PDU 가 없습니다(길이 1)")
             fc = body[0]
+            if (fc & 0x7F) != pdu[0]:
+                raise self._bad_frame(f"기능 코드 불일치 (보냄 {pdu[0]} / 받음 {fc})")
             if fc & 0x80:
                 code = body[1] if len(body) > 1 else 0
                 raise ModbusError(f"PLC 예외 응답: {EXCEPTION_NAMES.get(code, code)} (코드 {code})")
@@ -155,9 +167,13 @@ class ModbusClient:
             n = min(left, MAX_READ)
             pdu = struct.pack(">BHH", FC_READ_HOLDING, cur, n)
             body = await self._request(pdu)
+            if len(body) < 2:
+                raise self._bad_frame("읽기 응답이 짧습니다")
             nbytes = body[1]
-            if nbytes != n * 2 or len(body) < 2 + nbytes:
+            if nbytes != n * 2:
                 raise ModbusError(f"읽기 응답 길이 불일치 (기대 {n * 2}, 받음 {nbytes})")
+            if len(body) < 2 + nbytes:
+                raise self._bad_frame(f"읽기 응답이 짧습니다 (자료 {len(body) - 2} / {nbytes} 바이트)")
             out.extend(struct.unpack(">" + "H" * n, body[2:2 + nbytes]))
             cur += n
             left -= n
@@ -173,10 +189,12 @@ class ModbusClient:
         v = int(value) & 0xFFFF
         pdu = struct.pack(">BHH", FC_WRITE_SINGLE, int(addr), v)
         body = await self._request(pdu)
-        if len(body) >= 5:
-            raddr, rval = struct.unpack(">HH", body[1:5])
-            if raddr != int(addr) or rval != v:
-                raise ModbusError(f"쓰기 응답 불일치 (주소 {raddr}, 값 {rval})")
+        if len(body) < 5:
+            # ★ v0.8.4: 짧은 쓰기 응답을 성공으로 읽지 않는다 — 썼는지 알 수 없다(명령 번호 쓰기면 '받았을 수 있습니다')
+            raise self._bad_frame("쓰기 응답이 짧습니다")
+        raddr, rval = struct.unpack(">HH", body[1:5])
+        if raddr != int(addr) or rval != v:
+            raise ModbusError(f"쓰기 응답 불일치 (주소 {raddr}, 값 {rval})")
 
     async def write_multiple(self, addr: int, values) -> None:
         """FC16. 120 개씩 나눠 쓴다(레시피 표 1120 워드가 여기로 간다)."""
@@ -192,9 +210,10 @@ class ModbusClient:
             pdu = (struct.pack(">BHHB", FC_WRITE_MULTIPLE, cur, n, n * 2)
                    + struct.pack(">" + "H" * n, *chunk))
             body = await self._request(pdu)
-            if len(body) >= 5:
-                raddr, rn = struct.unpack(">HH", body[1:5])
-                if raddr != cur or rn != n:
-                    raise ModbusError(f"다중 쓰기 응답 불일치 (주소 {raddr}, 개수 {rn})")
+            if len(body) < 5:
+                raise self._bad_frame("다중 쓰기 응답이 짧습니다")
+            raddr, rn = struct.unpack(">HH", body[1:5])
+            if raddr != cur or rn != n:
+                raise ModbusError(f"다중 쓰기 응답 불일치 (주소 {raddr}, 개수 {rn})")
             cur += n
             i += n

@@ -324,6 +324,10 @@ def clamp_range(t0, t1, keep_days, max_s, what):
         t0, t1 = float(t0), float(t1)
     except (TypeError, ValueError):
         return 0.0, 0.0, "구간이 올바르지 않습니다"
+    if t0 != t0 or t1 != t1:
+        # ★ v0.8.4: NaN 은 아래 max · min · 비교를 모두 지나가 '오류 없음' 으로 나갔다(원격 GET ?t0=nan 의 응답이
+        #   JSON 이 아닌 NaN 을 담았다) — 올바르지 않은 구간으로 거절한다
+        return 0.0, 0.0, "구간이 올바르지 않습니다"
     now = time.time()
     try:
         keep = max(1, int(keep_days))

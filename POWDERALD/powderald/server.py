@@ -257,7 +257,13 @@ def _routes(app: FastAPI):
         # ★ Host 가 IP·localhost 가 아니면 거절 — DNS 재바인딩으로 이력·데이터 로그에 닿지 못하게
         if not host_ok(request.headers.get("host")):
             return PlainTextResponse("Host 거절", status_code=403)
-        return await call_next(request)
+        resp = await call_next(request)
+        # ★ v0.8.4: 다른 웹 페이지가 이 화면을 프레임에 넣지 못하게 한다 — 출처 확인(WebSocket Origin)은 다른 출처의
+        #   스크립트를 막지만, 운전 PC 브라우저의 다른 페이지가 이 화면을 안 보이는 프레임에 넣고 누르게 만드는 것
+        #   (클릭재킹 — 누른 것은 이 PC 의 정상 조작으로 간다)은 막지 못했다. 창(pywebview)은 프레임을 쓰지 않는다
+        resp.headers.setdefault("X-Frame-Options", "DENY")
+        resp.headers.setdefault("Content-Security-Policy", "frame-ancestors 'none'")
+        return resp
 
     @app.get("/")
     async def root():

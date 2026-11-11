@@ -44,11 +44,19 @@ def path_of(name: str) -> str:
 
 def atomic_write_json(path: str, obj) -> None:
     tmp = path + ".tmp"
-    with open(tmp, "w", encoding="utf-8") as f:
-        json.dump(obj, f, ensure_ascii=False, indent=2)
-        f.flush()
-        os.fsync(f.fileno())
-    os.replace(tmp, path)
+    try:
+        with open(tmp, "w", encoding="utf-8") as f:
+            json.dump(obj, f, ensure_ascii=False, indent=2)
+            f.flush()
+            os.fsync(f.fileno())
+        os.replace(tmp, path)
+    except BaseException:
+        # ★ v0.8.4: 쓰다 실패하면(디스크 가득 참 · 권한 · 직렬화 오류) 반쪽 임시 파일을 남기지 않는다 — 원래 파일은 그대로다
+        try:
+            os.remove(tmp)
+        except OSError:
+            pass
+        raise
 
 
 def read_json(path: str):

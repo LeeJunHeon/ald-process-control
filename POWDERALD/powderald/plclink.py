@@ -465,6 +465,10 @@ class PlcLink:
         (PLC 가 다시 시작되면 0 인 PRM 을 기본값으로 바꾼다 — 예: valve_min_ms 0 → 200)"""
         if not (self.prm_autofix and self.write_ok and self.prm_written):
             return
+        if self.plc_hb_stalled:
+            # ★ v0.8.4: PLC 하트비트 멈춤(STOP 등) 동안은 PRM 도 쓰지 않는다(README '명령을 보내지 않습니다 — PRM 쓰기
+            #   포함'). 수동 경로(rewrite_params)만 막고 이 자동 복구는 멈춤 중에도 썼다 — 멈춤이 풀리면 다음 되읽기가 맞춘다
+            return
         if self._fix_task and not self._fix_task.done():
             return
         diff = [a for a, v in self.prm_written.items() if self.prm_readback.get(a) != v]
@@ -831,8 +835,12 @@ class PlcLink:
             no = self._cmd_no
             await self.client.write_single(A.D_CMD_CODE, code)
             sent = True                     # 이 뒤의 오류는 PLC 가 명령을 받았을 수 있다
-            await self.client.write_single(A.D_CMD_NO, no)
+            # ★ v0.8.4: 번호는 쓰기를 시도하는 순간 쓴 것으로 친다 — 쓰기가 오류(예외 응답 · 응답 불일치)로 끝나도 PLC 는
+            #   받았을 수 있다. 예전에는 쓰기가 성공한 뒤에만 번호를 올려, 그런 오류 뒤 다음 명령이 같은 번호를 다시 썼다 —
+            #   PLC 는 '안 바뀐 번호' 라 무시하는데 PC 는 D00002 == 번호를 보고 앞 명령의 결과를 이번 것으로 읽었다
+            #   (보내지지 않은 정지 · 중단이 '처리됨'). 번호를 하나 건너뛰는 것은 괜찮다 — PLC 는 '바뀌었나' 만 본다
             self._cmd_no = (no + 1) & 0xFFFF
+            await self.client.write_single(A.D_CMD_NO, no)
 
             deadline = time.monotonic() + ACK_TIMEOUT_S
             while time.monotonic() < deadline:

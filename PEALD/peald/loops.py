@@ -76,21 +76,51 @@ def _log_sync(level, msg):
     _pending_events.append((level, msg))
 
 
+ERR_LOG_EVERY_S = 30.0           # 같은 자리의 같은 오류는 이만큼에 한 줄
+_err_log = {}                    # 자리 → [마지막으로 쓴 시각, 그 뒤 묶인 횟수, 글]
+
+
+def loop_error(where: str, e: Exception):
+    """주기 루프의 예외를 로그에 남긴다 — 같은 자리의 같은 오류는 ERR_LOG_EVERY_S 에 한 줄(묶인 횟수와 함께).
+    ★ v0.8.4: 예외가 이어지면 주기마다 한 줄(샘플링 10 Hz — 하루 약 86 만 줄)을 써서 로그가 디스크를 채웠다."""
+    msg = f"{where} 오류(계속 진행): {type(e).__name__}: {logger.clean(e, 200)}"
+    now = time.monotonic()
+    ent = _err_log.get(where)
+    if ent is not None and ent[2] == msg and now - ent[0] < ERR_LOG_EVERY_S:
+        ent[1] += 1
+        return
+    more = f" — 앞 오류 {ent[1]}번 더" if ent is not None and ent[1] else ""
+    logger.write("err", msg + more)
+    _err_log[where] = [now, 0, msg]
+
+
+def _stage(name: str, fn, *args):
+    """샘플링의 한 단계. ★ v0.8.4: 단계마다 따로 잡는다 — 한 단계의 예외(예: 알람 갱신)가 뒤 단계(끝 판정 · 데이터 로그 ·
+    트렌드)를 그 주기마다 통째로 건너뛰게 하지 않게. 실패하면 None."""
+    try:
+        return fn(*args)
+    except Exception as e:  # noqa: BLE001
+        loop_error("샘플링(" + name + ")", e)
+        return None
+
+
 def sample_once():
     """샘플링 한 번 — 알람 · 끝 판정 · 데이터 로그 · 트렌드."""
-    state.refresh()
-    if state.runner:
-        state.runner.tick(_log_sync)
-    _datalog_tick()
     from .maintenance import maint
-    maint.tick(state.link)                  # v0.7.0(A4): 켜진 시간(링크가 붙어 있는 동안만)
-    live = state.live()
+    _stage("알람 갱신", state.refresh)
+    if state.runner:
+        _stage("끝 판정", state.runner.tick, _log_sync)
+    _stage("데이터 로그", _datalog_tick)
+    _stage("정비 카운터", maint.tick, state.link)      # v0.7.0(A4): 켜진 시간(링크가 붙어 있는 동안만)
+    live = _stage("화면 값", state.live)
+    if live is None:
+        return
     # ★ PLC 하트비트 멈춤(STOP 등) 동안 live 에 남은 값은 굳은 옛 값이다 — 트렌드 버퍼 ·
     #   트렌드 기록에 넣지 않는다(실제 값처럼 남지 않게). 끊김과 같다
     if not (live.get("plc") or {}).get("hb_stalled"):
-        trend.record(time.monotonic(), live)
-        trendlog.record(live)
-    _admin_on_process_start(live)
+        _stage("트렌드", trend.record, time.monotonic(), live)
+        _stage("트렌드 이력", trendlog.record, live)
+    _stage("관리자 잠금", _admin_on_process_start, live)
 
 
 async def sample_loop():
@@ -99,7 +129,7 @@ async def sample_loop():
         try:
             sample_once()
         except Exception as e:  # noqa: BLE001
-            logger.write("err", f"샘플링 루프 오류(계속 진행): {type(e).__name__}: {e}")
+            loop_error("샘플링 루프", e)
         await asyncio.sleep(period)
 
 
@@ -109,7 +139,7 @@ async def live_loop():
         try:
             await push_live()
         except Exception as e:  # noqa: BLE001
-            logger.write("err", f"화면 전송 루프 오류(계속 진행): {type(e).__name__}: {e}")
+            loop_error("화면 전송 루프", e)
         await asyncio.sleep(period)
 
 
@@ -159,7 +189,7 @@ async def event_loop():
                     await manager.send_to(ws, {"type": "notice", "level": "info",
                                                "msg": "관리자 잠금 — 설정 편집이 다시 잠겼습니다"})
         except Exception as e:  # noqa: BLE001
-            logger.write("err", f"이벤트 루프 오류(계속 진행): {e}")
+            loop_error("이벤트 루프", e)
         await asyncio.sleep(0.2)
 
 

@@ -13,6 +13,7 @@ commands.py — 화면 명령 → 권한·상태 검사 → PLC 명령 핸드셰
   PLC 가 이미 받았을 수 있어 두 번 실행될 위험이 있다. 운전자에게 확인하라고 알린다.
 """
 
+import math
 import time
 import asyncio
 
@@ -288,6 +289,24 @@ def explain_interlock(code: int) -> str:
 def _running() -> bool:
     link = state.link
     return bool(link and link.connected and link.status[A.D_STATE] in RUNNING_STATES)
+
+
+def _finite(v):
+    """화면에서 온 숫자 — 유한한 실수만. 숫자가 아니거나 NaN · 무한대 · 참/거짓이면 None.
+    ★ v0.8.4: NaN 은 범위 비교(v < 0 · v > 상한)를 모두 거짓으로 지나가 원시값 변환에서 예외가 났다
+      ('명령을 처리하지 못했습니다 — ValueError') — 값이 올바르지 않다고 알리고 거절한다."""
+    if isinstance(v, bool):
+        return None
+    try:
+        f = float(v)
+    except (TypeError, ValueError, OverflowError):
+        return None
+    return f if math.isfinite(f) else None
+
+
+def _dict(v) -> dict:
+    """화면에서 온 묶음 값({채널: 값}) — 사전이 아니면 빈 사전(목록 · 숫자로 온 것은 '바꿀 값 없음' 으로 거절된다)."""
+    return v if isinstance(v, dict) else {}
 
 
 # ===================== 레시피 =====================
@@ -786,7 +805,7 @@ async def _cmd_manual_mfc(d, ws):
     if _running():
         await push_notice("공정 중에는 MFC 를 바꿀 수 없습니다", "warn", ws)
         return
-    vals = d.get("sccm") or {}
+    vals = _dict(d.get("sccm"))
     changes = {}
     named = []
     for m in state.cfg.get("mfc") or []:
@@ -801,10 +820,10 @@ async def _cmd_manual_mfc(d, ws):
             await push_notice(f"MFC{no} 풀스케일이 정해지지 않아 설정할 수 없습니다 — "
                               f"설정에서 full_scale_sccm 을 넣으세요", "warn", ws)
             return
-        try:
-            fv = float(v)
-        except (TypeError, ValueError):
-            continue
+        fv = _finite(v)
+        if fv is None:
+            await push_notice(f"MFC{no} 설정 값이 올바르지 않습니다", "warn", ws)
+            return
         if fv < 0 or (fs is not None and fv > float(fs)):
             await push_notice(f"MFC{no} 설정이 범위를 벗어납니다 (0~{fs})", "warn", ws)
             return
@@ -844,8 +863,8 @@ async def _cmd_manual_heater(d, ws):
         await push_notice("공정 중에는 히터를 바꿀 수 없습니다", "warn", ws)
         return
     from .convert import heater_raw
-    sv = d.get("sv") or {}
-    power = d.get("power") or {}
+    sv = _dict(d.get("sv"))
+    power = _dict(d.get("power"))
     sv_changes = {}
     pw_changes = {}
     named = []
@@ -860,10 +879,10 @@ async def _cmd_manual_heater(d, ws):
                 await push_notice(f"CH{ch} 는 과온 한계가 정해지지 않아 설정할 수 없습니다",
                                   "warn", ws)
                 return
-            try:
-                fv = float(v)
-            except (TypeError, ValueError):
-                continue
+            fv = _finite(v)
+            if fv is None:
+                await push_notice(f"CH{ch} 설정 온도 값이 올바르지 않습니다", "warn", ws)
+                return
             if not (0 <= fv <= float(mx)):
                 await push_notice(f"CH{ch} 설정 온도는 0~{mx:g} ℃ 이어야 합니다", "warn", ws)
                 return
@@ -931,9 +950,8 @@ async def _cmd_manual_pcv(d, ws):
     if _running():
         await push_notice("공정 중에는 PCV 를 바꿀 수 없습니다", "warn", ws)
         return
-    try:
-        pct = float(d.get("pct"))
-    except (TypeError, ValueError):
+    pct = _finite(d.get("pct"))
+    if pct is None:
         await push_notice("PCV 목표 값이 올바르지 않습니다", "warn", ws)
         return
     if not (0 <= pct <= 100):
@@ -959,9 +977,8 @@ async def _cmd_manual_rf(d, ws):
     on = bool(d.get("on"))
     raw = None
     if on:
-        try:
-            watt = float(d.get("watt"))
-        except (TypeError, ValueError):
+        watt = _finite(d.get("watt"))
+        if watt is None:
             await push_notice("RF 전력 값이 올바르지 않습니다", "warn", ws)
             return
         lim = (state.cfg.get("params") or {}).get("rf_max_w")
@@ -1006,9 +1023,8 @@ async def _cmd_manual_o3(d, ws):
     action = d.get("action") or "on"
 
     if action == "set":
-        try:
-            v = float(d.get("value"))
-        except (TypeError, ValueError):
+        v = _finite(d.get("value"))
+        if v is None:
             await push_notice("O3 설정 값이 올바르지 않습니다", "warn", ws)
             return
         lim = (state.cfg.get("params") or {}).get("o3_max")
@@ -1025,10 +1041,7 @@ async def _cmd_manual_o3(d, ws):
         return
 
     if action == "on":
-        try:
-            v = float(d.get("value") or 0)
-        except (TypeError, ValueError):
-            v = 0.0
+        v = _finite(d.get("value")) or 0.0
         if v <= 0:
             await push_notice("O3 설정을 먼저 넣으세요 (0 이면 발생기가 켜져도 O3 가 나오지 않습니다)",
                               "warn", ws)
@@ -1193,7 +1206,7 @@ async def _cmd_config_preview(d, ws):
     """바뀌는 항목 표 · 검증 결과를 그 화면에만 돌려준다(저장하지 않는다)."""
     if not await _need_admin(d, ws):
         return
-    res = settings.prepare(state.cfg, d.get("edits") or {})
+    res = settings.prepare(state.cfg, _dict(d.get("edits")))
     out = settings.public(res)
     out["type"] = "config_preview"
     out["blocked"] = _save_blocked()
@@ -1207,7 +1220,7 @@ async def _cmd_config_save(d, ws):
     if why:
         await push_notice(why, "warn", ws)
         return
-    res = settings.prepare(state.cfg, d.get("edits") or {})
+    res = settings.prepare(state.cfg, _dict(d.get("edits")))
     if not res["ok"]:
         await push_notice(f"설정 검증 오류 {len(res['errors'])}건 — 저장하지 않았습니다", "warn", ws)
         await manager.send_to(ws, {**settings.public(res), "type": "config_preview",
@@ -1251,9 +1264,8 @@ async def _cmd_config_save(d, ws):
 # ===================== 트렌드 내보내기 · 폴더 열기 =====================
 async def _cmd_trend_export(d, ws):
     from .trendlog import trendlog
-    try:
-        t0, t1 = float(d.get("t0")), float(d.get("t1"))
-    except (TypeError, ValueError):
+    t0, t1 = _finite(d.get("t0")), _finite(d.get("t1"))
+    if t0 is None or t1 is None:
         await push_notice("내보낼 구간이 올바르지 않습니다", "warn", ws)
         return
     if t1 <= t0:
@@ -1282,7 +1294,8 @@ async def _cmd_open_folder(d, ws):
     import os
     import sys
     from . import paths
-    sub = OPEN_DIRS.get(d.get("which") or "")
+    which = d.get("which")
+    sub = OPEN_DIRS.get(which) if isinstance(which, str) else None
     if not sub:
         await push_notice("열 수 없는 폴더입니다", "warn", ws)
         return
@@ -1298,10 +1311,10 @@ async def _cmd_sim_fault(d, ws):
     if not state.sim:
         await push_notice("시뮬레이터가 아닙니다", "warn", ws)
         return
-    key = d.get("key") or ""
+    key = d.get("key")
     on = bool(d.get("on"))
-    if key not in state.sim.faults:
-        await push_notice(f"알 수 없는 시험 입력입니다: {key}", "warn", ws)
+    if not isinstance(key, str) or key not in state.sim.faults:
+        await push_notice(f"알 수 없는 시험 입력입니다: {logger.clean(key, 40)}", "warn", ws)
         return
     state.sim.set_fault(key, on)
     await push_log(f"[시뮬레이터] 시험 입력 {key} {'켬' if on else '끔'}", "info")

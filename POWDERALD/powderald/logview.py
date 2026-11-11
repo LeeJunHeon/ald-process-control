@@ -194,27 +194,38 @@ def result_level(result: str) -> str:
     return "warn" if _WARN_RE.search(r) else "off"
 
 
+def _text(v) -> str:
+    return v if isinstance(v, str) else ""
+
+
+def _number(v):
+    return v if isinstance(v, (int, float)) and not isinstance(v, bool) and v == v and abs(v) != math.inf else None
+
+
 def meta_of(name: str) -> dict:
+    """목록 · 그래프 머리에 쓰는 메타. ★ v0.8.4: 메타 파일의 값은 형식을 보고 쓴다(글은 문자열 · 수는 유한한 수만) —
+    손으로 고쳤거나 깨진 메타 하나(예: recipe 가 사전이 아님)가 예외로 목록 전체(500)를 막지 않게."""
     p = os.path.join(_dir(), name + ".recipe.json")
     rec = read_json(p) if os.path.isfile(p) else None
     rec = rec if isinstance(rec, dict) else {}
+    rcp = rec.get("recipe")
     meta = {
         "name": name,
-        "started": rec.get("started") or _started_from_name(name),
-        "recipe": (rec.get("recipe") or {}).get("name") or name[16:],
-        "number": rec.get("number"),
-        "estimated_ms": rec.get("estimated_ms"),
+        "started": _text(rec.get("started")) or _started_from_name(name),
+        "recipe": _text(rcp.get("name") if isinstance(rcp, dict) else "") or name[16:],
+        "number": _number(rec.get("number")),
+        "estimated_ms": _number(rec.get("estimated_ms")),
         # v0.7.0(A2): 실행 정보
-        "operator": rec.get("operator") or "", "sample": rec.get("sample") or "", "memo": rec.get("memo") or "",
+        "operator": _text(rec.get("operator")), "sample": _text(rec.get("sample")), "memo": _text(rec.get("memo")),
     }
     if name == _writing:
         # ★ 아직 쓰는 중(종료 뒤 꼬리 포함)인 파일은 결과를 짐작하지 않는다 — 운전자 중단 직후
         #   마지막 줄이 '대기'라서 '정상 종료(추정)'로 보이는 일을 막는다.
         meta.update(_guess_meta(os.path.join(_dir(), name + ".csv")))
         meta.update({"result": "기록 중", "writing": True, "guessed": False, "ended": ""})
-    elif rec.get("ended"):
-        meta.update({"ended": rec.get("ended"), "result": rec.get("result", ""),
-                     "rows": rec.get("rows"), "took_s": rec.get("took_s"), "guessed": False})
+    elif _text(rec.get("ended")):
+        meta.update({"ended": _text(rec.get("ended")), "result": _text(rec.get("result")),
+                     "rows": _number(rec.get("rows")), "took_s": _number(rec.get("took_s")), "guessed": False})
     else:
         meta.update(_guess_meta(os.path.join(_dir(), name + ".csv")))
     meta["level"] = result_level(meta.get("result", ""))
@@ -229,7 +240,15 @@ def _started_from_name(name: str) -> str:
 
 
 def list_logs() -> list:
-    return [meta_of(n) for n in names()]
+    out = []
+    for n in names():
+        try:
+            out.append(meta_of(n))
+        except Exception:  # noqa: BLE001 — 파일 하나의 오류가 목록 전체를 막지 않게(v0.8.4)
+            out.append({"name": n, "started": _started_from_name(n), "recipe": n[16:], "number": None,
+                        "estimated_ms": None, "operator": "", "sample": "", "memo": "",
+                        "result": "알 수 없음(메타 읽기 오류)", "guessed": True, "level": "warn"})
+    return out
 
 
 # ===================== 옛 열 이름(한글) → 새 열 이름(영문, v0.5.0) =====================
