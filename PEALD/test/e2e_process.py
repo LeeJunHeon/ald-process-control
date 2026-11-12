@@ -854,6 +854,10 @@ class Run:
             await op.send("manual_valve", tag="PV-1", on=True)
             opened = await op.wait(lambda: op.valve_on("PV-1"), 5)
             t0 = time.monotonic()
+            # ★ 고장은 프로그램이 PV-1 반영을 한 번 읽은 뒤(반영 영역 읽기 0.5 s)에 넣는다 — 열자마자 넣으면 프로그램은
+            #   '지웠습니다' 가 아니라 명령 12 직후 확인의 '반영되지 않았습니다 — PV-1 (안전 정지 요구 중)' 으로 알린다
+            #   (둘 다 운전자에게 알리는 정상 경로 — 부하가 걸린 PC 에서 가끔 그쪽으로 갔다). 그래도 그쪽으로 가면 그 알림도 받는다
+            await asyncio.sleep(1.2)
             self.h.ctl({"op": "fault", "key": key, "on": True})
             if key == "lid":
                 ok = await op.wait(lambda: not op.ilk(A.ILK_VALVE_OK), wait_s)
@@ -872,13 +876,15 @@ class Run:
                            f"연 밸브 {opened} · {(op.live.get('state') or {}).get('name')} · {names or '(알람 없음)'}")
 
             def told():
-                return [n for n in op.logs_since(t0) if "수동 요청을 지웠습니다" in n[2] and "PV-1" in n[2]]
+                return [n for n in op.logs_since(t0) if "PV-1" in n[2]
+                        and ("수동 요청을 지웠습니다" in n[2] or "반영되지 않았습니다" in n[2])]
             closed = await op.wait(lambda: not op.valve_on("PV-1")
                                    and not (op.live.get("manual") or {}).get("valve_request"), 5)
             await op.wait(lambda: bool(told()), 4)
             lg = told()
             self.check(f"{label} → PV-1 닫힘 · 요청 지움 · 알림", closed and bool(lg),
-                       "출력 꺼짐 · 요청 0 · 'PLC 가 수동 요청을 지웠습니다 — PV-1 …' 로그",
+                       "출력 꺼짐 · 요청 0 · 'PLC 가 수동 요청을 지웠습니다 — PV-1 …' 또는 "
+                       "'… PLC 에 반영되지 않았습니다 — PV-1 …' 로그",
                        f"출력 {op.valve_on('PV-1')} · 요청 {(op.live.get('manual') or {}).get('valve_request')} · "
                        f"{lg[-1][2] if lg else '(로그 없음)'}")
             self.h.ctl({"op": "fault", "key": key, "on": False})
