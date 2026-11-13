@@ -1160,6 +1160,11 @@ class PlcSim:
 
 
     # ---------- 입력 ----------
+    def _atm_switch(self) -> bool:
+        """챔버 대기압 입력(압력 스위치)이 켜져 있나 — 내장 시뮬레이터는 압력이 atm_input_torr 이상이면 켜짐.
+        가짜 PLC 는 덮어쓴다(잡음 없는 실제 압력 + 히스테리시스 — 게이지와 별개인 스위치)."""
+        return self.pressure >= self.atm_input_torr
+
     def _inputs(self, now):
         f = self.faults
         w = 0
@@ -1173,7 +1178,7 @@ class PlcSim:
             w |= 1 << A.IN0_CW
         if not f["lid"]:
             w |= 1 << A.IN0_LID
-        if self.pressure >= self.atm_input_torr or f["atm_sw"]:
+        if self._atm_switch() or f["atm_sw"]:
             w |= 1 << A.IN0_ATM
         pump_run = self.pump_on and self.pump_run_at is not None and (now - self.pump_run_at) >= 1.0
         if pump_run and not f["pump_alm"] and not f["pump_nofb"]:

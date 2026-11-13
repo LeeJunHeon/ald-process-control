@@ -78,6 +78,19 @@ class PlantSim(SIM.PlcSim):
         # ★ v0.6.2(D8): 모듈 값(SIM.ATM_INPUT_TORR)을 바꾸지 않고 이 인스턴스만 — pytest 안에서 만들어도 뒤 시험에 남지 않게
         self.atm_input_torr = float(plant["pressure"].get("atm_input_torr", SIM.ATM_INPUT_TORR))
         self.leak_torr_per_s = float(plant["pressure"].get("leak_torr_per_s", SIM.LEAK_TORR_PER_S))
+        # ★ v0.8.5: 대기압 입력은 게이지와 별개인 압력 스위치다 — 잡음 없는 실제 압력으로, 히스테리시스를 두고 판정한다.
+        #   잡음 섞인 게이지 값으로 판정하면 벤트 중 680 Torr 쯤에서 한 스캔 700 을 넘어 래더가 벤트 요청을 지웠다
+        self.atm_input_hyst_torr = max(0.0, float(plant["pressure"].get("atm_input_hyst_torr", 20.0)))
+        self.atm_sw_on = self.true_pressure >= self.atm_input_torr
+
+    def _atm_switch(self) -> bool:
+        """압력 스위치 — atm_input_torr 이상이면 켜지고 (atm_input_torr − 히스테리시스) 아래로 내려가야 꺼진다."""
+        p = self.true_pressure
+        if p >= self.atm_input_torr:
+            self.atm_sw_on = True
+        elif p < self.atm_input_torr - self.atm_input_hyst_torr:
+            self.atm_sw_on = False
+        return self.atm_sw_on
 
     # ---------- 시작 상태 ----------
     def set_state(self, spec):
@@ -91,6 +104,7 @@ class PlantSim(SIM.PlcSim):
                     spec = json.load(f)
         p = float(spec.get("pressure", self.plant["pressure"]["atm_torr"]))
         self.base_pressure = self.true_pressure = self.pressure = p
+        self.atm_sw_on = p >= self.atm_input_torr          # 스위치도 그 압력에 맞게
         for ch, t in (spec.get("heaters") or {}).items():
             self.heater_pv[int(ch) - 1] = float(t)
 

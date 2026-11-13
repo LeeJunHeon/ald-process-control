@@ -654,7 +654,7 @@ PLC 가 준비되기 전에 '실제 공정처럼' 시험하는 도구다. 내장
 | 파일 | 하는 일 |
 |---|---|
 | `test/fake_plc.py` | 가짜 PLC — Modbus TCP 서버. 래더(스캔 순서 · 타이머 · 알람 · 장비 ID)는 `simulator.PlcSim` 그대로, 장비 물리만 실제처럼 |
-| `test/fake_plant.json` | 물리 값 한곳 — 펌프다운(로그 곡선, 760 → 5E-2 Torr 약 3 분) · 벤트(약 30 s) · 공정 압력 · 펄스 압력 상승 · MFC 응답 · 잡음 · 히터 램프 · 오버슈트 · 정착(채널마다) · CVG · CM 잡음 · RF 순방향 · 반사 · PCV · O3 농도 · 시작 상태(atm · vac · hot) |
+| `test/fake_plant.json` | 물리 값 한곳 — 펌프다운(로그 곡선, 760 → 5E-2 Torr 약 3 분) · 벤트(약 30 s) · 공정 압력 · 펄스 압력 상승 · MFC 응답 · 잡음 · 히터 램프 · 오버슈트 · 정착(채널마다) · CVG · CM 잡음 · RF 순방향 · 반사 · PCV · O3 농도 · 시작 상태(atm · vac · hot). ★ **대기압 입력은 게이지와 별개인 압력 스위치**로 흉내 낸다 — 잡음 없는 실제 압력이 `pressure.atm_input_torr`(700) 이상이면 켜지고 `atm_input_torr − pressure.atm_input_hyst_torr`(20) 아래로 내려가야 꺼진다(게이지 잡음으로 한 스캔 켜져 벤트가 680 Torr 쯤에서 끝나던 것). CVG 값과 베이스 압력 · RF 허가 압력 판정은 잡음 섞인 게이지 값 그대로 |
 | `test/plc_ctl.py` | 시험 콘솔 — 가짜 PLC · 실제 PLC 모두. status · read · write, 가짜 PLC 전용 fault · cut · id · speed · plant |
 | `test/e2e_process.py` | 실제 공정 시나리오 자동 시험 — 가짜 PLC 와 프로그램(headless)을 띄워 운전자처럼 WebSocket 으로 조작하고 PASS / FAIL 표 |
 

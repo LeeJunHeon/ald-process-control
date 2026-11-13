@@ -15,7 +15,9 @@
     "pulse_rise_torr": 0.06,
     "pulse_decay_s": 0.4,
     "atm_input_torr": 700.0,
-    "_atm_input": "대기압 입력(압력 스위치)이 켜지는 압력 — 벤트 끝 판정"
+    "_atm_input": "대기압 입력(압력 스위치)이 켜지는 압력 — 벤트 끝 판정",
+    "atm_input_hyst_torr": 20.0,
+    "_atm_input_hyst": "압력 스위치 히스테리시스 — 켜진 뒤 (atm_input_torr − 이 값) 아래로 내려가야 꺼진다. 게이지 잡음과 무관(실제 압력으로 판정)"
   },
 
   "mfc": {

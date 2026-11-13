@@ -862,3 +862,98 @@ async def test_browser_vent_refusal_and_o3_permit_wait_display(served85):
     finally:
         await br.close()
         await pw.stop()
+
+
+# ===================== 시험 도구 — 가짜 PLC 의 대기압 입력은 압력 스위치 =====================
+def _fake_plc_mod():
+    import os
+    import sys
+    test_dir = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "test")
+    if test_dir not in sys.path:
+        sys.path.insert(0, test_dir)
+    import fake_plc
+    return fake_plc
+
+
+def _plant_sim(cfg, seed, speed=10.0):
+    """가짜 시계로 도는 가짜 PLC(PlantSim) — (sim, step). step(n) 은 20 ms 스캔 n 번."""
+    FP = _fake_plc_mod()
+    sim = FP.PlantSim(cfg, FP.load_plant(), speed, seed=seed)
+    t = [1000.0]
+    sim._clock = lambda: t[0]
+    sim._t = sim.plc_hb_at = t[0]
+
+    def step(n=1):
+        for _ in range(n):
+            t[0] += 0.02
+            sim.tick()
+    return sim, step
+
+
+@pytest.mark.parametrize("seed", range(8))
+def test_fake_plc_atm_input_is_a_pressure_switch_and_vent_runs_to_the_end(cfg, seed):
+    """가짜 PLC 로 벤트를 끝까지 — 대기압 입력은 잡음 없는 실제 압력으로(히스테리시스) 판정한다. 켜진 뒤 다시 꺼지지 않고,
+    벤트가 끝난 때(PLC 가 벤트 요청을 지운 스캔) 실제 압력이 atm_input_torr 이상이다. 게이지 값(잡음)으로 판정하던 때는
+    680 Torr 쯤에서 한 스캔 켜져 벤트가 일찍 끝났다."""
+    sim, step = _plant_sim(cfg, seed)
+    sim.set_state({"pressure": 1.0})
+    step(5)
+    assert not A.bit(sim.reg[A.D_INPUT0], A.IN0_ATM) and not sim.atm_sw_on
+    sim.write(A.D_CMD_CODE, [A.CMD_VENT])
+    sim.write(A.D_CMD_NO, [(sim.reg[A.D_CMD_NO] + 1) & 0xFFFF])
+    step(60)
+    assert sim.vent_req and sim.vv_on, "벤트가 시작되지 않았다"
+    on_at = end_p = None
+    noisy_over = False                                  # 실제 압력은 아래인데 게이지 값만 넘은 스캔이 있었나
+    for i in range(4000):
+        step()
+        atm = A.bit(sim.reg[A.D_INPUT0], A.IN0_ATM)
+        noisy_over = noisy_over or (sim.pressure >= sim.atm_input_torr > sim.true_pressure)
+        if on_at is None and atm:
+            on_at = i
+            assert sim.true_pressure >= sim.atm_input_torr, f"실제 {sim.true_pressure:.1f} Torr 에서 대기압 입력이 켜졌다"
+        elif on_at is not None:
+            assert atm, f"대기압 입력이 켜진 뒤 다시 꺼졌다(실제 {sim.true_pressure:.1f} Torr)"
+        if end_p is None and not sim.vent_req:
+            end_p = sim.true_pressure
+        if on_at is not None and i > on_at + 100:
+            break
+    assert on_at is not None and end_p is not None, "벤트가 끝나지 않았다"
+    assert end_p >= sim.atm_input_torr, f"벤트가 {end_p:.1f} Torr 에서 끝났다"
+    assert not sim.vv_on and not A.bit(sim.reg[A.D_ALARM0], A.ALM0_VENT_TIMEOUT)
+    assert noisy_over, "게이지 값(잡음)이 먼저 넘는 스캔이 없었다 — 이 시험이 고친 문제를 밟지 않았다"
+
+
+def test_fake_plc_atm_switch_hysteresis_gauge_untouched_and_fault_key(cfg):
+    """히스테리시스: atm_input_torr 이상에서 켜지고 (atm_input_torr − atm_input_hyst_torr) 아래에서 꺼진다. 시작 상태도
+    압력에 맞게. 고장 키 atm_sw 는 그대로 강제로 켠다. 게이지(CVG) 값은 잡음 섞인 그대로다."""
+    FP = _fake_plc_mod()
+    assert FP.load_plant()["pressure"]["atm_input_hyst_torr"] == 20.0
+    sim, step = _plant_sim(cfg, 3)
+    lim, hyst = sim.atm_input_torr, sim.atm_input_hyst_torr
+    assert hyst == 20.0 and sim.atm_sw_on                           # 대기압에서 시작
+    plant = {**sim.plant, "pressure": {k: v for k, v in sim.plant["pressure"].items() if k != "atm_input_hyst_torr"}}
+    assert FP.PlantSim(cfg, plant, 1.0, seed=1).atm_input_hyst_torr == 20.0      # 키가 없으면 20
+    for p, want in ((lim - 1, True), (lim - hyst + 0.5, True), (lim - hyst - 0.5, False), (lim - 1, False),
+                    (lim, True), (lim - 5, True)):
+        sim.true_pressure = p
+        assert sim._atm_switch() is want, (p, want)
+    sim.set_state("vac")
+    assert not sim.atm_sw_on
+    step(3)
+    assert not A.bit(sim.reg[A.D_INPUT0], A.IN0_ATM)
+    assert sim.pressure != sim.true_pressure                        # 게이지 값에는 잡음이 있다(스위치와 별개)
+    sim.set_fault("atm_sw", True)
+    step(1)
+    assert A.bit(sim.reg[A.D_INPUT0], A.IN0_ATM) and not sim.atm_sw_on
+    sim.set_fault("atm_sw", False)
+    step(1)
+    assert not A.bit(sim.reg[A.D_INPUT0], A.IN0_ATM)
+    sim.set_state("atm")
+    assert sim.atm_sw_on
+    # 내장 시뮬레이터는 그대로 — 압력 값으로 판정한다
+    fs = FakeSim(cfg)
+    fs.sim.pressure = fs.sim.atm_input_torr
+    assert fs.sim._atm_switch() and not hasattr(fs.sim, "atm_sw_on")
+    fs.sim.pressure = fs.sim.atm_input_torr - 0.1
+    assert not fs.sim._atm_switch()
