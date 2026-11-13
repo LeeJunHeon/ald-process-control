@@ -572,12 +572,11 @@ async def test_o3_on_goes_straight_to_generator_when_permit_already_stands(wired
 
 @o3_only
 @pytest.mark.parametrize("fault,words", [(None, ["IV-B 열린 뒤 5 s"]), ("bp_nofb", ["Bypass Pump 운전", "IV-B 열림"]),
-                                         ("o3_room", ["실내 O3 감지 꺼짐"])])
+                                         ("lid", ["기본 인터락"])])
 async def test_o3_on_timeout_sends_no_generator_and_closes_the_line(wired, notices, fault, words):
-    """제한 시간 안에 허가가 안 서면 발생기는 보내지 않고, 빠진 조건을 알린 뒤 바이패스 라인을 지연 없이 닫는다."""
+    """제한 시간 안에 허가가 안 서면 발생기는 보내지 않고, 빠진 조건을 알린 뒤 바이패스 라인을 지연 없이 닫는다.
+    (실내 O3 · 발생기 알람처럼 중대 알람이 원인이면 안전 정지라 취소 경로로 끝난다 — 아래 취소 시험.)"""
     lk, sim, _cfg = await _o3_wired(wired, wait_s=1.0 if fault is None else 1.5, off_delay=30)
-    if fault == "o3_room":
-        pytest.skip("실내 O3 는 중대 알람(안전 정지)이라 취소 경로로 끝난다 — 아래 취소 시험에서 본다")
     if fault:
         sim.set_fault(fault, True)
     task, seen = _watch_gen(sim)
