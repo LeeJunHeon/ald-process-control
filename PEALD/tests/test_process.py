@@ -614,7 +614,8 @@ async def test_o3_off_turns_generator_first(wired):
     cfg["process"]["o3_off_delay_s"] = 0.5
     sim.write(A.D_PRM_O3_MAX, [16000])
     await C.handle_command({"cmd": "manual_o3", "action": "on", "value": 50})
-    assert await wait_until(lambda: sim.man_aux & (1 << A.AUX_O3_GEN), 2)
+    # v0.8.5: 켜기는 두 단계 — 발생기 요청은 O3 허가(IV-B 뒤 5 s)가 선 뒤에 서버가 보낸다(예전에는 한꺼번에 보내 2 s 안)
+    assert await wait_until(lambda: sim.man_aux & (1 << A.AUX_O3_GEN), 10)
     await C.handle_command({"cmd": "manual_o3", "action": "off"})
     assert not (sim.man_aux & (1 << A.AUX_O3_GEN)), "발생기가 꺼지지 않았다"
     assert sim.man_aux & (1 << A.AUX_BYPASS_PUMP), "바이패스 펌프를 함께 꺼 버렸다"

@@ -74,16 +74,31 @@ def cmd(sim, code, step_ms=10):
     return sim.reg[A.D_ACK_RESULT]
 
 
+def valve_permit(sim):
+    """공정 밸브 허가(인터락 b4)를 세운다(펌프 운전 · IV-E 열림 · 대기압 아님) — v0.8.5: 래더는 공정 중 허가가 0.5 s 넘게
+    없으면 알람1 b8 'Valve Permit Lost in Process' 로 끝낸다. 한 스캔 전체(scan · run_ladder)로 0.5 s 넘게 도는 시험의 전제."""
+    sim.base_pressure = 1.0
+    sim.pump_req = sim.exh_req = True
+    for _ in range(600):
+        scan(sim)
+        if A.bit(sim.reg[A.D_INTERLOCK], A.ILK_VALVE_OK):
+            return
+    raise AssertionError("공정 밸브 허가가 서지 않았다")
+
+
 def o3_permit(sim):
     """O3 가 있는 장비: O3 라인을 켜 O3 허가(인터락 b9)를 세운다 — 래더는 공정 중 허가가 없으면 알람1 b3 로
     끝낸다(test_simulator 의 _o3_sim(permit=True) 와 같은 방법). 바이패스 5 s 대기도 같은 시계로 센다."""
     if not DEV.HAS_O3:
         return
-    sim.man_aux |= (1 << A.AUX_BYPASS_PUMP) | (1 << A.AUX_IVB) | (1 << A.AUX_O3_GEN)
+    # ★ v0.8.5: 두 단계 — 허가 전의 발생기 요청은 래더 P50 이 지운다. 바이패스 펌프 + IV-B → 허가 → 발생기
+    sim.man_aux |= (1 << A.AUX_BYPASS_PUMP) | (1 << A.AUX_IVB)
     for _ in range(600):
         scan(sim)
-        if A.bit(sim.reg[A.D_INTERLOCK], A.ILK_O3_OK) and sim.o3_gen_on:
-            return
+        if A.bit(sim.reg[A.D_INTERLOCK], A.ILK_O3_OK):
+            sim.man_aux |= 1 << A.AUX_O3_GEN
+            if sim.o3_gen_on:
+                return
     raise AssertionError("O3 허가가 서지 않았다")
 
 
@@ -398,6 +413,7 @@ def test_block_prep_timeout_alarms_and_aborts(cfg):
     sim.write(A.D_PRM_MFC_TIMEOUT, [1])
     sim.faults["mfc1_stuck"] = True
     sim.mfc_pv[0] = 0.0
+    valve_permit(sim)                       # v0.8.5: Valve Permit 을 세운 채로(아니면 0.5 s 뒤 알람1 b8 로 먼저 끝난다)
     o3_permit(sim)                          # v0.4.10: Powder 는 O3 허가를 세운 채로(아니면 b3 로 먼저 끝난다)
     sim._process_start()
     run_ladder(sim, ms=2000, step_ms=10)        # v0.4.10: P35 b12 → 다음 스캔 P30 안전 정지 → P40 중단
@@ -409,6 +425,7 @@ def test_block_prep_timeout_alarms_and_aborts(cfg):
 def test_mfc_deviation_during_run_aborts(cfg):
     """공정 중 MFC1 편차가 10 s 계속되면 중단한다."""
     sim, _r = loaded(cfg, [mkblock("A", 1000, [mkstep("a", 50)])], stable_s=0, tol_raw=100)
+    valve_permit(sim)                       # v0.8.5: Valve Permit 을 세운 채로(아니면 0.5 s 뒤 알람1 b8 로 먼저 끝난다)
     o3_permit(sim)                          # v0.4.10: Powder 는 O3 허가를 세운 채로(아니면 b3 로 먼저 끝난다)
     sim._process_start()
     # 블록 준비를 통과하려면 먼저 MFC 가 맞아야 한다 (편차는 MFC1 AO 사본 기준)

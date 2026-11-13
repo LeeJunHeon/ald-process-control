@@ -273,6 +273,7 @@ def test_lamp_table(cfg):
     s._execute(A.CMD_ALARM_RESET)
     fs.step(2)
     fs.o3_ready()                   # Powder: 중대 알람의 안전 정지가 O3 라인을 지웠다 — 다시 켠다
+    fs.valve_ready()                # v0.8.5: Valve Permit 을 세운 채로(아니면 0.5 s 뒤 알람1 b8 로 공정이 끝난다)
     running(fs, cfg)
     assert at_blink(fs, False) == (False, False, True, False), "공정 중 → 녹"
     s.pause_req = True
@@ -417,6 +418,7 @@ def test_ivb_needs_bypass_pump_running(cfg):
 @pytest.mark.parametrize("stable,timeout,aborts", [(5, 3, True), (1, 3, False), (3, 3, True)])
 def test_mfc_prep_timeout_even_with_zero_tolerance(cfg, stable, timeout, aborts):
     fs = FakeSim(cfg, o3=True)
+    fs.valve_ready()                # v0.8.5: Valve Permit 을 세운 채로(아니면 0.5 s 뒤 알람1 b8 로 먼저 끝난다)
     s = fs.sim
     s.write(A.D_PRM_MFC_TIMEOUT, [timeout])
     s.write(A.D_PRM_MFC_STABLE, [stable])

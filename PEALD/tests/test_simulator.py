@@ -536,12 +536,15 @@ def _o3_sim(cfg, permit=False):
     s.write(A.D_PRM_O3_MAX, [16000])
     s.write(A.D_PRM_BASE_PRESS, [16000])      # 진공 판정은 이 시험과 무관 — 걸리지 않게
     s.base_pressure = 1.0                      # 대기압이면 PLC 가 밸브 요청을 지운다
-    s.man_aux = (1 << A.AUX_BYPASS_PUMP) | (1 << A.AUX_IVB) | (1 << A.AUX_O3_GEN)
+    # ★ v0.8.5: 두 단계 — 허가 전의 발생기 요청은 래더 P50 이 지운다. 바이패스 펌프 + IV-B → O3 허가 → 발생기
+    s.man_aux = (1 << A.AUX_BYPASS_PUMP) | (1 << A.AUX_IVB)
     s.ao[AO_O3] = 1000
     if permit:
         s.pump_req = s.exh_req = True
     for _ in range(600):                       # 가짜 시계 — 바이패스 5 s 대기도 그대로 센다
         fs.step(1, 0.05)
+        if A.bit(s.reg[A.D_INTERLOCK], A.ILK_O3_OK):
+            s.man_aux |= 1 << A.AUX_O3_GEN
         if s.o3_gen_on and (not permit or A.bit(s.reg[A.D_INTERLOCK], A.ILK_VALVE_OK)):
             return s
     raise AssertionError("발생기·허가 준비가 되지 않았다")

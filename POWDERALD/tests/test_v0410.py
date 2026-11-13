@@ -1235,6 +1235,7 @@ def test_s5_block_prep_same_scan_no_seq3_between_blocks(cfg):
 
 def test_s6_stable_equals_timeout_runs_step_two_scans_then_aborts(cfg):
     fs = FakeSim(cfg, o3=True)
+    fs.valve_ready()                # v0.8.5: Valve Permit 을 세운 채로(아니면 0.5 s 뒤 알람1 b8 로 먼저 끝난다)
     s = fs.sim
     s.write(A.D_PRM_MFC_TIMEOUT, [1])
     s.write(A.D_PRM_MFC_STABLE, [1])

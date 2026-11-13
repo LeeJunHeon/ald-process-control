@@ -24,7 +24,7 @@ from powderald.convert import Converters
 from powderald.process import ProcessRunner, IDLE, BASE_WAIT
 from powderald.state import state
 
-from conftest import o3_line_live, wait_until, free_port
+from conftest import o3_line_live, valve_permit_live, wait_until, free_port
 
 pytest.importorskip("fastapi.testclient")
 from fastapi.testclient import TestClient          # noqa: E402
@@ -462,6 +462,7 @@ async def test_one_lost_response_heartbeat_gap_and_no_prm_writes_in_process(sim)
         # 공정을 돌린다(PLC 쪽) — 몇 분짜리
         tbl = R.to_plc_words(cfg, Converters(cfg), _recipe("유실", 5000))
         s.write(A.RCP_SUM_BASE, tbl["words"])
+        await valve_permit_live(s)       # v0.8.5: 래더는 공정 중 Valve Permit 이 0.5 s 넘게 없으면 알람1 b8 로 중단한다
         await o3_line_live(s)            # Powder: 래더는 공정 중 O3 허가가 없으면 중단한다
         assert s._process_start() == A.RESULT_OK
         assert await wait_until(lambda: lk.status[A.D_STATE] in (A.STATE_READY, A.STATE_RUN), 3)

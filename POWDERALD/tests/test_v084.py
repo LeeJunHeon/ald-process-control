@@ -583,9 +583,13 @@ class Rig:
         assert self.fs.cmd(A.CMD_PUMP_START) == A.RESULT_OK
         assert self.run(120, 0.05, lambda: self.ilk(A.ILK_VACUUM) and self.ilk(A.ILK_VALVE_OK)), "진공이 안 됐다"
         if DEV.HAS_O3:
-            self.cmd12(aux=(1 << A.AUX_BYPASS_PUMP) | (1 << A.AUX_IVB) | (1 << A.AUX_O3_GEN),
-                       o3=self.conv.o3.to_raw(100.0))
-            assert self.run(20, 0.05, lambda: self.ilk(A.ILK_O3_OK) and s.o3_gen_on), "O3 허가가 안 났다"
+            # ★ v0.8.5: O3 라인은 두 단계 — 래더 P50 은 O3 허가가 없는 동안 발생기 요청을 지운다. 바이패스 펌프 + IV-B 를
+            #   보내고 허가가 선 뒤에 발생기를 보낸다(PC 의 O3 라인 켜기와 같은 순서)
+            line = (1 << A.AUX_BYPASS_PUMP) | (1 << A.AUX_IVB)
+            self.cmd12(aux=line, o3=self.conv.o3.to_raw(100.0))
+            assert self.run(20, 0.05, lambda: self.ilk(A.ILK_O3_OK)), "O3 허가가 안 났다"
+            self.cmd12(aux=line | (1 << A.AUX_O3_GEN), o3=self.conv.o3.to_raw(100.0))
+            assert self.run(2, 0.05, lambda: s.o3_gen_on), "O3 발생기가 켜지지 않았다"
         s.write(A.D_HEATER_POWER, [1])
         s.write(A.D_HEATER_SV, [heater_raw(100.0)] + [0] * 11)
         assert self.fs.cmd(A.CMD_HEATER_APPLY) == A.RESULT_OK
@@ -640,7 +644,8 @@ def _alarm_name(word, bit):
     return next(d["name"] for d in (DEV.ALARMS0 if word == 0 else DEV.ALARMS1) if d["bit"] == bit)
 
 
-# 고장 키 → (대기 중 알람, 공정 중 알람, 고장을 넣은 뒤 도는 시간 s). 알람 = (워드, 비트) 또는 None(알람 없음 · 상태 그대로).
+# 고장 키 → (대기 중 알람, 공정 중 알람, 고장을 넣은 뒤 도는 시간 s — 묶음이면 (대기 중, 공정 중)).
+# 알람 = (워드, 비트) 또는 None(알람 없음 · 상태 그대로).
 # ★ README '비트 정의' · '래더와 같게 맞춘 것' 의 조건 그대로 — 리드는 공정 중에만(b4), 공압 · N2 는 1 s 뒤, IV-E 5 s · 펌프
 #   피드백 10 s, MFC 편차 10 s, PC 하트비트 멈춤은 와치독(3 s) 뒤 경고 b6(대기 중이면 바로 안전 정지 · 공정 중이면 계속).
 _PUMP_BLOCK = ("emo", "air", "cw", "pump_alm", "pump_nofb")         # 이 고장은 펌프 · 배기 요청도 지운다(명령 8 결과 1 조건)
@@ -657,9 +662,14 @@ _MATRIX = {
     "tc1_comm": (None, None, 2.0), "tc2_comm": (None, None, 2.0), "tc3_comm": (None, None, 2.0),
     "chamber_leak": (None, None, 2.0),
     "old_p50": (None, None, 2.0),
-    "ive_stuck": ((1, A.ALM1_IVE), (1, A.ALM1_IVE), 7.0),
-    "pump_nofb": ((0, A.ALM0_PUMP), (0, A.ALM0_PUMP), 12.0),
+    # ★ v0.8.5: 공정 중에는 IV-E 열림 리미트 · 펌프 운전 입력이 빠지는 순간 Valve Permit 이 꺼져, 5 s · 10 s 알람보다 먼저
+    #   0.5 s 뒤 알람1 b8 'Valve Permit Lost in Process' 로 끝난다(그때는 b0 · b5 가 아직 없고 펌프 요청도 남아 있다)
+    "ive_stuck": ((1, A.ALM1_IVE), (1, A.ALM1_VALVE_PERMIT), (7.0, 1.5)),
+    "pump_nofb": ((0, A.ALM0_PUMP), (1, A.ALM1_VALVE_PERMIT), (12.0, 1.5)),
+    # v0.8.5: 챔버 대기압 입력(압력은 그대로) — 대기 중에는 알람 없이 Valve Permit 만 꺼지고, 공정 중에는 0.5 s 뒤 b8
+    "atm_sw": (None, (1, A.ALM1_VALVE_PERMIT), (2.0, 1.5)),
 }
+_VP = (1, A.ALM1_VALVE_PERMIT)
 if DEV.HAS_RF:
     _MATRIX.update({"rf_notready": (None, None, 2.0), "rf_alm": ((1, A.ALM1_RF), (1, A.ALM1_RF), 1.0)})
 if DEV.HAS_O3:
@@ -686,6 +696,7 @@ def test_fault_matrix(cfg, key, running):
     """고장 하나를 대기 중 · 공정 중에 넣는다 — 알람 비트(중대면 안전 정지) · 밸브/RF/O3 출력 · 수동 요청 · 끝 결과 문구."""
     idle_alm, run_alm, secs = _MATRIX[key]
     alm = run_alm if running else idle_alm
+    secs = secs[running] if isinstance(secs, tuple) else secs
     rig = Rig(cfg, running)
     s = rig.s
     s.set_fault(key, True)
@@ -698,9 +709,10 @@ def test_fault_matrix(cfg, key, running):
         assert not rig.ilk(A.ILK_SAFE_STOP_REQ)
         if running:
             assert s.reg[A.D_SEQ_STATE] in (4, 5) and s.running
-        elif key == "lid":
+        elif key in ("lid", "atm_sw"):
             # 대기 중 리드 — 알람은 없지만 기본 인터락 · Valve Permit 이 빠지고 P50 이 수동 요청을 지운다
-            assert not rig.ilk(A.ILK_BASIC) and not rig.ilk(A.ILK_VALVE_OK)
+            # (대기압 입력도 — 기본 인터락은 그대로, Valve Permit 만 빠진다)
+            assert rig.ilk(A.ILK_BASIC) == (key != "lid") and not rig.ilk(A.ILK_VALVE_OK)
             assert s.reg[A.D_VALVE_OUT] & DEV.MANUAL_VALVE_MASK == 0 and s.man_valve == 0
         else:
             assert s.reg[A.D_VALVE_OUT] & rig.pv, "알람 없는 고장인데 수동 밸브가 닫혔다"
@@ -718,7 +730,10 @@ def test_fault_matrix(cfg, key, running):
     aux = s.reg[A.D_AUX_OUT]
     assert not A.bit(aux, A.AUX_RF) and not A.bit(aux, A.AUX_O3_GEN) and not A.bit(aux, A.AUX_VV)
     # 펌프 · 배기: 비상정지 입력 · 공압 · 냉각수 · 펌프 알람이면 요청을 지워 꺼지고, 그 밖의 안전 정지는 그대로 둔다
-    if key in _PUMP_BLOCK:
+    if alm == _VP:
+        # v0.8.5: 원래의 5 s · 10 s 알람은 아직 서지 않았다 — Valve Permit 꺼짐이 먼저 공정을 끊었다
+        assert (idle_alm is None or not rig.alarm(*idle_alm)) and A.bit(aux, A.AUX_PUMP)
+    elif key in _PUMP_BLOCK:
         assert not A.bit(aux, A.AUX_PUMP) and not A.bit(aux, A.AUX_IVE)
     else:
         assert A.bit(aux, A.AUX_PUMP)
@@ -731,7 +746,7 @@ def test_fault_matrix(cfg, key, running):
     # 원인이 남은 채 리셋 → 다시 서고 안전 정지 유지(원인이 스스로 없어지는 알람은 풀린다), 원인을 없애고 리셋 → 대기
     assert rig.fs.cmd(A.CMD_ALARM_RESET) == A.RESULT_OK
     rig.run(0.3)
-    if key in _SELF_CLEARING:
+    if key in _SELF_CLEARING or alm == _VP:         # b8 은 공정 중에만 본다 — 공정이 끝났으니 다시 서지 않는다
         assert not rig.alarm(word, bit) and s.reg[A.D_STATE] == A.STATE_IDLE
     else:
         assert rig.alarm(word, bit) and s.reg[A.D_STATE] == A.STATE_SAFE_STOP

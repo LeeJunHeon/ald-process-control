@@ -39,6 +39,29 @@ def isolated_data(tmp_path):
     yield
 
 
+@pytest.fixture(autouse=True)
+def o3_timers_reset():
+    """v0.8.5: state 싱글턴에 남은 O3 서버 타이머(끄기 지연 · 허가 대기)를 시험마다 지운다 — 앞 시험의 끝난 이벤트 루프에
+    묶인 태스크가 남아 있으면 다음 시험의 O3 라인 켜기가 '이미 기다리는 중' 으로 거절된다."""
+    from powderald.state import state
+
+    def clear():
+        for name in ("o3_on_task", "o3_off_task"):
+            t = getattr(state, name, None)
+            if t is not None and not t.done():
+                try:
+                    t.cancel()
+                except RuntimeError:        # 그 태스크의 이벤트 루프가 이미 닫혔다
+                    pass
+            setattr(state, name, None)
+        state.o3_on_until = state.o3_off_at = 0.0
+        state.o3_gen_seen = 0.0
+
+    clear()
+    yield
+    clear()
+
+
 @pytest.fixture
 def cfg():
     from powderald import config as C
@@ -130,6 +153,20 @@ class FakeSim:
         self.step(1, dt)
         return s.reg[A.D_ACK_RESULT]
 
+    def valve_ready(self):
+        """공정 밸브 허가(인터락 b4)를 세운다 — 펌프 운전 · IV-E 열림 · 대기압 아님.
+        ★ v0.8.5: 래더는 공정 중 허가가 0.5 s 넘게 없으면 알람1 b8 'Valve Permit Lost in Process' 로 중단한다 —
+          시퀀서를 직접 시작해 0.5 s 넘게 돌리는 시험의 전제(예전에는 허가 없이도 밸브만 막힌 채 끝까지 돌았다)."""
+        from powderald import addresses as A
+        s = self.sim
+        s.base_pressure = 1.0
+        s.pump_req = s.exh_req = True
+        for _ in range(400):
+            self.step(1, 0.05)
+            if A.bit(s.reg[A.D_INTERLOCK], A.ILK_VALVE_OK):
+                return
+        raise AssertionError("공정 밸브 허가가 서지 않았다")
+
     def o3_ready(self):
         """Powder: O3 라인을 래더대로 켠다(바이패스 펌프 → IV-B → 5 s 뒤 O3 허가 → 발생기).
         ★ 래더는 공정 중 O3 허가가 빠지면 알람1 b3 로 중단한다 — 시퀀서를 직접 돌리는 시험의 전제."""
@@ -140,12 +177,25 @@ class FakeSim:
         s = self.sim
         if s.reg[A.D_PRM_O3_MAX] == 0:
             s.write(A.D_PRM_O3_MAX, [16000])
-        s.man_aux |= (1 << A.AUX_BYPASS_PUMP) | (1 << A.AUX_IVB) | (1 << A.AUX_O3_GEN)
+        # ★ v0.8.5: 두 단계 — 래더 P50 은 O3 허가가 없는 동안 발생기 요청(b9)을 매 스캔 지운다. 바이패스 펌프 + IV-B 를
+        #   먼저 켜고 허가가 선 뒤에 발생기 요청을 넣는다(PC 의 O3 라인 켜기와 같은 순서)
+        s.man_aux |= (1 << A.AUX_BYPASS_PUMP) | (1 << A.AUX_IVB)
         for _ in range(400):
             self.step(1, 0.05)
-            if A.bit(s.reg[A.D_INTERLOCK], A.ILK_O3_OK) and s.o3_gen_on:
-                return
+            if A.bit(s.reg[A.D_INTERLOCK], A.ILK_O3_OK):
+                s.man_aux |= 1 << A.AUX_O3_GEN
+                if s.o3_gen_on:
+                    return
         raise AssertionError("O3 허가가 서지 않았다")
+
+
+async def valve_permit_live(sim, timeout=10.0):
+    """실시간으로 도는 시뮬레이터에 공정 밸브 허가(인터락 b4)를 세운다(펌프 운전 · IV-E 열림 · 대기압 아님).
+    ★ v0.8.5: 래더는 공정 중 허가가 0.5 s 넘게 없으면 알람1 b8 로 중단한다 — 시퀀서를 직접 시작하는 시험의 전제."""
+    from powderald import addresses as A
+    sim.base_pressure = 1.0
+    sim.pump_req = sim.exh_req = True
+    assert await wait_until(lambda: A.bit(sim.reg[A.D_INTERLOCK], A.ILK_VALVE_OK), timeout), "공정 밸브 허가가 서지 않았다"
 
 
 async def o3_line_live(sim, timeout=10.0):
@@ -158,5 +208,7 @@ async def o3_line_live(sim, timeout=10.0):
         return
     if sim.reg[A.D_PRM_O3_MAX] == 0:
         sim.write(A.D_PRM_O3_MAX, [16000])
-    sim.man_aux |= (1 << A.AUX_BYPASS_PUMP) | (1 << A.AUX_IVB) | (1 << A.AUX_O3_GEN)
+    # ★ v0.8.5: 두 단계 — 허가 전의 발생기 요청은 래더 P50 이 지운다. 허가가 선 뒤에 발생기 요청을 넣는다
+    sim.man_aux |= (1 << A.AUX_BYPASS_PUMP) | (1 << A.AUX_IVB)
     assert await wait_until(lambda: A.bit(sim.reg[A.D_INTERLOCK], A.ILK_O3_OK), timeout), "O3 허가가 서지 않았다"
+    sim.man_aux |= 1 << A.AUX_O3_GEN
