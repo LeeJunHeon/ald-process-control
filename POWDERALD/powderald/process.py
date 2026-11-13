@@ -96,6 +96,10 @@ class ProcessRunner:
         self._hdev_since = {}
         self._hdev_warned = set()
         self.watch_notices = []         # 지금 이어지는 경고(Program Notices)
+        # ★ v0.8.5: 알람1 b8(공정 중 Valve Permit 꺼짐) — 앞 샘플에서 본 값(None = 연결 뒤 아직 못 봄)과
+        #   공정 중 허가가 꺼져 있는 동안 본 빠진 조건(안전 정지 요구가 서기 전 — 허가가 돌아오면 비운다)
+        self._vp_seen = None
+        self._vp_miss = []
         self.offline_checked = False    # v0.7.0(P6): 켜진 뒤 꺼진 동안 끝난 공정을 판정해 봤나(실행마다 한 번)
         self.start_sent = False         # v0.7.1(P2): 이 실행에서 공정 시작 명령을 보낸 적이 있나
         self.adopt_count = 0            # 이 실행에서 이어받은 횟수
@@ -381,6 +385,11 @@ class ProcessRunner:
             from .commands import _cancel_o3_timer
             _cancel_o3_timer()
             await push_log("O3 바이패스 라인 닫기 예약을 취소했습니다 — 공정 시작 절차", "warn")
+        if getattr(st, "o3_on_task", None) is not None:
+            # ★ v0.8.5: O3 라인 켜기가 O3 허가를 기다리는 중 — 시작 절차 중에 발생기 명령이 끼어들지 않게 취소한다
+            from .commands import cancel_o3_on
+            if cancel_o3_on():
+                await push_log("O3 라인 켜기 취소 — 공정 시작 절차 (발생기를 보내지 않았습니다)", "warn")
         # ★ v0.4.14: 앞 공정이 아직 이 PC 의 공정 구간(active_run)인데 PLC 는 이미 공정 중이 아니면 — 중단 직후
         #   (0~0.1 s) 새 시작 — 끝 판정(tick)을 먼저 한다. 아래에서 _abort_sent · _last_pos 를 지우면 앞 공정이
         #   '중단 (PLC 중단)' · '(공정 중 위치를 보지 못함)' 으로 적혔다
@@ -596,6 +605,7 @@ class ProcessRunner:
             if (self.active_run or self._was_running) and self._lost_at is None:
                 self._lost_at, self._lost_mono = time.time(), time.monotonic()     # v0.7.0(P3 · P7)
             self._reset_watch()
+            self._vp_seen = None            # 다시 붙으면 그때 서 있는 알람1 b8 은 '새로 선 것' 이 아니다
             return
         s = link.status
         self._track_heaters(s)
@@ -606,7 +616,9 @@ class ProcessRunner:
             # ★ v0.4.15: 장비 ID 가 막힌 연결(다른 장비의 PLC)이고 이 PC 가 맡은 공정이 없다 — 그 공정의 끝을 이 장비
             #   이벤트 로그에 적거나(골라 둔 레시피 이름으로) RF 감시를 하지 않는다. '공정 중을 봤다'도 세우지 않는다
             self._was_running = False
+            self._vp_seen = None
             return
+        self._watch_valve_permit(s, running, push_log_sync)
         if (self._was_running or self.active_run) and not A.bit(s[A.D_ALARM0], A.ALM0_RECIPE):
             self._b13_cleared = True
         if self._b13_wait is not None:
@@ -661,6 +673,31 @@ class ProcessRunner:
                 self._b13_wait = (self._end_seen_mono + B13_WAIT_S, end)
                 return
             self._finish(*end)
+
+    # ---- v0.8.5: 공정 중 Valve Permit 꺼짐(알람1 b8) — 그때 빠져 있던 허가 조건을 이벤트 로그에 ----
+    def _watch_valve_permit(self, s, running: bool, push_log_sync):
+        """래더 P35: SEQ_RUN AND NOT Valve Permit 0.5 s → 알람1 b8(중대) → 공정 중단. 알람 이름만으로는 무엇이 빠졌는지
+        모른다 — 알람이 서는 순간(PC 가 처음 본 때) 빠져 있던 조건을 valve_permit_missing 으로 한 줄 남긴다.
+        ★ 알람이 선 다음 스캔부터는 안전 정지 요구가 허가를 끄고(결과이지 원인이 아니다) 그새 조건이 돌아왔을 수도 있다 —
+          공정 중 허가가 꺼져 있는 동안 본 조건을 모아 두었다가 그것을 적는다(허가가 돌아오면 비운다). PC 가 꺼진 허가를
+          한 번도 못 봤으면 지금 상태에서 안전 정지 요구 항목을 빼고 적는다."""
+        ilk = s[A.D_INTERLOCK]
+        if running and not A.bit(ilk, A.ILK_SAFE_STOP_REQ):
+            if A.bit(ilk, A.ILK_VALVE_OK):
+                self._vp_miss = []
+            else:
+                self._vp_miss += [m for m in valve_permit_missing(s) if m not in self._vp_miss]
+        b8 = A.bit(s[A.D_ALARM1], A.ALM1_VALVE_PERMIT)
+        if b8 and self._vp_seen is False:
+            miss = [m for m in self._vp_miss if m != "PLC 허가 조건 확인"]
+            if not miss:
+                miss = [m for m in valve_permit_missing(s) if m not in SAFE_STOP_ITEMS and m != "PLC 허가 조건 확인"]
+            push_log_sync("warn", "공정 중 Valve Permit 꺼짐(0.5 s 넘게 — 알람 Valve Permit Lost in Process) — 빠진 조건(필요): "
+                          + (" · ".join(miss) if miss else "확인 안 됨(짧게 꺼졌다가 돌아옴 — 펌프 운전 피드백 · IV-E 열림 "
+                                                          "리미트 · 기본 인터락 · 대기압 입력의 접점 · 배선 확인)"))
+        self._vp_seen = b8
+        if not running:
+            self._vp_miss = []
 
     # ---- v0.7.0(P3 · P7): 공정 구간 중 끊겼던 링크가 다시 붙었다 ----
     def _link_back(self, s, running: bool):
@@ -1416,11 +1453,53 @@ def valve_permit_missing(s) -> list:
     if A.bit(i0, A.IN0_ATM):
         miss.append("대기압 아님")
     if A.bit(ilk, A.ILK_SAFE_STOP_REQ):
-        # ★ v0.7.0(P3): 안전 정지 요구가 공정 뒤 남은 PC 끊김 트립 때문이면(비상정지 · 중대 알람 없음) 할 일을 적는다
-        only = (A.bit(s[A.D_ALARM0], A.ALM0_PC_LINK) and A.bit(i0, A.IN0_EMO)
-                and not ((s[A.D_ALARM0] & DEV.CRITICAL_MASK0) or s[A.D_ALARM1]))
-        miss.append("PC 끊김 트립 — Alarm Reset" if only else "안전 정지 요구 해제")
+        miss.append(_safe_stop_item(s))
     return miss or ["PLC 허가 조건 확인"]
+
+
+SAFE_STOP_ITEMS = ("PC 끊김 트립 — Alarm Reset", "안전 정지 요구 해제")
+
+
+def _safe_stop_item(s) -> str:
+    """허가에 빠진 조건 '안전 정지 요구' 의 글.
+    ★ v0.7.0(P3): 안전 정지 요구가 공정 뒤 남은 PC 끊김 트립 때문이면(비상정지 · 중대 알람 없음) 할 일을 적는다."""
+    only = (A.bit(s[A.D_ALARM0], A.ALM0_PC_LINK) and A.bit(s[A.D_INPUT0], A.IN0_EMO)
+            and not ((s[A.D_ALARM0] & DEV.CRITICAL_MASK0) or s[A.D_ALARM1]))
+    return SAFE_STOP_ITEMS[0] if only else SAFE_STOP_ITEMS[1]
+
+
+O3_HOLD_TEXT = "IV-B 열린 뒤 5 s(지났으면 PLC 허가 조건 확인)"
+
+
+def o3_permit_missing(s, prm=None) -> list:
+    """v0.8.5: O3 허가(인터락 b9)에 빠진 조건 — 래더 P30 O3 허가 렁과 같은 조건(기본 인터락 · IV-B 출력 · 바이패스 펌프
+    운전 입력 · 바이패스 펌프 알람 입력 없음 · IV-B 출력 뒤 5 s · O3 발생기 알람 입력 없음 · 실내 O3 없음 · PRM_O3_MAX > 0 ·
+    안전 정지 요구 없음). O3 가 없는 장비이거나 허가가 있으면 []. 위가 다 맞는데 허가가 없으면 IV-B 뒤 5 s 를 기다리는 중이다.
+    prm: 되읽은 PRM {주소: 원시값}(PlcLink.prm_readback)."""
+    if not DEV.HAS_O3:
+        return []
+    ilk, i1 = s[A.D_INTERLOCK], s[A.D_INPUT1]
+    if A.bit(ilk, A.ILK_O3_OK):
+        return []
+    miss = []
+    if not A.bit(ilk, A.ILK_BASIC):
+        miss.append("기본 인터락")
+    if not A.bit(i1, A.IN1_BP_RUN):
+        miss.append("Bypass Pump 운전")
+    if A.bit(i1, A.IN1_BP_ALM):
+        miss.append("Bypass Pump 알람 입력 꺼짐")
+    if not A.bit(s[A.D_AUX_OUT], A.AUX_IVB):
+        miss.append("IV-B 열림")
+    if A.bit(i1, A.IN1_O3_ALM):
+        miss.append("O3 발생기 알람 입력 꺼짐")
+    if A.bit(i1, A.IN1_O3_ROOM):
+        miss.append("실내 O3 감지 꺼짐")
+    o3_max = (prm or {}).get(A.D_PRM_O3_MAX)
+    if o3_max is not None and A.to_signed16(o3_max) <= 0:
+        miss.append("PLC 의 O3 상한(PRM_O3_MAX) > 0")
+    if A.bit(ilk, A.ILK_SAFE_STOP_REQ):
+        miss.append(_safe_stop_item(s))
+    return miss or [O3_HOLD_TEXT]
 
 
 def rf_permit_missing(s, prm=None, conv=None) -> list:

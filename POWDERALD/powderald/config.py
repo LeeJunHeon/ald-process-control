@@ -42,8 +42,9 @@ DEFAULTS = {
         "base_wait_timeout_s": 1800,     # 베이스 압력 대기 제한
         "base_stable_s": 3,              # 이만큼 계속 도달해 있어야 시작한다
         "heater_ready": {"enabled": False, "band_c": 2.0, "stable_s": 60},
-        # O3 끄기 뒤 바이패스 라인 닫기 지연(s) — O3 장비(Powder)만
-        **({"o3_off_delay_s": 10} if DEV.HAS_O3 else {}),
+        # O3 끄기 뒤 바이패스 라인 닫기 지연(s) · O3 라인 켜기에서 O3 허가(인터락 b9)를 기다리는 제한 시간(s, v0.8.5)
+        # — O3 장비(Powder)만
+        **({"o3_off_delay_s": 10, "o3_permit_wait_s": 15} if DEV.HAS_O3 else {}),
         # v0.7.0(A5): 공정 중 압력 상한 · 히터 이탈 경고 — PC 감시(PC 가 없으면 동작하지 않는다). 0 = 끔
         "press_high_torr": 10, "press_high_s": 5, "press_high_abort": False,
         "heater_dev_c": 15, "heater_dev_s": 120,
@@ -382,6 +383,10 @@ def validate(cfg: dict) -> list:
                              + ("(0 = 넘는 즉시)" if key.endswith("_s") else "(0 = 끔)")))
     if not isinstance(pr.get("press_high_abort", False), bool):
         p.append(("err", "process.press_high_abort 는 true 또는 false 여야 합니다"))
+    if DEV.HAS_O3 and not _in_range(pr.get("o3_permit_wait_s"), 6, 600):
+        # v0.8.5: O3 허가는 IV-B 가 열린 뒤 5 s 가 지나야 선다 — 그보다 짧으면 O3 라인 켜기가 늘 시간 초과다
+        p.append(("err", f"process.o3_permit_wait_s 는 6~600 여야 합니다: {pr.get('o3_permit_wait_s')!r} "
+                         "(O3 허가는 IV-B 가 열린 뒤 5 s 가 지나야 섭니다)"))
     # v0.7.0(A3): 누설률 점검
     lc = cfg.get("leakcheck") or {}
     for key, lo, hi in (("settle_s", 0, 600), ("measure_s", 10, 3600), ("limit_mtorr_min", 0.001, 100000),

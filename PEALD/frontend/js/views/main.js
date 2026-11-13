@@ -380,7 +380,10 @@
     var u = e.o3_unit || '';
     set('[data-mx="o3"]', conn ? fmt.num(e.o3_sv, 1) + ' / ' + fmt.num(e.o3_pv, 1) + ' ' + u : D);
     var aux = auxMap(s, t, conn);
-    set('[data-mx="o3line"]', conn ? (aux['O3GEN'] ? T('s.on') : T('s.off')) + ' · ' + (aux['BPMP'] ? T('s.on') : T('s.off')) +
+    // v0.8.5: O3 라인 켜기가 O3 허가를 기다리는 동안(서버 타이머)은 발생기 자리에 'Permit Wait N s'
+    var wait = ((t.manual || {}).o3_on_wait_s) || 0;
+    set('[data-mx="o3line"]', conn ? (aux['O3GEN'] ? T('s.on') : wait > 0 ? T('s.permitWait') + ' ' + wait + ' s' : T('s.off')) +
+      ' · ' + (aux['BPMP'] ? T('s.on') : T('s.off')) +
       ' · ' + (aux['IV-B'] ? T('s.open') : T('s.closed')) : D);
     var left = ((t.manual || {}).o3_off_left_s) || 0;
     set('[data-mx="o3off"]', conn && left > 0 ? left + ' s' : D);

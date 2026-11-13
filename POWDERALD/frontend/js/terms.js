@@ -58,7 +58,7 @@
     's.tableOk': 'Table OK', 's.tableNg': 'Table NG', 's.noAlarm': 'No Alarm', 's.critical': 'Critical',
     's.warning': 'Warning', 's.flow': 'Flow', 's.clickToOperate': 'Click to operate', 's.idlePipe': 'Idle', 's.exhaust': 'Exhaust', 's.heated': 'Heated',
     's.serverLost': 'Server Lost', 's.plcLost': 'PLC Lost', 's.plcStalled': 'PLC Stalled', 's.noAddress': 'No PLC Address',
-    's.feedbackOk': 'Feedback OK', 's.noFeedback': 'No Feedback', 's.match': 'Match', 's.mismatch': 'Mismatch',
+    's.feedbackOk': 'Feedback OK', 's.noFeedback': 'No Feedback', 's.permitWait': 'Permit Wait', 's.match': 'Match', 's.mismatch': 'Mismatch',
     's.unconfirmed': 'Unconfirmed', 's.thisPc': 'This PC', 's.viewOnly': 'View Only', 's.recording': 'Recording',
     's.locked': 'Locked', 's.unlocked': 'Unlocked', 's.notSaved': 'Not Saved',
     's.auto': 'Auto', 's.ready': 'Ready', 's.notReady': 'Not ready', 's.yes': 'Yes', 's.no': 'No', 's.none': 'None',

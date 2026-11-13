@@ -222,7 +222,10 @@
       ? '허가 대기(요청했지만 1 s 넘게 출력 안 나감): ' + ap.join(' · ') : '');
     if ((s.device || {}).has_o3) {
       var left = mn.o3_off_left_s || 0;
-      core.setText('mnO3Note', left > 0
+      var wait = mn.o3_on_wait_s || 0;         // v0.8.5: 켜기가 O3 Permit 을 기다리는 남은 시간(서버 타이머)
+      core.setText('mnO3Note', conn && wait > 0
+        ? 'O3 Permit 을 기다리는 중 — 허가가 서면 발생기를 켭니다 (남은 ' + wait + ' s · 화면을 닫아도 진행)'
+        : left > 0
         ? '발생기를 껐습니다 — ' + left + ' s 뒤 바이패스 라인을 닫습니다 (화면을 닫아도 진행)'
         : '끄기는 발생기를 먼저 끄고, 배관에 남은 O3 를 뺀 뒤 바이패스 라인을 닫습니다.');
     }
@@ -327,7 +330,8 @@
       if (!val) { core.toast('O3 설정 값을 넣으세요', 'warn'); return; }
       if (what === 'o3_set') { sendBusy('o3', Ops.o3('set', val)); return; }
       core.confirmAsk('O3 라인을 켤까요?',
-        '바이패스 펌프 → IV-B → 발생기 순서로 켭니다.<br>' +
+        '바이패스 펌프 → IV-B 를 켜고, O3 Permit 이 선 뒤 발생기를 켭니다(허가가 제한 시간 안에 서지 않으면 ' +
+        '발생기를 켜지 않고 바이패스 라인을 닫습니다).<br>' +
         '실내 O3 감지·발생기 알람이 있으면 PLC 가 막습니다.',
         T('b.o3On'), function () { sendBusy('o3', Ops.o3('on', val)); });
       return;

@@ -58,6 +58,7 @@ MFC_DEV_ABORT_S = 10.0          # 공정 중 MFC1 편차가 이만큼 계속되�
 HEATER_SOFT_OT_CH = 6           # 소프트 과온 감시 채널 (CH1~6)
 PV_R_BIT = 5                    # PV-R (PEALD 반응물 매니폴드 / Powder O3 → 챔버)
 PV_B_BIT = 9                    # Powder: PV-B O3 우회 → 바이패스 펌프 (PLC 자동)
+O3_LINE_KEEP = (1 << A.AUX_IVB) | (1 << A.AUX_BYPASS_PUMP)   # Powder P50: O3 허가가 없을 때 남기는 비트(h0C00)
 
 # 시뮬레이터 조작판에서 켤 수 있는 이상 입력
 FAULTS = [
@@ -82,8 +83,9 @@ FAULTS = [
     {"key": "pc_hb_stop", "name": "PC 하트비트 멈춤 (시험 — 공정 중이면 끝까지, 공정 뒤 트립이 남으면 안전 정지)"},
     {"key": "chamber_leak", "name": "챔버 누설 (막혀 있을 때 새는 속도 × 100)"},
     {"key": "plc_stop",  "name": "PLC STOP (시험 — 스캔 · PLC 하트비트 멈춤)"},
-    {"key": "ive_stuck", "name": "IV-E 리미트 입력 안 따라옴 (5 s 뒤 알람1 b0)"},
-    {"key": "pump_nofb", "name": "펌프 운전 피드백 없음 (10 s 뒤 알람0 b5)"},
+    {"key": "ive_stuck", "name": "IV-E 리미트 입력 안 따라옴 (5 s 뒤 알람1 b0 · 공정 중이면 0.5 s 뒤 알람1 b8)"},
+    {"key": "pump_nofb", "name": "펌프 운전 피드백 없음 (10 s 뒤 알람0 b5 · 공정 중이면 0.5 s 뒤 알람1 b8)"},
+    {"key": "atm_sw",    "name": "챔버 대기압 입력 켜짐 (압력은 그대로 — 공정 중이면 0.5 s 뒤 알람1 b8)"},
     {"key": "bp_nofb",   "name": "바이패스 펌프 운전 피드백 없음 (10 s 뒤 알람1 b5)", "dev": "powderald"},
     {"key": "old_p50",   "name": "고치기 전 래더 P50 (시험 — 허가가 꺼져도 수동 요청을 지우지 않음)"},
 ]
@@ -265,6 +267,7 @@ class PlcSim:
         self.t_ive = TON()          # P35 T0026 IV-E 동작 이상 5.0 s(고정)
         self.t_pump_fb = TON()      # P45 T0025 펌프 운전 피드백 없음 10 s
         self.t_bp_fb = TON()        # P45 T0031 바이패스 펌프 운전 피드백 없음 10 s (Powder)
+        self.t_vp = TON()           # P35 T0033 공정 중 Valve Permit 꺼짐 0.5 s (100 ms, 5)
         self._stopped = False       # PLC STOP 결함 중이었다 — 풀리면 P00 첫 스캔
         self.abort_req = False      # 즉시 중단 요청 — P40 행 130 에서 적용
         self.cmd_req = None         # P25 가 세운 이번 스캔 명령 요청 — 그 명령의 프로그램이 평가한다
@@ -393,7 +396,7 @@ class PlcSim:
                 self.reg.pc_set(addr, val)
         self.reg[A.D_STATE] = A.STATE_IDLE
         for name in ("t_wdt", "t_air", "t_n2", "t_ivb", "t_rf_ref", "t_mfc_to", "t_mfc_ok", "t_pump_to",
-                     "t_vent_to", "t_mfc_dev", "t_ive", "t_pump_fb", "t_bp_fb"):
+                     "t_vent_to", "t_mfc_dev", "t_ive", "t_pump_fb", "t_bp_fb", "t_vp"):
             setattr(self, name, TON())
         self.cmd_req = None
         self.vent_to_done = self.ive_bad_done = False
@@ -580,10 +583,15 @@ class PlcSim:
         """P50. 수동 · 히터 · MFC 명령(P40 뒤의 공정 중 여부로) → PLC 가 스스로 지우는 것 — 내부 사본뿐이다.
         ★ v0.8.2 (래더 P50 스텝 68 · Powder 스텝 63): 전체 닫기 ∥ 공정 시작 ∥ 안전 정지 요구 ∥ 챔버 대기압 ∥ NOT Valve Permit(M00044)
           → D04012 = 0. PEALD 스텝 75: 전체 닫기 ∥ 공정 시작 ∥ 안전 정지 요구 ∥ NOT RF 허가(M00048) → D04050 = 0.
-          Powder 스텝 70(O3 라인)은 그대로 — 발생기는 IV-B 뒤 5 s 에 켜지는 순서라 허가 전 요청이 정상이다.
           명령 12 복사(스텝 9 · 21) 뒤에 지우므로 허가 없이 받은 명령 12 는 결과 0 이어도 같은 스캔에 지워져 P60 에 닿지 않는다.
           전체 닫기 · 공정 시작은 그 명령을 처리하는 자리(_execute · _process_start)에서 지운다.
-          결함 old_p50(시험)이면 고치기 전 래더처럼 허가로는 지우지 않는다(PC 의 Pending 안전망 시험용)."""
+        ★ v0.8.5 (Powder — P50 맨 끝, 기존 지우기 렁들 뒤): NOT O3 허가(M00049) → WAND D04050 h0C00 D04050 —
+          O3 허가가 없는 동안 매 스캔 수동 보조 반영에서 O3 발생기(b9)만 지운다. IV-B(b10) · 바이패스 펌프(b11)는
+          남는다(이 둘이 허가를 만든다). 허가 전에 받은 발생기 요청이 남아 있다가 허가가 서는 순간(IV-B 뒤 5 s ·
+          리드를 닫은 뒤 …) 발생기를 저절로 켜지 않게 — 발생기 요청은 허가가 선 뒤에 보낸 것만 남는다
+          (PC 는 O3 라인을 두 단계로 켠다: 바이패스 펌프 + IV-B → 허가를 기다림 → 발생기).
+          결함 old_p50(시험)이면 고치기 전 래더처럼 허가로는 아무것도 지우지 않는다(PC 의 Pending 안전망 시험용) —
+          발생기 요청도 남는다(고치기 전 래더에는 이 렁이 없었다)."""
         self._run_cmd(MANUAL_CMDS)
         atm = bool((self.reg[A.D_INPUT0] >> A.IN0_ATM) & 1)
         if self.safe_stop:
@@ -597,6 +605,8 @@ class PlcSim:
                 self.man_valve = 0
             if DEV.HAS_RF and not (ilk >> A.ILK_RF_OK) & 1:
                 self.man_aux = 0
+            if DEV.HAS_O3 and not (ilk >> A.ILK_O3_OK) & 1:
+                self.man_aux &= O3_LINE_KEEP
 
     # ===================== 공정 시퀀서 =====================
     def _w(self, addr: int) -> int:
@@ -998,6 +1008,11 @@ class PlcSim:
         self.vent_to_done = self.t_vent_to.run(self.vent_req, self.reg[A.D_PRM_VENT_TIMEOUT], now)
         if self.vent_to_done:
             self.vent_req = False
+        # ★ v0.8.5 (래더 P45 — 벤트 시간 초과 지우기 바로 뒤, VV 출력 앞): IV-E 동작 이상(알람1 b0) 래치 중에는
+        #   매 스캔 벤트 요청을 지운다 — 닫힘 리미트가 안 들어와 열리지 못한 벤트가, 리미트가 돌아온 뒤 뒤늦게
+        #   VV 를 열지 않게. 이 스캔에 받은 벤트 명령(결과 0)도 같은 스캔에 지워진다(PC 는 보내기 전에 거절한다)
+        if (self.alm1 >> A.ALM1_IVE) & 1:
+            self.vent_req = False
         self.vv_on = self.vent_req and bool((ilk >> A.ILK_VENT_OK) & 1)
         # 펌프 모터
         if self.pump_req and not self.pump_on:
@@ -1158,7 +1173,7 @@ class PlcSim:
             w |= 1 << A.IN0_CW
         if not f["lid"]:
             w |= 1 << A.IN0_LID
-        if self.pressure >= self.atm_input_torr:
+        if self.pressure >= self.atm_input_torr or f["atm_sw"]:
             w |= 1 << A.IN0_ATM
         pump_run = self.pump_on and self.pump_run_at is not None and (now - self.pump_run_at) >= 1.0
         if pump_run and not f["pump_alm"] and not f["pump_nofb"]:
@@ -1272,6 +1287,14 @@ class PlcSim:
             # 공정 중 안전 정지(어떤 중대 알람이든) · 허가만 빠져도 b3 → 중대 → 다음 스캔에 중단
             if self.running and not b(ilk, A.ILK_O3_OK):
                 self._latch1(A.ALM1_O3_GEN)
+        # ★ v0.8.5 (래더 P35 — 장비별 알람1 렁 바로 뒤, 새 알람 판정 앞): SEQ_RUN AND NOT Valve Permit(M00044)
+        #   → TON T0033 0.5 s(100 ms 타이머 5) → SET 알람1 b8 '공정 중 Valve Permit 꺼짐'(중대).
+        #   SEQ_RUN 은 앞 스캔 P40 이 정한 값, 허가는 이번 스캔 P30 값이다. 알람1 ≠ 0 → 다음 스캔 P30 이 안전 정지
+        #   요구 → P40 이 중단한다. 다른 중대 알람이 먼저 공정을 끊으면 SEQ_RUN 이 0.5 s 안에 꺼져 b8 은 서지 않는다
+        #   (그 알람이 원인으로 남는다). 펌프 운전 피드백 없음(10 s) · IV-E 리미트 어긋남(5 s)은 허가가 먼저 빠지므로
+        #   공정 중에는 이 알람이 먼저 선다 — 밸브 출력이 막힌 채 스텝 시간만 흐르는 공정을 0.5 s 에 끊는다.
+        if self.t_vp.run(self.running and not b(ilk, A.ILK_VALVE_OK), 0.5, now):
+            self._latch1(A.ALM1_VALVE_PERMIT)
         self._publish_alarms()
 
     def _publish_alarms(self):

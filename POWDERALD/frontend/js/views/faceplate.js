@@ -136,19 +136,23 @@
       m.title = T_('eq.o3gen');
       m.rows.push([T_('v.actual'), conn ? num(eo.o3_pv, function (x) { return F.num(x, 1); }) + ' ' + (eo.o3_unit || '') : D]);
       m.rows.push([T_('v.setpoint'), conn ? num(eo.o3_sv, function (x) { return F.num(x, 1); }) + ' ' + (eo.o3_unit || '') : D]);
-      m.rows.push([T_('v.generator'), conn ? (am.O3GEN ? T_('s.on') : T_('s.off')) : D]);
+      // v0.8.5: Line ON 은 두 단계 — 바이패스 펌프 + IV-B 를 켜고 서버가 O3 Permit 을 기다렸다가 발생기를 보낸다.
+      //   기다리는 동안(manual.o3_on_wait_s > 0)은 발생기 줄에 'Permit Wait N s', ON 은 잠근다
+      var waitOn = conn ? (mo.o3_on_wait_s || 0) : 0;
+      m.rows.push([T_('v.generator'), conn ? (am.O3GEN ? T_('s.on') : waitOn > 0 ? T_('s.permitWait') + ' ' + waitOn + ' s' : T_('s.off')) : D]);
       // v0.8.1: 꺼진 펌프를 이상처럼 보이지 않게 — 출력 꺼짐 'OFF' · 켜짐 + 운전 피드백 'ON' · 켜짐 + 피드백 없음 'ON · No Feedback'
       m.rows.push([T_('eq.bypassPump'), !conn ? D : !am.BPMP ? T_('s.off')
         : (bpRun.bit != null && bit(t.inputs1, bpRun.bit)) ? T_('s.on') : T_('s.on') + ' · ' + T_('s.noFeedback')]);
       m.rows.push(['IV-B', conn ? (am['IV-B'] ? T_('s.open') : T_('s.closed')) : D]);
       if (op) m.rows.push(['O3 Permit', conn ? (bit(t.interlock, op.bit) ? T_('s.yes') : T_('s.no')) : D]);
       m.rows.push([T_('v.offDelay'), conn && mo.o3_off_left_s > 0 ? mo.o3_off_left_s + ' s' : D]);
-      m.note = 'Line ON = 바이패스 펌프 → IV-B → 5 s 뒤 O3 Permit → 발생기 순서 · ON 은 입력한 Setpoint 로 켭니다';
+      m.note = 'Line ON = 바이패스 펌프 → IV-B → O3 Permit(IV-B 뒤 5 s)을 기다린 뒤 발생기 · ON 은 입력한 Setpoint 로 켭니다';
       if (lineOn) extraWhy = 'O3 라인이 이미 켜져 있습니다';
+      else if (waitOn > 0) extraWhy = 'O3 Permit 을 기다리는 중입니다(남은 ' + waitOn + ' s) — 허가가 서면 발생기를 켭니다';
       m.inputs.push({ id: 'sp', label: T_('v.setpoint'), unit: eo.o3_unit || '', step: 0.1, off: !!block });
       btn('apply', T_('b.apply'), true);
       // ★ O3 Permit 으로도, PLC 설정값(o3_sv)으로도 막지 않는다 — ON 이 허가를 만들고, 값은 입력 칸 것을 보낸다
-      btn('on', T_('b.on'), !lineOn);
+      btn('on', T_('b.on'), !lineOn && !(waitOn > 0));
       btn('off', T_('b.off'), true);
     } else if (kind === 'pump') {
       var ap = auxMap(str, t, conn);
@@ -378,7 +382,8 @@
         '압력·반사 전력 조건을 PLC 가 확인하고, 조건이 어긋나면 즉시 끕니다.', T_('b.rfOn'), go);
     } else if (c.confirm === 'o3') {
       w.core.confirmAsk('O3 라인을 켤까요?',
-        '바이패스 펌프 → IV-B → 발생기 순서로 켭니다.<br>실내 O3 감지·발생기 알람이 있으면 PLC 가 막습니다.',
+        '바이패스 펌프 → IV-B 를 켜고, O3 Permit 이 선 뒤 발생기를 켭니다(허가가 제한 시간 안에 서지 않으면 발생기를 켜지 않고 ' +
+        '바이패스 라인을 닫습니다).<br>실내 O3 감지·발생기 알람이 있으면 PLC 가 막습니다.',
         T_('b.o3On'), go);
     } else if ((c.confirm || c.pair[0] === 'pump_start') && w.viewMain && w.viewMain.confirmFor) {
       // 펌핑 시작은 명령줄과 같은 규칙 — 수동 밸브 요청이 남아 있고 허가가 없을 때만 확인 창(confirmFor)

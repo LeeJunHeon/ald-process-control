@@ -223,6 +223,10 @@ ALARMS1 = [
     {"bit": 2, "name": "RF Reflected Power High", "crit": True,
      "cause": "반사 전력이 RF Reflected Limit 을 RF Reflected Over ms 넘게 넘음(매칭 · 압력/가스 조건 · 전극 · 케이블).",
      "check": "매처 상태 · 공정 압력 · 가스 · 케이블."},
+    {"bit": 8, "name": "Valve Permit Lost in Process", "crit": True,
+     "cause": "공정 중 Valve Permit(인터락 b4)이 0.5 s 넘게 꺼짐 — 밸브 출력이 막힌 채 스텝 시간만 흐르지 않게 PLC 가 공정을 끊음.",
+     "check": "빠진 조건이 펌프 운전(피드백) · IV-E 열림 리미트 · 기본 인터락(공압 · N2 · 냉각수 · 리드 · 비상정지) · "
+              "챔버 대기압 중 무엇인지 확인 — Event Log 의 'Valve Permit 꺼짐' 줄에 그때 빠진 조건이 남는다."},
 ]
 # 중대 알람 마스크 — PLC 가 안전 정지를 거는 기준(워드0). 워드1은 전부 중대.
 CRITICAL_MASK0 = 0xD23F             # v0.7.0: b6 PC Link Lost 를 뺐다(0xD27F → 0xD23F)

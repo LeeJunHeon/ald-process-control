@@ -563,7 +563,7 @@ class PlcLink:
                 #   100 ms 전)는 PLC 가 반영을 지운 것과 같은 스캔의 안전 정지 요구를 아직 못 봤을 수 있다.
                 await self._read_status()
                 msg = ("PLC 가 수동 요청을 지웠습니다 — " + describe_bits(lost_v, lost_a)
-                       + f" ({self.clear_reason(bool(lost_v), bool(lost_a))})"
+                       + f" ({self.clear_reason(bool(lost_v), lost_a)})"
                        + " — 저절로 다시 열리거나 켜지지 않습니다(필요하면 다시 조작)")
                 self.on_event("warn", msg)
                 self.pending_toasts.append(("warn", msg))
@@ -576,8 +576,9 @@ class PlcLink:
 
     def clear_reason(self, valve_lost: bool, aux_lost: bool = False) -> str:
         """PLC 가 수동 반영을 지운 사유(지금 상태로 추정) — 래더 P50 의 지우는 조건 순서.
-        v0.8.2: Valve Permit 꺼짐(밸브) · RF 허가 꺼짐(RF) 도 — 빠진 조건을 붙인다."""
-        from .process import valve_permit_missing, rf_permit_missing
+        v0.8.2: Valve Permit 꺼짐(밸브) · RF 허가 꺼짐(RF) 도 — 빠진 조건을 붙인다.
+        v0.8.5: O3 허가 꺼짐(Powder — 발생기 요청만 지워진다)도. aux_lost 는 지워진 보조 비트 묶음이어도 된다(참 · 거짓도)."""
+        from .process import valve_permit_missing, rf_permit_missing, o3_permit_missing
         s = self.status
         ilk = s[A.D_INTERLOCK]
         safe = A.bit(ilk, A.ILK_SAFE_STOP_REQ)
@@ -591,6 +592,10 @@ class PlcLink:
             why.append("Valve Permit 없음 — 필요: " + " · ".join(valve_permit_missing(s)))
         if aux_lost and DEV.HAS_RF and not safe and not A.bit(ilk, A.ILK_RF_OK):
             why.append("RF 허가 없음 — 필요: " + " · ".join(rf_permit_missing(s, self.prm_readback, self.conv)))
+        if (aux_lost and DEV.HAS_O3 and not safe and not A.bit(ilk, A.ILK_O3_OK)
+                and (aux_lost is True or int(aux_lost) & (1 << A.AUX_O3_GEN))):
+            # ★ 래더 P50(Powder): O3 허가가 없는 동안 수동 보조 반영에서 발생기(b9)만 지운다
+            why.append("O3 허가 없음 — 필요: " + " · ".join(o3_permit_missing(s, self.prm_readback)))
         if s[A.D_STATE] in (A.STATE_READY, A.STATE_RUN, A.STATE_PAUSE, A.STATE_STOPPING):
             why.append("공정 시작")
         return " · ".join(why) if why else "사유 확인 필요"

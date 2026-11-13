@@ -102,6 +102,9 @@ async def handle_command(data: dict, ws=None):
         # ★ 베이스 압력 대기 중에 벤트 · 펌핑 정지 · 전체 닫기를 보내면 대기를 먼저 취소한다 —
         #   대기가 살아 있으면 나중에 누가 펌핑할 때 운전자 없이 공정이 시작된다
         state.runner.cancel_wait(A.CMD_NAMES.get(code, cmd))
+    if code == A.CMD_ALL_CLOSE and cancel_o3_on():
+        # ★ v0.8.5: O3 라인 켜기가 O3 허가를 기다리는 중이었다 — 전체 닫기 뒤에 발생기를 보내지 않게 먼저 취소한다
+        await push_log("O3 라인 켜기 취소 — 전체 닫기 (발생기를 보내지 않았습니다)", "warn")
     result = await _send_plc(code, ws)
     if leak_cancelled and result != A.RESULT_OK:
         # ★ v0.7.1(L6): 점검을 취소했는데 그 명령이 거절됐다 — IV-E 가 닫힌 채 남을 수 있다
@@ -202,6 +205,9 @@ PUMP_BLOCK_ALARMS = ((A.ALM0_PUMP, "펌프 알람"), (A.ALM0_AIR, "공압 저하
                      (A.ALM0_CW, "냉각수 이상"))
 
 
+IVE_VENT_TEXT = "IV-E Fault 알람 중에는 Vent 를 할 수 없습니다 — 원인을 없애고 Alarm Reset 뒤 다시"
+
+
 def _pump_block_reasons(s) -> list:
     """PLC 와 같은 기준 — 비상정지는 입력(D00008 b0), 나머지는 래치된 알람."""
     out = []
@@ -243,6 +249,10 @@ def precheck(code: int):
         if blocking:
             return False, ("PLC 가 벤트 요청을 바로 지웁니다 — " + " · ".join(blocking)
                            + " (원인을 없애고 알람 리셋 뒤에 하세요)")
+        if A.bit(s[A.D_ALARM1], A.ALM1_IVE):
+            # ★ v0.8.5 (래더 P45): IV-E 동작 이상(알람1 b0) 래치 중에는 PLC 가 벤트 요청을 매 스캔 지운다 — 보내면 결과는
+            #   0 인데 배기 요청만 내려가고(IV-E 닫힘) 벤트는 되지 않는다. 보내기 전에 거절하고 이유를 알린다
+            return False, IVE_VENT_TEXT
     if code == A.CMD_MANUAL_APPLY and (ilk >> A.ILK_SAFE_STOP_REQ) & 1:
         return False, "안전 정지 요구 중에는 수동 조작을 할 수 없습니다"
     return True, ""
@@ -717,8 +727,9 @@ async def _manual_send(ws, what: str, mutate, ok_text=None):
 
 def _lost_reason(box) -> str:
     """명령 12 는 받았는데 반영 영역에 없는 비트의 이유.
-    ★ v0.8.2: 래더 P50 은 Valve Permit 이 없으면 밸브 요청을, RF 허가가 없으면 RF 요청을 같은 스캔에 지운다."""
-    from .process import valve_permit_missing, rf_permit_missing
+    ★ v0.8.2: 래더 P50 은 Valve Permit 이 없으면 밸브 요청을, RF 허가가 없으면 RF 요청을 같은 스캔에 지운다.
+    ★ v0.8.5: Powder 는 O3 허가가 없으면 O3 발생기 요청(보조 b9)만 같은 스캔에 지운다."""
+    from .process import valve_permit_missing, rf_permit_missing, o3_permit_missing
     link = state.link
     s = link.status
     ilk = s[A.D_INTERLOCK]
@@ -734,9 +745,13 @@ def _lost_reason(box) -> str:
     elif box.get("lost_aux") and DEV.HAS_RF and not safe and not A.bit(ilk, A.ILK_RF_OK):
         why.append("RF 허가가 없으면 PLC 가 RF 요청을 바로 지웁니다 — 필요: "
                    + " · ".join(rf_permit_missing(s, link.prm_readback, state.conv)))
+    if (DEV.HAS_O3 and (box.get("lost_aux") or 0) & (1 << A.AUX_O3_GEN) and not safe
+            and not A.bit(ilk, A.ILK_O3_OK)):
+        why.append("O3 허가가 없으면 PLC 가 O3 발생기 요청을 바로 지웁니다 — 필요: "
+                   + " · ".join(o3_permit_missing(s, link.prm_readback)))
     if safe:
         why.append("안전 정지 요구 중")
-    return " · ".join(why) if why else link.clear_reason(bool(box.get("lost_valve")), bool(box.get("lost_aux")))
+    return " · ".join(why) if why else link.clear_reason(bool(box.get("lost_valve")), box.get("lost_aux") or 0)
 
 
 async def _cmd_manual_valve(d, ws):
@@ -1008,12 +1023,30 @@ async def _cmd_manual_rf(d, ws):
 
 
 O3_LINE_BITS = ((1 << A.AUX_BYPASS_PUMP) | (1 << A.AUX_IVB)) if DEV.HAS_O3 else 0
+O3_GEN_BIT = (1 << A.AUX_O3_GEN) if DEV.HAS_O3 else 0
+O3_WAIT_POLL_S = 0.1            # O3 허가를 기다리며 PLC 상태를 보는 주기
+O3_PERMIT_WAIT_DEFAULT_S = 15.0
+
+
+def o3_permit_wait_s() -> float:
+    """process.o3_permit_wait_s — O3 라인 켜기에서 O3 허가(인터락 b9)를 기다리는 제한 시간(s)."""
+    v = _finite((state.cfg.get("process") or {}).get("o3_permit_wait_s"))
+    return v if (v is not None and v > 0) else O3_PERMIT_WAIT_DEFAULT_S
+
+
+def _o3_missing_text() -> str:
+    from .process import o3_permit_missing
+    link = state.link
+    return " · ".join(o3_permit_missing(link.status, link.prm_readback)) or "PLC 허가 조건 확인"
 
 
 async def _cmd_manual_o3(d, ws):
-    """O3 라인 — 켜기는 바이패스 펌프·IV-B·발생기를 한꺼번에 요청하고,
+    """O3 라인 — 켜기는 두 단계다(v0.8.5): ① 바이패스 펌프 + IV-B 요청과 O3 설정값을 보낸다(발생기 비트 없이)
+    ② 서버가 O3 허가(인터락 b9 — IV-B 뒤 5 s …)를 기다렸다가 허가가 서면 발생기 비트를 보낸다.
+    ★ 래더 P50(Powder)은 O3 허가가 없는 동안 발생기 요청을 매 스캔 지운다 — 허가 전에 보낸 발생기 요청이 남아 있다가
+      허가가 서는 순간 발생기를 저절로 켜는 일이 없다. 그래서 발생기는 허가가 선 뒤에만 보낸다.
     끄기는 발생기만 먼저 끈 뒤 지연을 두고 나머지를 끈다(배관에 남은 O3 를 뺀다).
-    ★ 지연은 서버 타이머가 센다 — 화면을 닫거나 새로 고쳐도 마무리된다."""
+    ★ 기다림 · 지연은 서버 타이머가 센다 — 화면을 닫거나 새로 고쳐도 마무리된다."""
     if not DEV.HAS_O3:
         await push_notice("이 장비에는 O3 라인이 없습니다", "warn", ws)
         return
@@ -1054,20 +1087,61 @@ async def _cmd_manual_o3(d, ws):
                               "설정의 params.o3_max 를 넣고 PLC 파라미터가 맞춰졌는지 확인하세요",
                               "warn", ws)
             return
+        if o3_on_waiting():
+            await push_notice("O3 라인 켜기: 이미 O3 Permit 을 기다리는 중입니다 — 다시 보내지 않았습니다", "info", ws)
+            return
         _cancel_o3_timer()
         raw = state.conv.o3.to_raw(v)
+        wait = o3_permit_wait_s()
+        token = _o3_on_begin()
 
-        def on_mutate(cur):
-            cur["aux"] |= O3_LINE_BITS | (1 << A.AUX_O3_GEN)
+        def line_mutate(cur):
+            # ① 바이패스 펌프 + IV-B 와 설정값만 — 발생기 비트는 지금 반영 영역 그대로(이미 켜져 있으면 그대로 둔다)
+            cur["aux"] |= O3_LINE_BITS
             cur["o3"] = raw
             return cur, ""
 
-        res, _ = await _manual_send(ws, "O3 라인 켜기", on_mutate)
-        if res == A.RESULT_OK:
-            await push_log("O3 라인 켜기 — 바이패스 펌프 → IV-B → 5 s 뒤 발생기", "info")
+        def line_ok(r):
+            aux = (r.get("after") or {}).get("aux", 0)
+            if "after" not in r or (r.get("lost_aux") or 0) & O3_LINE_BITS:
+                return None                 # 되읽지 못함 · 반영 안 됨(아래 '반영되지 않았습니다' 경로) — 기본 글
+            if aux & O3_GEN_BIT:
+                return f"O3 설정 {v:g} 반영 — O3 라인은 이미 켜져 있습니다", "ok"
+            if A.bit(state.link.status[A.D_INTERLOCK], A.ILK_O3_OK):
+                return "O3 라인 켜기 — 바이패스 펌프 · IV-B 켜짐 · O3 Permit 있음 → 발생기를 켭니다", "info"
+            return (f"O3 라인 켜기 — 바이패스 펌프 → IV-B 를 켰습니다 · O3 Permit 을 기다립니다(최대 {wait:g} s) "
+                    "→ 허가가 서면 발생기를 켭니다"), "info"
+
+        res, box = await _manual_send(ws, "O3 라인 켜기", line_mutate, ok_text=line_ok)
+        if box.get("noop"):
+            res = A.RESULT_OK               # 바이패스 라인 · 설정값은 이미 그 상태 — 발생기만 남았는지 아래에서 본다
+        if res != A.RESULT_OK or state.o3_on_seq != token:
+            return                          # 못 보냄 · 거절 — 또는 그 사이 끄기 · 전체 닫기가 왔다
+        now_aux = (box.get("after") or (box.get("before") if box.get("noop") else None) or {}).get("aux")
+        if now_aux is None:
+            await push_notice("O3 라인 켜기: 반영을 확인하지 못해 발생기를 보내지 않았습니다 — 다시 켜세요", "warn", ws)
+            return
+        if now_aux & O3_GEN_BIT:
+            return                          # 발생기 요청이 이미 서 있다(라인이 켜져 있었다) — 설정값만 바꿨거나 같은 요청
+        if (now_aux & O3_LINE_BITS) != O3_LINE_BITS:
+            return                          # 라인 요청이 반영 영역에 없다(안전 정지 등 — '반영되지 않았습니다' 를 이미 알렸다)
+        if A.bit(state.link.status[A.D_INTERLOCK], A.ILK_O3_OK):
+            await _o3_gen_on(ws, token)     # 허가가 이미 서 있다(끄기 지연 중에 다시 켠 경우 등) — 바로 ②
+            return
+        state.o3_on_until = time.monotonic() + wait
+        state.o3_on_task = asyncio.create_task(_o3_on_wait(token))
+        if box.get("noop"):
+            # ① 을 보내지 않았다(라인은 이미 켜져 있었다) — 기다린다는 것은 따로 알린다
+            msg = f"O3 라인 켜기 — O3 Permit 을 기다립니다(최대 {wait:g} s) → 허가가 서면 발생기를 켭니다"
+            await push_notice(msg, "info", ws)
+            await push_log(msg, "info")
         return
 
     # 끄기: 발생기 먼저, 지연 뒤 나머지
+    if cancel_o3_on():
+        # ★ v0.8.5: O3 허가를 기다리던 중이면 발생기를 보내지 않는다. 바이패스 라인은 아래의 끄기 순서(지연 뒤 닫기)로 닫는다
+        await push_log("O3 라인 켜기 취소 — 운전자 OFF (발생기를 보내지 않았습니다)", "warn")
+
     def off_mutate(cur):
         cur["aux"] &= ~(1 << A.AUX_O3_GEN)
         return cur, ""
@@ -1082,6 +1156,126 @@ async def _cmd_manual_o3(d, ws):
     state.o3_off_at = time.monotonic() + delay
     state.o3_off_task = asyncio.create_task(_o3_finish_later(delay))
     await push_log(f"O3 발생기를 껐습니다 — {delay:g} s 뒤 바이패스 라인을 닫습니다", "info")
+
+
+# ---- v0.8.5: O3 라인 켜기 ② — O3 허가를 기다렸다가 발생기 ----
+def o3_on_waiting() -> bool:
+    t = getattr(state, "o3_on_task", None)
+    return bool(t and not t.done())
+
+
+def _o3_on_begin() -> int:
+    """켜기 한 번의 번호 — 끄기 · 전체 닫기 · 공정 시작이 오면 번호가 바뀌어, 그 켜기의 발생기 보내기는(명령 잠금을
+    기다리던 것도) 보내지 않는다."""
+    state.o3_on_seq += 1
+    return state.o3_on_seq
+
+
+def cancel_o3_on() -> bool:
+    """O3 허가 대기를 취소한다(끄기 · 전체 닫기 · 공정 시작 절차). 기다리던 중이었으면 True — 로그는 부른 쪽이 남긴다.
+    ★ 태스크를 cancel() 하지 않는다 — 발생기 명령을 보내던 중이면 Modbus 왕복이 끊긴다. 번호를 바꿔 두면 대기 루프는
+      다음 확인(0.1 s 안)에서 조용히 끝나고, 이미 명령 잠금을 기다리던 발생기 보내기는 잠금 안에서 번호를 보고 그만둔다."""
+    was = o3_on_waiting()
+    state.o3_on_seq += 1
+    state.o3_on_task = None
+    state.o3_on_until = 0.0
+    return was
+
+
+def _o3_wait_broken() -> str:
+    """기다리는 동안 발생기를 보내면 안 되게 된 이유(없으면 '') — 연결 끊김 · 안전 정지 · 공정 시작 · PLC 가 라인을 지움."""
+    link = state.link
+    if not (link and link.connected):
+        return "PLC 연결이 끊겼습니다"
+    if getattr(link, "plc_hb_stalled", False):
+        return "PLC 하트비트 멈춤"
+    s = link.status
+    if _running() or (state.runner and state.runner.busy):
+        return "공정 시작"
+    if A.bit(s[A.D_INTERLOCK], A.ILK_SAFE_STOP_REQ):
+        return "안전 정지 요구"
+    if (link.applied_aux & O3_LINE_BITS) != O3_LINE_BITS:
+        return "PLC 가 바이패스 라인 요청을 지웠습니다(전체 닫기 · 안전 정지)"
+    return ""
+
+
+async def _o3_on_wait(token: int):
+    """서버 타이머 — O3 허가가 서면 발생기 비트를 보내고, 제한 시간(process.o3_permit_wait_s) 안에 안 서면 발생기는
+    보내지 않고 빠진 조건을 알린 뒤 바이패스 라인을 닫는다. 그 사이 끄기 · 전체 닫기 · 안전 정지 · 공정 시작 ·
+    연결 끊김이 오면 취소한다(발생기를 보내지 않는다)."""
+    me = asyncio.current_task()
+    try:
+        while True:
+            if state.o3_on_seq != token:
+                return                      # 끄기 · 전체 닫기 · 공정 시작 절차가 취소했다(로그는 그쪽이 남겼다)
+            why = _o3_wait_broken()
+            if why:
+                msg = f"O3 라인 켜기 취소 — {why} (발생기를 보내지 않았습니다)"
+                await push_notice(msg, "warn")
+                await push_log(msg, "warn")
+                return
+            if A.bit(state.link.status[A.D_INTERLOCK], A.ILK_O3_OK):
+                break
+            if time.monotonic() >= state.o3_on_until:
+                state.o3_on_until = 0.0     # 화면의 '기다리는 중' 을 지운다(이제 바이패스 라인을 닫는다)
+                await _o3_on_timeout()
+                return
+            await asyncio.sleep(O3_WAIT_POLL_S)
+        state.o3_on_until = 0.0             # 화면의 '기다리는 중' 을 지운다(이제 명령을 보낸다)
+        await _o3_gen_on(None, token)
+    except asyncio.CancelledError:
+        return
+    except Exception as e:  # noqa: BLE001
+        logger.write("err", f"O3 허가 대기 오류: {type(e).__name__}: {logger.clean(e, 200)}")
+    finally:
+        if getattr(state, "o3_on_task", None) is me:
+            state.o3_on_task = None
+            state.o3_on_until = 0.0
+
+
+async def _o3_gen_on(ws, token: int):
+    """② 발생기 비트 — O3 허가가 서 있을 때만 보낸다(명령 잠금 안에서 새로 읽은 반영 영역 · 그 순간의 번호로 판단)."""
+    def gen_mutate(cur):
+        if state.o3_on_seq != token:
+            return None, "O3 라인 켜기가 취소되었습니다 — 발생기를 보내지 않았습니다"
+        if (cur["aux"] & O3_LINE_BITS) != O3_LINE_BITS:
+            return None, "PLC 가 바이패스 라인 요청을 지웠습니다 — 발생기를 보내지 않았습니다"
+        if not A.bit(state.link.status[A.D_INTERLOCK], A.ILK_O3_OK):
+            return None, "O3 Permit 이 없어 발생기를 보내지 않았습니다 — 필요: " + _o3_missing_text()
+        cur["aux"] |= O3_GEN_BIT
+        return cur, ""
+
+    def gen_ok(r):
+        if (r.get("lost_aux") or 0) & O3_GEN_BIT:
+            return None                     # 반영 안 됨 — 아래 '반영되지 않았습니다' 경로
+        out = r.get("aux_out")
+        if out is not None and out & O3_GEN_BIT:
+            return "O3 라인 켜짐 — O3 Permit 확인 뒤 발생기를 켰습니다", "ok"
+        return "O3 발생기 켜기 요청됨 — 출력이 아직 꺼져 있습니다(잠시 뒤 다시 확인하세요)", "warn"
+
+    res, _ = await _manual_send(ws, "O3 발생기 켜기", gen_mutate, ok_text=gen_ok)
+    return res
+
+
+async def _o3_on_timeout():
+    """③ 제한 시간 안에 O3 허가가 서지 않았다 — 발생기는 보내지 않고, 빠진 조건을 알린 뒤 바이패스 라인을 닫는다.
+    ★ 이번 켜기에서는 발생기가 돈 적이 없어 지연 없이 닫는다. 다만 발생기 출력을 마지막으로 본 지 끄기 지연
+      (process.o3_off_delay_s)이 안 지났으면(끄기 지연 중에 다시 켠 경우) 남은 시간만큼 기다렸다가 닫는다."""
+    wait = o3_permit_wait_s()
+    msg = (f"O3 라인 켜기 실패 — O3 Permit 이 {wait:g} s 안에 서지 않았습니다 · 필요: {_o3_missing_text()} "
+           "— 발생기를 보내지 않았고 바이패스 라인을 닫습니다")
+    await push_notice(msg, "warn")
+    await push_log(msg, "warn")
+    delay = float((state.cfg.get("process") or {}).get("o3_off_delay_s") or 10)
+    seen = getattr(state, "o3_gen_seen", 0.0)
+    left = (seen + delay - time.monotonic()) if seen else 0.0
+    if left > 0.05:
+        _cancel_o3_timer()
+        state.o3_off_at = time.monotonic() + left
+        state.o3_off_task = asyncio.create_task(_o3_finish_later(left))
+        await push_log(f"O3 발생기가 꺼진 지 얼마 안 됐습니다 — {left:.0f} s 뒤 바이패스 라인을 닫습니다", "info")
+        return
+    await o3_finish()
 
 
 def _cancel_o3_timer():

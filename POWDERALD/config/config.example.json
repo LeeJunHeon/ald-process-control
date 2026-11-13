@@ -89,6 +89,8 @@
     "base_stable_s": 3,
     "heater_ready": { "enabled": false, "band_c": 2.0, "stable_s": 60 },
     "o3_off_delay_s": 10,
+    "_o3_permit_wait": "O3 라인 켜기 — 바이패스 펌프 + IV-B 를 켠 뒤 O3 허가(인터락 b9, IV-B 뒤 5 s)를 기다리는 제한 시간 s. 안에 안 서면 발생기를 켜지 않고 바이패스 라인을 닫는다",
+    "o3_permit_wait_s": 15,
     "_pc_watch": "공정 중 압력 상한 · 히터 이탈 경고 — PC 감시(프로그램이 꺼져 있으면 동작하지 않는다). 0 = 끔",
     "press_high_torr": 10, "press_high_s": 5, "press_high_abort": false,
     "heater_dev_c": 15, "heater_dev_s": 120

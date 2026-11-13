@@ -320,6 +320,7 @@ ALM1_RF_REF = 2                     # PEALD
 ALM1_O3_GEN = 3                     # Powder
 ALM1_O3_ROOM = 4                    # Powder
 ALM1_BYPASS_PUMP = 5                # Powder
+ALM1_VALVE_PERMIT = 8               # 공정 중 Valve Permit(인터락 b4) 꺼짐 0.5 s (v0.8.5)
 
 
 # ===================== 작은 도우미 =====================

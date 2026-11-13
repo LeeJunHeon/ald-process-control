@@ -10,6 +10,7 @@ state.py — PLC 레지스터를 화면이 쓸 모양으로 푼다 + 서버가 �
 
 import os
 import re
+import math
 import time
 
 from . import addresses as A
@@ -221,6 +222,12 @@ class State:
         self.manual_unlock_until = 0.0  # 수동 밸브 잠금 해제 만료 시각
         self.o3_off_at = 0.0            # O3 바이패스 라인을 닫을 시각 (서버 타이머)
         self.o3_off_task = None
+        # ★ v0.8.5: O3 라인 켜기 ② — O3 허가(인터락 b9)를 기다리는 서버 타이머. until = 제한 시각(0 = 기다리지 않음),
+        #   seq = 켜기 번호(끄기 · 전체 닫기 · 공정 시작이 바꾼다 — 그 켜기의 발생기는 보내지 않는다)
+        self.o3_on_until = 0.0
+        self.o3_on_task = None
+        self.o3_on_seq = 0
+        self.o3_gen_seen = 0.0          # O3 발생기 출력(보조 b9)을 마지막으로 본 시각(monotonic, 0 = 본 적 없음)
         self._pend_since = {}           # v0.8.2: (v|a, 이름) → 요청 있음 · 출력 꺼짐을 처음 본 시각(_now)
 
     # ===================== 설정 =====================
@@ -262,6 +269,8 @@ class State:
         first = not self._was_linked
         self._was_linked = True
         fresh = self.alarms.update(s[A.D_ALARM0], s[A.D_ALARM1])
+        if DEV.HAS_O3 and A.bit(s[A.D_AUX_OUT], A.AUX_O3_GEN):
+            self.o3_gen_seen = time.monotonic()         # v0.8.5: 바이패스 라인을 닫기 전 남은 O3 를 뺄 시간 판단
         new = s[A.D_ALARM_NEW]
         if first:
             pop = bool(new)
@@ -489,18 +498,23 @@ class State:
             if conn and link.status[A.D_STATE] not in (A.STATE_READY, A.STATE_RUN, A.STATE_PAUSE, A.STATE_STOPPING):
                 # ★ v0.8.2: 래더 P50 은 허가가 꺼지면 수동 요청을 지운다 — 그런데도 1 s 넘게 남은 밸브 · RF 요청은 PLC 가
                 #   지우지 않은 것(고치기 전 래더). 허가가 다시 생기면 운전자 조작 없이 열리거나 켜진다 — 안전망 알림.
-                #   Powder O3 라인(발생기 · IV-B)은 원래 허가를 기다리는 순서라 넣지 않는다
+                #   ★ v0.8.5: Powder O3 발생기도 — 래더 P50 은 O3 허가가 없으면 발생기 요청을 지운다(PC 도 허가가 선 뒤에만
+                #   보낸다). 1 s 넘게 남은 발생기 요청은 PLC 가 지우지 않은 것이다. IV-B · 바이패스 펌프는 허가를 만드는
+                #   쪽이라 넣지 않는다(바이패스 펌프 운전 입력을 기다리는 것이 정상)
                 try:
                     ms = self.manual_state()
                     pend = list(ms.get("pending") or [])
                     if DEV.HAS_RF and "RF" in (ms.get("aux_pending") or []):
                         pend.append("RF")
+                    if DEV.HAS_O3 and "O3GEN" in (ms.get("aux_pending") or []):
+                        pend.append("O3GEN")
                 except Exception:  # noqa: BLE001 — 다른 알림(트립 · 정비)을 막지 않게
                     pend = []
                 if pend:
                     out.append(["warn", "PLC 가 지우지 않은 수동 요청: " + " · ".join(pend) +
                                 " — 허가가 없는데 요청이 남아 있습니다(래더 P50 확인). 허가가 다시 생기면 열리거나 켜집니다"
                                 " — 필요 없으면 그 밸브 [Close]" + ("(RF 는 OFF)" if "RF" in pend else "") +
+                                ("(O3 는 Line OFF)" if "O3GEN" in pend else "") +
                                 " 또는 [Close All Valves]", "plc"])
             if self.runner is not None:
                 out += [list(x) for x in getattr(self.runner, "watch_notices", [])]
@@ -569,6 +583,8 @@ class State:
         pending = [t for t in raw_v if now - self._pend_since[("v", t)] >= PENDING_HOLD_S]
         aux_pending = [t for t in raw_a if now - self._pend_since[("a", t)] >= PENDING_HOLD_S]
         o3_left = max(0, int(round(self.o3_off_at - _t.monotonic()))) if self.o3_off_at else 0
+        # v0.8.5: O3 라인 켜기가 O3 허가를 기다리는 남은 시간(s, 올림 — 기다리는 동안은 1 이상)
+        o3_wait = max(1, int(math.ceil(self.o3_on_until - _t.monotonic()))) if self.o3_on_until else 0
         permit = bool(conn and A.bit(link.status[A.D_INTERLOCK], A.ILK_VALVE_OK))
         missing = []
         if conn:
@@ -587,6 +603,7 @@ class State:
             "pending": pending,
             "aux_pending": aux_pending,
             "o3_off_left_s": o3_left,
+            "o3_on_wait_s": o3_wait,
         }
 
     def prm_table(self) -> list:

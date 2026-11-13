@@ -143,7 +143,7 @@
       panel('Process', '',
         tbl(row('process.base_wait_timeout_s', 's') + row('process.base_stable_s', 's') +
             row('process.heater_ready.enabled') + row('process.heater_ready.band_c', '℃') +
-            row('process.heater_ready.stable_s', 's') + (dev.has_o3 ? row('process.o3_off_delay_s', 's') : '') +
+            row('process.heater_ready.stable_s', 's') + (dev.has_o3 ? row('process.o3_off_delay_s', 's') + row('process.o3_permit_wait_s', 's') : '') +
             // v0.7.0(A5): PC 감시 — 프로그램이 꺼져 있으면 동작하지 않는다
             '<tr><td class="l sub" colspan="2">PC Watch in Process (프로그램이 꺼져 있으면 동작하지 않음)</td></tr>' +
             row('process.press_high_torr', 'Torr') + row('process.press_high_s', 's') + row('process.press_high_abort') +

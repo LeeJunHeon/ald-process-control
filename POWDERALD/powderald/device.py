@@ -230,6 +230,10 @@ ALARMS1 = [
     {"bit": 5, "name": "Bypass Pump Alarm / No Feedback", "crit": True,
      "cause": "바이패스 펌프 알람 입력, 또는 운전 요청 뒤 10 s 동안 운전 피드백 없음.",
      "check": "바이패스 펌프 전원 · 알람 · 피드백 배선."},
+    {"bit": 8, "name": "Valve Permit Lost in Process", "crit": True,
+     "cause": "공정 중 Valve Permit(인터락 b4)이 0.5 s 넘게 꺼짐 — 밸브 출력이 막힌 채 스텝 시간만 흐르지 않게 PLC 가 공정을 끊음.",
+     "check": "빠진 조건이 펌프 운전(피드백) · IV-E 열림 리미트 · 기본 인터락(공압 · N2 · 냉각수 · 리드 · 비상정지) · "
+              "챔버 대기압 중 무엇인지 확인 — Event Log 의 'Valve Permit 꺼짐' 줄에 그때 빠진 조건이 남는다."},
 ]
 CRITICAL_MASK0 = 0xD23F             # v0.7.0: b6 PC Link Lost 를 뺐다(0xD27F → 0xD23F)
 
