@@ -37,7 +37,7 @@ def pump_down(fs, base_torr=1.0):
         fs.step()
         if bit(s.reg[A.D_INTERLOCK], A.ILK_VALVE_OK):
             return
-    raise AssertionError("공정 밸브 허가가 서지 않았다")
+    raise AssertionError("Valve Permit 서지 않았다")
 
 
 def table(cfg, blocks=1, repeat=50, step_ms=500, pcv=None):
@@ -405,7 +405,7 @@ def test_ivb_needs_bypass_pump_running(cfg):
     s = fs.sim
     s.man_aux = 1 << A.AUX_IVB
     fs.step(3)
-    assert not aux(s, A.AUX_IVB), "바이패스 펌프 없이 IV-B 가 열렸다"
+    assert not aux(s, A.AUX_IVB), "Bypass Pump 없이 IV-B 가 열렸다"
     s.man_aux |= 1 << A.AUX_BYPASS_PUMP
     fs.step(3)
     assert aux(s, A.AUX_IVB)

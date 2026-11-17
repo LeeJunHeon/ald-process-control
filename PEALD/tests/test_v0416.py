@@ -19,9 +19,9 @@ def test_1_permission_error_text_comes_before_address_text():
     posix = window.port_busy_text("127.0.0.1", 80, "PermissionError: [Errno 13] Permission denied")
     win = window.port_busy_text("127.0.0.1", 80, window.BUSY_MARK + "PermissionError: [WinError 10013] 액세스 권한")
     for t in (posix, win):
-        assert "권한이 없거나 예약된" in t and "server.host 를 고치세요" not in t, t
+        assert "권한이 없거나 예약된" in t and "server.host 고치기 필요" not in t, t
     other = window.port_busy_text("192.0.2.1", 8201, "OSError: [Errno 99] Cannot assign requested address")
-    assert "server.host 를 고치세요" in other and "권한" not in other
+    assert "server.host 고치기 필요" in other and "권한" not in other
 
 
 # ===================== 3 응답 없음 직후 — 시작 태스크가 아직 안 끝나도 =====================
@@ -50,7 +50,7 @@ async def test_5_not_sent_notice_is_err(monkeypatch):
 
         def begin(self, _log, _notice, notify):
             got["notify"] = notify
-            return True, "시작 절차를 시작합니다"
+            return True, "시작 절차를 시작함"
 
     async def notice(msg, lv="info", ws=None):
         notices.append((lv, msg))
@@ -61,9 +61,9 @@ async def test_5_not_sent_notice_is_err(monkeypatch):
     monkeypatch.setattr(commands, "push_notice", notice)
     monkeypatch.setattr(commands, "push_state", nothing)
     await commands._cmd_process_start({}, None)
-    await got["notify"](f"{process.START_NOT_SENT} — PLC 연결이 없습니다", False)
-    await got["notify"]("시작 결과 모름 — PLC 상태로 확인합니다 (PLC 응답 없음)", False)
-    await got["notify"]("공정을 시작했습니다", True)
+    await got["notify"](f"{process.START_NOT_SENT} — PLC 연결이 없음", False)
+    await got["notify"]("시작 결과 모름 — PLC 상태로 확인함 (PLC 응답 없음)", False)
+    await got["notify"]("공정을 시작함", True)
     assert [lv for lv, _m in notices[1:]] == ["err", "warn", "ok"], notices
 
 

@@ -276,14 +276,14 @@ def test_vent_request_is_cleared_while_ive_alarm_is_latched(cfg):
     assert not A.bit(s.reg[A.D_AUX_OUT], A.AUX_IVE)
     rig.run(5.0)
     assert rig.alarm(1, A.ALM1_IVE)
-    assert not s.vent_req and not _vv(s), "IV-E 알람 뒤에도 벤트 요청이 남았다"
+    assert not s.vent_req and not _vv(s), "IV-E 알람 뒤에도 Vent 요청이 남았다"
     p0 = s.base_pressure
     s.set_fault("ive_stuck", False)                     # 닫힘 리미트가 돌아온다
     opened = False
     for _ in range(250):                                # 5 s
         rig.run(0.02)
         opened = opened or _vv(s) or s.vv_on
-    assert rig.ilk(A.ILK_VENT_OK), "벤트 허가는 돌아와야 한다(리미트 정상)"
+    assert rig.ilk(A.ILK_VENT_OK), "Vent Permit 돌아와야 한다(리미트 정상)"
     assert not opened and not s.vent_req, "리미트가 돌아오자 VV 가 뒤늦게 열렸다"
     assert s.base_pressure < max(1.0, p0 * 50), f"챔버가 벤트됐다: {s.base_pressure:g} Torr"
     # 알람이 래치된 동안 벤트 명령 — PLC 는 받지만(결과 0) 같은 스캔에 지운다
@@ -297,7 +297,7 @@ def test_vent_request_is_cleared_while_ive_alarm_is_latched(cfg):
     rig.run(0.5)
     assert s.reg[A.D_ALARM1] == 0 and s.reg[A.D_STATE] == A.STATE_IDLE
     assert rig.fs.cmd(A.CMD_VENT) == A.RESULT_OK
-    assert rig.run(3.0, cond=lambda: _vv(s)), "리셋 뒤 벤트가 되지 않는다"
+    assert rig.run(3.0, cond=lambda: _vv(s)), "리셋 뒤 Vent 되지 않는다"
 
 
 def test_vent_timeout_and_atm_clear_still_work(cfg):
@@ -306,7 +306,7 @@ def test_vent_timeout_and_atm_clear_still_work(cfg):
     s = rig.s
     assert rig.fs.cmd(A.CMD_VENT) == A.RESULT_OK
     assert rig.run(5.0, cond=lambda: _vv(s))
-    assert rig.run(120.0, 0.05, cond=lambda: not s.vent_req), "대기압에서 벤트 요청이 지워지지 않았다"
+    assert rig.run(120.0, 0.05, cond=lambda: not s.vent_req), "대기압에서 Vent 요청이 지워지지 않았다"
     assert A.bit(s.reg[A.D_INPUT0], A.IN0_ATM) and not rig.alarm(0, A.ALM0_VENT_TIMEOUT)
 
 
@@ -316,10 +316,10 @@ async def test_vent_is_refused_before_sending_while_ive_alarm(wired, notices):
     sim.alm1 |= 1 << A.ALM1_IVE                         # 래치(원인은 없다 — 리셋 전까지 남는다)
     assert await wait_until(lambda: A.bit(lk.status[A.D_ALARM1], A.ALM1_IVE), 3)
     ok, why = C.precheck(A.CMD_VENT)
-    assert not ok and why == "IV-E Fault 알람 중에는 Vent 를 할 수 없습니다 — 원인을 없애고 Alarm Reset 뒤 다시"
+    assert not ok and why == "IV-E Fault 알람 중에는 Vent 를 할 수 없음 — 원인을 없애고 Alarm Reset 뒤 다시"
     no = sim.reg[A.D_CMD_NO]
     await C.handle_command({"cmd": "vent"})
-    assert sim.reg[A.D_CMD_NO] == no, "거절해야 할 벤트를 PLC 에 보냈다"
+    assert sim.reg[A.D_CMD_NO] == no, "거절해야 할 Vent PLC 에 보냈다"
     assert any(lv == "warn" and why in m for lv, m in notices), notices
     # 화면의 벤트 표시는 PLC 출력(VV)에서만 온다 — 요청이 없으니 남는 것이 없다
     await asyncio.sleep(0.3)
@@ -465,7 +465,7 @@ def test_o3_permit_missing_rules():
     bad = _status(D_INPUT1=(1 << A.IN1_BP_ALM) | (1 << A.IN1_O3_ALM) | (1 << A.IN1_O3_ROOM),
                   D_INTERLOCK=1 << A.ILK_SAFE_STOP_REQ)
     assert P.o3_permit_missing(bad, {A.D_PRM_O3_MAX: 0}) == [
-        "기본 인터락", "Bypass Pump 운전", "Bypass Pump 알람 입력 꺼짐", "IV-B 열림", "O3 발생기 알람 입력 꺼짐",
+        "기본 인터락", "Bypass Pump 운전", "Bypass Pump 알람 입력 꺼짐", "IV-B 열림", "O3 Generator 알람 입력 꺼짐",
         "실내 O3 감지 꺼짐", "PLC 의 O3 상한(PRM_O3_MAX) > 0", "안전 정지 요구 해제"]
     # 다 맞는데 허가가 없다 — IV-B 뒤 5 s 를 기다리는 중
     hold = _status(D_INTERLOCK=1 << A.ILK_BASIC, D_INPUT1=1 << A.IN1_BP_RUN, D_AUX_OUT=1 << A.AUX_IVB)
@@ -484,13 +484,13 @@ async def test_cleared_generator_notice_names_o3gen_and_missing_permit(cfg):
     lk.client.areas[A.APPLIED_BASE] = [0] * A.APPLIED_COUNT
     lk.client.areas[A.APPLIED_BASE][A.applied_off(A.D_APPLIED_AUX)] = LINE      # 발생기만 지워졌다
     await lk._read_display()
-    msg = next(m for _l, m in events if "수동 요청을 지웠습니다" in m)
+    msg = next(m for _l, m in events if "수동 요청 해제" in m)
     assert "O3GEN" in msg and "IV-B" not in msg.split("(")[0], msg
-    assert "O3 허가 없음 — 필요: 기본 인터락 · IV-B 열림" in msg, msg
-    assert "저절로 다시 열리거나 켜지지 않습니다" in msg and lk.pending_toasts == [("warn", msg)]
+    assert "O3 Permit 없음 — 필요: 기본 인터락 · IV-B 열림" in msg, msg
+    assert "필요하면 다시 조작" in msg and lk.pending_toasts == [("warn", msg)]
     # 바이패스 라인만 지워졌으면(발생기 비트 아님) O3 허가 사유를 붙이지 않는다
-    assert "O3 허가 없음" not in lk.clear_reason(False, 1 << A.AUX_IVB)
-    assert "O3 허가 없음" in lk.clear_reason(False, GEN) and "O3 허가 없음" in lk.clear_reason(False, True)
+    assert "O3 Permit 없음" not in lk.clear_reason(False, 1 << A.AUX_IVB)
+    assert "O3 Permit 없음" in lk.clear_reason(False, GEN) and "O3 Permit 없음" in lk.clear_reason(False, True)
 
 
 # ===================== C. PC — O3 라인 켜기 두 단계 =====================
@@ -536,7 +536,7 @@ async def test_o3_on_sends_line_first_then_generator_after_permit(wired, notices
         assert C.o3_on_waiting() and state.o3_on_until > 0
         ms = state.manual_state()
         assert 1 <= ms["o3_on_wait_s"] <= 15 and ms["o3_off_left_s"] == 0
-        assert _has(notices, "O3 라인 켜기", "O3 Permit 을 기다립니다(최대 15 s)")
+        assert _has(notices, "O3 Line 켜기", "O3 Permit 을 기다림(최대 15 s)")
         # 기다리는 동안 다시 켜기 — 보내지 않는다
         no = sim.reg[A.D_CMD_NO]
         await C.handle_command({"cmd": "manual_o3", "action": "on", "value": 50})
@@ -547,7 +547,7 @@ async def test_o3_on_sends_line_first_then_generator_after_permit(wired, notices
         assert sim.reg[A.D_MANUAL_AUX] == LINE | GEN and sim.man_aux == LINE | GEN
         assert await wait_until(lambda: not C.o3_on_waiting(), 2)
         assert state.o3_on_until == 0 and state.manual_state()["o3_on_wait_s"] == 0
-        assert _has(notices, "O3 Permit 확인 뒤 발생기를 켰습니다")
+        assert _has(notices, "O3 Permit 확인 뒤 발생기를 켬")
         # 이미 켜진 라인에 ON — 같은 요청은 보내지 않고 기다리지도 않는다
         no = sim.reg[A.D_CMD_NO]
         await C.handle_command({"cmd": "manual_o3", "action": "on", "value": 50})
@@ -583,11 +583,11 @@ async def test_o3_on_timeout_sends_no_generator_and_closes_the_line(wired, notic
     try:
         await C.handle_command({"cmd": "manual_o3", "action": "on", "value": 50})
         assert sim.man_aux == LINE and C.o3_on_waiting()
-        assert await wait_until(lambda: _has(notices, "O3 라인 켜기 실패"), 4), notices
-        msg = next(m for _l, m in notices if "O3 라인 켜기 실패" in m)
+        assert await wait_until(lambda: _has(notices, "O3 Line 켜기 실패"), 4), notices
+        msg = next(m for _l, m in notices if "O3 Line 켜기 실패" in m)
         for w in words:
             assert w in msg, (w, msg)
-        assert "안에 서지 않았습니다" in msg and "발생기를 보내지 않았고 바이패스 라인을 닫습니다" in msg
+        assert "안에 서지 않음" in msg and "발생기를 보내지 않았고 바이패스 라인을 닫음" in msg
         assert await wait_until(lambda: sim.man_aux == 0, 2), "바이패스 라인이 지연 없이 닫히지 않았다"
         assert state.o3_off_at == 0 and state.manual_state()["o3_on_wait_s"] == 0
         assert await wait_until(lambda: not C.o3_on_waiting(), 2)
@@ -604,7 +604,7 @@ async def test_o3_on_timeout_waits_out_the_purge_when_generator_ran_recently(wir
     lk, sim, _cfg = await _o3_wired(wired, wait_s=1.0, off_delay=3.0)
     state.o3_gen_seen = time.monotonic()                # 방금까지 발생기가 돌았다
     await C.handle_command({"cmd": "manual_o3", "action": "on", "value": 50})
-    assert await wait_until(lambda: _has(notices, "O3 라인 켜기 실패"), 4), notices
+    assert await wait_until(lambda: _has(notices, "O3 Line 켜기 실패"), 4), notices
     assert state.o3_off_at > 0 and sim.man_aux == LINE, "남은 O3 를 뺄 시간 없이 바로 닫았다"
     assert 1 <= state.manual_state()["o3_off_left_s"] <= 3
     assert await wait_until(lambda: sim.man_aux == 0, 4), "남은 지연 뒤 바이패스 라인이 닫히지 않았다"
@@ -622,23 +622,23 @@ async def test_o3_on_wait_is_cancelled_and_no_generator_is_sent(wired, notices, 
         await asyncio.sleep(0.5)
         if how == "off":
             await C.handle_command({"cmd": "manual_o3", "action": "off"})
-            assert _has(notices, "O3 라인 켜기 취소", "운전자 OFF")
+            assert _has(notices, "O3 Line 켜기 취소", "운전자 OFF")
             assert state.o3_off_at > 0 and sim.man_aux == LINE           # 끄기 순서 그대로 — 지연 뒤 바이패스 닫기
         elif how == "all_close":
             await C.handle_command({"cmd": "all_close"})
-            assert _has(notices, "O3 라인 켜기 취소", "전체 닫기")
+            assert _has(notices, "O3 Line 켜기 취소", "전체 닫기")
             assert sim.man_aux == 0
         elif how == "safe_stop":
             sim.set_fault("emo", True)
-            assert await wait_until(lambda: _has(notices, "O3 라인 켜기 취소", "발생기를 보내지 않았습니다"), 3), notices
+            assert await wait_until(lambda: _has(notices, "O3 Line 켜기 취소", "발생기를 보내지 않음"), 3), notices
         elif how == "process_start":
             state.runner.phase = P.UPLOADING            # 시작 흐름이 돈다(올리기 · 베이스 압력 대기 · 명령 1)
-            assert await wait_until(lambda: _has(notices, "O3 라인 켜기 취소", "공정 시작"), 3), notices
+            assert await wait_until(lambda: _has(notices, "O3 Line 켜기 취소", "공정 시작"), 3), notices
             state.runner.phase = P.IDLE
         else:
             await lk.stop()
             lk._drop("시험: PLC 연결 끊김")             # 링크가 떨어졌다(상태 영역도 비운다)
-            assert await wait_until(lambda: _has(notices, "O3 라인 켜기 취소", "PLC 연결이 끊겼습니다"), 3), notices
+            assert await wait_until(lambda: _has(notices, "O3 Line 켜기 취소", "PLC 연결이 끊김"), 3), notices
         assert await wait_until(lambda: not C.o3_on_waiting(), 2)
         assert state.o3_on_until == 0 and state.manual_state()["o3_on_wait_s"] == 0
         if how == "safe_stop":
@@ -680,7 +680,7 @@ async def test_generator_send_is_dropped_when_cancelled_while_waiting_for_the_co
     no = sim.reg[A.D_CMD_NO]
     assert await C._o3_gen_on(None, token) is None
     assert sim.reg[A.D_CMD_NO] == no and not sim.man_aux & GEN
-    assert _has(notices, "O3 라인 켜기가 취소되었습니다")
+    assert _has(notices, "O3 Line 켜기가 취소됨")
     assert await C._o3_gen_on(None, C._o3_on_begin()) == A.RESULT_OK       # 취소되지 않은 켜기는 보낸다
     assert await wait_until(lambda: sim.o3_gen_on, 2)
 
@@ -695,9 +695,9 @@ async def test_plc_cleared_generator_is_reported_and_not_revived_by_next_command
     assert await wait_until(lambda: lk.applied_aux == LINE | GEN, 2)
     await asyncio.sleep(0.3)
     sim.set_fault("lid", True)                          # 대기 중 리드 — 기본 인터락 → O3 허가 꺼짐(알람 없음)
-    assert await wait_until(lambda: any("수동 요청을 지웠습니다" in m for _l, m in lk.pending_toasts), 3), lk.pending_toasts
-    msg = next(m for _l, m in lk.pending_toasts if "수동 요청을 지웠습니다" in m)
-    assert "O3GEN" in msg and "O3 허가 없음 — 필요: 기본 인터락" in msg, msg
+    assert await wait_until(lambda: any("수동 요청 해제" in m for _l, m in lk.pending_toasts), 3), lk.pending_toasts
+    msg = next(m for _l, m in lk.pending_toasts if "수동 요청 해제" in m)
+    assert "O3GEN" in msg and "O3 Permit 없음 — 필요: 기본 인터락" in msg, msg
     assert sim.man_aux == LINE and sim.reg[A.D_MANUAL_AUX] == LINE | GEN     # PC 영역에는 옛 요청이 남아 있다
     sim.set_fault("lid", False)
     assert await wait_until(lambda: A.bit(lk.status[A.D_INTERLOCK], A.ILK_O3_OK), 3)
@@ -814,7 +814,7 @@ async def test_browser_vent_refusal_and_o3_permit_wait_display(served85):
         no = sim.reg[A.D_CMD_NO]
         assert await pg.evaluate("() => core.sendBusy('cmd:vent', 'vent') > 0")
         await pg.wait_for_function(
-            "() => document.getElementById('toasts').textContent.includes('IV-E Fault 알람 중에는 Vent 를 할 수 없습니다')",
+            "() => document.getElementById('toasts').textContent.includes('IV-E Fault 알람 중에는 Vent 를 할 수 없음')",
             timeout=5000)
         await pg.wait_for_function("() => !core.busy.has('cmd:vent')", timeout=5000)
         assert sim.reg[A.D_CMD_NO] == no
@@ -854,7 +854,7 @@ async def test_browser_vent_refusal_and_o3_permit_wait_display(served85):
             await pg.wait_for_function(
                 "() => !document.querySelector('[data-mx=\"o3line\"]').textContent.includes('Permit Wait')", timeout=5000)
             await pg.wait_for_function(
-                "() => document.querySelector('[data-bind=\"mnO3Note\"]').textContent.includes('발생기를 껐습니다')",
+                "() => document.querySelector('[data-bind=\"mnO3Note\"]').textContent.includes('발생기를 끔')",
                 timeout=5000)
             assert await pg.evaluate("() => core.state.live.manual.o3_on_wait_s") == 0
             sim.set_fault("bp_nofb", False)
@@ -902,7 +902,7 @@ def test_fake_plc_atm_input_is_a_pressure_switch_and_vent_runs_to_the_end(cfg, s
     sim.write(A.D_CMD_CODE, [A.CMD_VENT])
     sim.write(A.D_CMD_NO, [(sim.reg[A.D_CMD_NO] + 1) & 0xFFFF])
     step(60)
-    assert sim.vent_req and sim.vv_on, "벤트가 시작되지 않았다"
+    assert sim.vent_req and sim.vv_on, "Vent 시작되지 않았다"
     on_at = end_p = None
     noisy_over = False                                  # 실제 압력은 아래인데 게이지 값만 넘은 스캔이 있었나
     for i in range(4000):
@@ -918,8 +918,8 @@ def test_fake_plc_atm_input_is_a_pressure_switch_and_vent_runs_to_the_end(cfg, s
             end_p = sim.true_pressure
         if on_at is not None and i > on_at + 100:
             break
-    assert on_at is not None and end_p is not None, "벤트가 끝나지 않았다"
-    assert end_p >= sim.atm_input_torr, f"벤트가 {end_p:.1f} Torr 에서 끝났다"
+    assert on_at is not None and end_p is not None, "Vent 끝나지 않았다"
+    assert end_p >= sim.atm_input_torr, f"Vent {end_p:.1f} Torr 에서 끝났다"
     assert not sim.vv_on and not A.bit(sim.reg[A.D_ALARM0], A.ALM0_VENT_TIMEOUT)
     assert noisy_over, "게이지 값(잡음)이 먼저 넘는 스캔이 없었다 — 이 시험이 고친 문제를 밟지 않았다"
 

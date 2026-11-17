@@ -240,7 +240,7 @@ def test_text_length_limits(key, limit):
     d = max_recipe()["recipe"]
     d[key] = "가" * (limit + 1)
     errs = R.validate({"params": {}, "mfc": []}, d)["errors"]
-    assert any("너무 깁니다" in e["msg"] for e in errs), errs
+    assert any("너무 김" in e["msg"] for e in errs), errs
 
 
 def test_block_and_step_name_limits():
@@ -248,7 +248,7 @@ def test_block_and_step_name_limits():
     d["blocks"][0]["name"] = "가" * (R.LABEL_MAX + 1)
     d["blocks"][1]["steps"][0]["name"] = "가" * (R.LABEL_MAX + 1)
     errs = R.validate({"params": {}, "mfc": []}, d)["errors"]
-    assert sum("너무 깁니다" in e["msg"] for e in errs) == 2, errs
+    assert sum("너무 김" in e["msg"] for e in errs) == 2, errs
 
 
 async def test_largest_valid_recipe_passes_and_oversize_closes(rig):
@@ -415,7 +415,7 @@ async def test_send_timeout_closes_stuck_connection(monkeypatch, host, who):
         await asyncio.sleep(0.1)
     await asyncio.sleep(0.5)
     assert stuck not in m.active and stuck.closed == 1008
-    assert any(f"화면 응답 없음 — 연결을 끊었습니다 ({who})" in x for x in lines), lines
+    assert any(f"화면 응답 없음 — 연결을 끊음 ({who})" in x for x in lines), lines
     assert ok_ws in m.active and any('"live"' in t for t in got)
 
 
@@ -430,7 +430,7 @@ async def test_rate_limit_drops_then_kicks(rig, monkeypatch):
             try:
                 async for raw in ws:
                     m = json.loads(raw)
-                    if m.get("type") == "notice" and "열 수 없습니다" in m.get("msg", ""):
+                    if m.get("type") == "notice" and "열 수 없음" in m.get("msg", ""):
                         got.append(m)
             except websockets.ConnectionClosed as e:
                 got.append(("closed", e.rcvd.code if e.rcvd else None))

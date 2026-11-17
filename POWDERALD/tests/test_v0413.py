@@ -196,7 +196,7 @@ async def test_b1_disconnect_during_read_is_logged(cfg, monkeypatch):
         async def log(m, *_a):
             logs.append(m)
         assert await r.adopt_running(log) is False
-        assert not r.active_run and any("끊겼습니다" in m for m in logs), logs
+        assert not r.active_run and any("끊김" in m for m in logs), logs
     finally:
         state.link = None
 
@@ -281,7 +281,7 @@ def test_b2_unsupported_family_is_skipped(monkeypatch):
     monkeypatch.setattr(socket, "getaddrinfo", lambda *a, **k: [bogus])
     with pytest.raises(OSError) as e:
         window.bind_sockets("localhost", port)
-    assert "찾지 못했습니다" not in str(e.value)               # 실제 오류(만들 수 없는 family)
+    assert "찾지 못함" not in str(e.value)               # 실제 오류(만들 수 없는 family)
 
 
 def test_b2_host_case_and_empty_text(cfg):

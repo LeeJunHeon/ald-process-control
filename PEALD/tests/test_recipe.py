@@ -178,14 +178,14 @@ def test_valid_recipe_passes(cfg):
 def test_wrong_format_is_rejected(cfg):
     r = recipe()
     r["format"] = "OTHER-recipe/1"
-    assert "이 장비의 레시피가 아닙니다" in msgs(R.validate(cfg, r))
+    assert "이 장비의 레시피가 아님" in msgs(R.validate(cfg, r))
 
 
 def test_precursor_and_reactant_together(cfg):
     """★ PLC 가 둘 다 막고 중대 알람을 낸다 — 레시피 단계에서 금지한다."""
     r = recipe([block("A", 1, [step("a", 1000, [DEV.PRECURSOR_TAGS[0], DEV.REACTANT_TAGS[0]])])])
     res = R.validate(cfg, r)
-    assert "같이 열 수 없습니다" in msgs(res)
+    assert "같이 열 수 없음" in msgs(res)
     assert res["errors"][0]["block"] == 1 and res["errors"][0]["step"] == 1
 
 
@@ -224,24 +224,24 @@ def test_counts_limits(cfg):
 
 def test_block_needs_a_step(cfg):
     r = recipe([block("A", 1, [])])
-    assert "스텝이 하나도 없습니다" in msgs(R.validate(cfg, r))
+    assert "스텝이 하나도 없음" in msgs(R.validate(cfg, r))
 
 
 def test_mfc_range(cfg):
     # 음수는 풀스케일을 몰라도 항상 오류
     r = recipe([block("A", 1, [step()], mfc=[-1.0] + [0.0] * (DEV.MFC_COUNT - 1))])
-    assert "MFC1 설정이 범위를 벗어납니다" in msgs(R.validate(cfg, r))
+    assert "MFC1 설정이 범위를 벗어남" in msgs(R.validate(cfg, r))
     # 풀스케일이 정해진 장비에서는 그 위도 오류
     fs = cfg["mfc"][0]["full_scale_sccm"]
     if fs is not None:
         r = recipe([block("A", 1, [step()], mfc=[fs + 1] + [0.0] * (DEV.MFC_COUNT - 1))])
-        assert "MFC1 설정이 범위를 벗어납니다" in msgs(R.validate(cfg, r))
+        assert "MFC1 설정이 범위를 벗어남" in msgs(R.validate(cfg, r))
 
 
 def test_group_rules(cfg):
     b = [block("A", 1, [step()]), block("B", 1, [step()]), block("C", 1, [step()])]
     # 범위 밖
-    assert "블록 범위를 벗어납니다" in msgs(R.validate(
+    assert "블록 범위를 벗어남" in msgs(R.validate(
         cfg, recipe(b, [{"from_block": 1, "to_block": 9, "repeat": 2}])))
     # 시작 > 끝
     assert "시작 블록이 끝 블록보다 뒤" in msgs(R.validate(
@@ -269,7 +269,7 @@ def test_warn_min_open_extension(cfg):
     r = recipe([block("A", 1, [step("a", 50, ["PV-1"])])])
     res = R.validate(cfg, r)
     assert res["errors"] == []
-    assert "200 ms 로 늘립니다" in msgs(res, "warnings")
+    assert "200 ms 로 늘림" in msgs(res, "warnings")
 
 
 def test_warn_long_step_rounding(cfg):

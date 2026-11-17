@@ -118,9 +118,9 @@ def test_c1_unreadable_config_blocks_save(tmp_path):
     assert "읽지 못해 예시 설정으로" in msgs and "없어 예시" not in msgs, msgs
     assert "2 줄" in msgs and "칸" in msgs, msgs                              # 줄 · 칸 · 이유
     blk = settings.save_block(got)
-    assert "읽지 못했습니다" in blk and "다시 시작하세요" in blk, blk
+    assert "읽지 못함" in blk and "다시 시작 필요" in blk, blk
     res = settings.prepare(got, {"plc.host": "192.0.2.11"})
-    assert not res["ok"] and any("다시 시작하세요" in e for e in res["errors"]), res["errors"]
+    assert not res["ok"] and any("다시 시작 필요" in e for e in res["errors"]), res["errors"]
     src = inspect.getsource(__import__("peald.commands", fromlist=["x"])._save_blocked)
     assert "settings.save_block(state.cfg)" in src
     # 없을 때는 예전 문구 그대로
@@ -281,13 +281,13 @@ def test_d8_ctl_value_address_ranges_and_config_typo(fake_plc, tmp_path):
     assert code == 2 and "0~65535" in out, out
     missing = str(tmp_path / "confg.json")
     code, out = _ctl(port, "--config", missing, "status", "--count", "1")
-    assert code == 2 and "--config 파일이 없습니다" in out, out
+    assert code == 2 and "--config 파일이 없음" in out, out
     code, out = _run("fake_plc.py", "--port", "1", "--config", missing)
-    assert code == 2 and "--config 파일이 없습니다" in out, out
+    assert code == 2 and "--config 파일이 없음" in out, out
     broken = tmp_path / "broken.json"
     broken.write_text("{ nope", encoding="utf-8")
     code, out = _ctl(port, "--config", str(broken), "status", "--count", "1")
-    assert code == 2 and "--config 를 읽지 못했습니다" in out and "줄" in out, out
+    assert code == 2 and "--config 를 읽지 못함" in out and "줄" in out, out
 
 
 def test_d8_e2e_dual_finally_and_serve_app_flag():
@@ -341,4 +341,4 @@ def test_d6_cut_on_next_command_number(fake_plc):
     assert "통신 끊기 대기" in text and "명령 받음: 번호 %d · 코드 %d" % ((no + 1) & 0xFFFF, A.CMD_ALARM_ACK) in text
     import e2e_process as E
     src = inspect.getsource(E.Run.comm)
-    assert '"on": "cmd"' in src and "got == 1" in src and "got == 0" in src and "받았을 수 있습니다" in src
+    assert '"on": "cmd"' in src and "got == 1" in src and "got == 0" in src and "받았을 수 있음" in src

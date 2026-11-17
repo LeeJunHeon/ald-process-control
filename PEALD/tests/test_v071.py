@@ -188,9 +188,9 @@ def test_p5_crit_text_from_snapshot(clean_state):
 def test_p6_trip_notice_names_real_cause(clean_state):
     state.link = FakeLink(_s(1, st=A.STATE_SAFE_STOP, a0=B6 | (1 << A.ALM0_EMO)))
     n = [x for x in state.pc_notices(True) if "PC 끊김" in x[1]]
-    assert n and "원인은 EMO" in n[0][1] and "[Alarm Reset] 으로 풀립니다" not in n[0][1], n
+    assert n and "원인은 EMO" in n[0][1] and "[Alarm Reset] 으로 풀림" not in n[0][1], n
     state.link = FakeLink(_s(1, st=A.STATE_SAFE_STOP, a0=B6))
-    assert any(x[1].endswith("[Alarm Reset] 으로 풀립니다.") for x in state.pc_notices(True))
+    assert any(x[1].endswith("[Alarm Reset] 으로 풀림.") for x in state.pc_notices(True))
 
 
 # ===================== L. 누설률 점검 =====================
@@ -212,7 +212,7 @@ class ForcedLink(FakeLink):
         if code in self.none_for:
             if self.run_none:
                 self.fs.cmd(code)
-            return None, "응답 없음 — PLC 가 받았을 수 있습니다"
+            return None, "응답 없음 — PLC 가 받았을 수 있음"
         r = self.fs.cmd(code)
         return r, "처리됨" if r == A.RESULT_OK else f"결과 {r}"
 
@@ -238,7 +238,7 @@ async def _run_with(rig, phase=None, action=None):
 async def test_l1_isolation_break_aborts(leak_rig):
     link = _forced(leak_rig)
     lk = await _run_with(leak_rig, "measure", lambda: link.force.update({A.D_AUX_OUT: (1 << A.AUX_VV, None)}))
-    assert lk.last["Result"] == "ABORT" and "VV(벤트) 출력" in lk.last["Reason"], lk.last
+    assert lk.last["Result"] == "ABORT" and "VV(Vent) 출력" in lk.last["Reason"], lk.last
     link.force = {}
     lk = await _run_with(leak_rig, "settle", lambda: link.force.update({A.D_INPUT0: (0, link.sim.reg[A.D_INPUT0]
                                                                                    & ~(1 << A.IN0_IVE_CLOSE))}))
@@ -258,7 +258,7 @@ async def test_l2_all_close_result_unknown(leak_rig):
     lk = await _run_with(leak_rig)
     assert lk.last["Result"] == "ABORT" and "결과 모름" in lk.last["Reason"], lk.last
     assert link.sent[-1] == A.CMD_PUMP_START
-    assert any("모두 닫기 결과를 몰라 멈춥니다" in m for _lv, m in leak_rig.logs)
+    assert any("모두 닫기 결과를 몰라 멈춤" in m for _lv, m in leak_rig.logs)
 
 
 async def test_l3_gauge_fixed_and_range(leak_rig):
@@ -305,7 +305,7 @@ async def test_l6_operator_command_refused_after_cancel(clean_state, monkeypatch
     monkeypatch.setattr(C, "_send_plc", refused)
     state.runner = ProcessRunner(state)
     await C.handle_command({"cmd": "vent"})
-    assert any("[Pumping Start] 로 IV-E 를 다시 여세요" in n for n in notes), notes
+    assert any("[Pumping Start] 로 IV-E 다시 열기 필요" in n for n in notes), notes
 
 
 def test_l7_start_checks_and_button(clean_state, monkeypatch):
@@ -329,12 +329,12 @@ def test_l7_start_checks_and_button(clean_state, monkeypatch):
     run = list(st)
     run[A.D_STATE] = A.STATE_RUN
     state.link.status = run
-    assert lk.blocked(state) == "공정 중입니다"
+    assert lk.blocked(state) == "공정 중"
     state.link.connected = False
-    assert lk.blocked(state) == "PLC 에 연결되어 있지 않습니다"
+    assert lk.blocked(state) == "PLC 에 연결되어 있지 않음"
     assert lk.status(state.cfg, state)["blocked"]
     setup = _src("frontend", "js", "views", "setup.js")
-    assert "(lc.blocked || '')" in setup and "st.title = why" in setup
+    assert "(lc.blocked || '')" in setup and "core.tip(st, why)" in setup
 
 
 # ===================== M. 정비 카운터 =====================
@@ -375,7 +375,7 @@ def test_m2_unreadable_file_is_kept(clean_state, monkeypatch):
     mt = M.Maintenance()
     mt.load()
     bad = [n for n in os.listdir(paths.DATA_DIR) if n.startswith("maintenance.bad-")]
-    assert len(bad) == 1 and not os.path.exists(p) and "정비 카운터 파일을 읽지 못했습니다" in mt.problem
+    assert len(bad) == 1 and not os.path.exists(p) and "정비 카운터 파일을 읽지 못함" in mt.problem
     assert open(os.path.join(paths.DATA_DIR, bad[0]), encoding="utf-8").read() == "{ 깨짐"
     assert mt.notices({})[0] == ("err", mt.problem)
     mt.manual_open(DEV.RECIPE_VALVES[0])
@@ -392,7 +392,7 @@ def test_m2_unreadable_file_is_kept(clean_state, monkeypatch):
     mt2.load()
     mt2.manual_open(DEV.RECIPE_VALVES[0])
     mt2.save(force=True)
-    assert open(p, encoding="utf-8").read() == "[1, 2" and "저장하지 않습니다" in mt2.problem
+    assert open(p, encoding="utf-8").read() == "[1, 2" and "저장하지 않음" in mt2.problem
     assert 'state.add_log("err", maint.problem)' in _src(DEV.KEY, "server.py")
 
 
@@ -445,14 +445,14 @@ async def test_w3_abort_why_only_when_sent(clean_state):
     logs = []
     state.link = FakeLink(_s(1))                             # 공정이 이미 끝남 — 보내지 않는다
     await r._press_abort(lambda lv, m: logs.append(m))
-    assert r._abort_why == "" and any("보내지 않았습니다" in m for m in logs)
+    assert r._abort_why == "" and any("보내지 않음" in m for m in logs)
 
     class Refuse(FakeLink):
         async def send_command(self, code, args=None):
             return A.RESULT_STATE, "결과 2(상태)"
     state.link = Refuse(_s(4, st=A.STATE_RUN))
     await r._press_abort(lambda lv, m: logs.append(m))
-    assert r._abort_why == "" and any("처리되지 않았습니다" in m for m in logs)
+    assert r._abort_why == "" and any("처리되지 않음" in m for m in logs)
     src = _src(DEV.KEY, "process.py")
     assert "self._press_task = self._spawn(" in src and src.count('self._abort_why = ""                # v0.7.1(W3)') == 2
 
@@ -520,7 +520,7 @@ def test_u4_u5_u6_small():
     main = _src("frontend", "js", "views", "main.js")
     assert "core.chip('Trip', 'warn'" in main and "t.state.code === ST_SAFE_STOP" in main and "code === 6" not in main
     dl = _src("frontend", "js", "views", "datalog.js")
-    assert 'dl-who" title="' in dl and 'dl-memo" title="' in dl
+    assert 'dl-who" data-tip="' in dl and 'dl-memo" data-tip="' in dl
     css = _src("frontend", "css", "style.css")
     assert "-webkit-line-clamp: 2" in css and ".dl-item .b .dl-who {" in css and "text-overflow: ellipsis" in css
     html = _src("frontend", "index.html")

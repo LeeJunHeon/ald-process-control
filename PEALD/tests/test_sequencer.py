@@ -83,7 +83,7 @@ def valve_permit(sim):
         scan(sim)
         if A.bit(sim.reg[A.D_INTERLOCK], A.ILK_VALVE_OK):
             return
-    raise AssertionError("공정 밸브 허가가 서지 않았다")
+    raise AssertionError("Valve Permit 서지 않았다")
 
 
 def o3_permit(sim):
@@ -99,7 +99,7 @@ def o3_permit(sim):
             sim.man_aux |= 1 << A.AUX_O3_GEN
             if sim.o3_gen_on:
                 return
-    raise AssertionError("O3 허가가 서지 않았다")
+    raise AssertionError("O3 Permit 서지 않았다")
 
 
 def run_ladder(sim, ms=4000, step_ms=10):

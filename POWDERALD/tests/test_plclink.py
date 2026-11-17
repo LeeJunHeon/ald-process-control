@@ -232,7 +232,7 @@ async def test_periodic_compare_reason_rereads_status(cfg):
     lk.write_ok = True
     lk._seen = (0x0002, 0, lk._cmd_seq)
     await lk._read_display()
-    msg = next(m for m in events if "수동 요청을 지웠습니다" in m)
+    msg = next(m for m in events if "수동 요청 해제" in m)
     assert "PV-2" in msg and "안전 정지 요구" in msg, msg
     assert "사유 확인 필요" not in msg
 
@@ -251,8 +251,8 @@ async def test_periodic_compare_logs_plc_clear(sim):
         assert res["result"] == A.RESULT_OK and not res["lost_valve"]
         await asyncio.sleep(0.7)                   # 주기 읽기 한 번 이상
         s.set_fault("emo", True)
-        assert await wait_until(lambda: any("수동 요청을 지웠습니다" in m for _l, m in events), 3), events
-        msg = next(m for _l, m in events if "수동 요청을 지웠습니다" in m)
+        assert await wait_until(lambda: any("수동 요청 해제" in m for _l, m in events), 3), events
+        msg = next(m for _l, m in events if "수동 요청 해제" in m)
         assert "PV-2" in msg and "안전 정지 요구" in msg
     finally:
         await lk.stop()
@@ -447,7 +447,7 @@ async def test_id_ok_to_zero_warns_once(sim):
         s.device_id = 0
         assert await wait_until(lambda: lk.id_state == "unset", 2)
         await asyncio.sleep(0.8)                 # 같은 상태가 여러 번 읽혀도
-        assert _count(events, "0 으로 바뀌었습니다") == 1, events
+        assert _count(events, "0 으로 바뀜") == 1, events
         assert lk.write_ok, "require_device_id 가 꺼져 있으면 막지 않는다"
     finally:
         await lk.stop()
@@ -483,10 +483,10 @@ async def test_require_device_id_blocks_zero(sim):
         assert lk.connected and lk.id_state == "missing" and not lk.write_ok
         await asyncio.sleep(1.2)
         r, text = await lk.send_command(A.CMD_ALARM_ACK)
-        assert r is None and "장비 ID 가 없습니다" in text
+        assert r is None and "장비 ID 가 없음" in text
         assert writes == [], f"ID 없는 PLC 에 썼다: {writes[:3]}"
-        assert any("장비 ID 가 없습니다(0)" in m for _l, m in events)
-        assert any(l == "warn" and "장비 ID 가 없어 읽기만 합니다" in m for l, m in events), \
+        assert any("장비 ID 가 없음(0)" in m for _l, m in events)
+        assert any(l == "warn" and "장비 ID 가 없어 읽기만 함" in m for l, m in events), \
             "막힌 상태에서 초록 'PLC 연결됨' 이 나오면 안 된다"
         assert not any(l == "ok" and m.startswith("PLC 연결됨") for l, m in events)
     finally:

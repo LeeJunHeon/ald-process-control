@@ -84,7 +84,7 @@ def test_fake_target_rules():
     assert _pkg.fake_target(ok, "설정 파일") == ("127.0.0.1", 15301)
     assert _pkg.fake_target({"plc": {**ok["plc"], "host": "localhost"}}, "설정 파일") == ("localhost", 15301)
     assert _pkg.fake_target(ok, "예시 설정") is None                       # config.json 이 없어 예시 설정을 읽었다
-    assert "config.json 이 없습니다" in _pkg.why_not_fake(ok, "예시 설정", "x/config.example.json")
+    assert "config.json 이 없음" in _pkg.why_not_fake(ok, "예시 설정", "x/config.example.json")
     for bad, why in (({"simulate": True}, "simulate 가 true"), ({"host": "192.168.10.12"}, "실제 PLC 자리"),
                      ({"port": 0}, "plc.port"), ({"port": 65535}, "plc.port"), ({"port": "x"}, "plc.port")):
         c = {"plc": {**ok["plc"], **bad}}
@@ -132,7 +132,7 @@ def test_fake_plc_warns_when_port_differs_from_config(tmp_path):
         assert any(_ping(port + 1) or time.sleep(0.1) for _ in range(100)), "가짜 PLC 가 뜨지 않았다"
     finally:
         out = _stop(p, port + 1)
-    want = f"프로그램은 이 가짜 PLC(포트 {port})에 붙지 않습니다 — config.json 의 plc.port 는 {port + 10} 입니다"
+    want = f"프로그램은 이 가짜 PLC(포트 {port})에 붙지 않음 — config.json 의 plc.port 는 {port + 10}"
     assert "[warn] " + want in out, out
     assert "경고 — " + want in log.read_text(encoding="utf-8")
 

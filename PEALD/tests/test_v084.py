@@ -268,7 +268,7 @@ async def test_cmd_number_is_not_reused_after_write_error(flaky, mode, apply):
     n = len(srv.cmds)
     r2, t2 = await lk.send_command(A.CMD_PUMP_STOP)
     assert r2 == A.RESULT_OK, (r2, t2)
-    assert await wait_until(lambda: not sim.pump_req, 2), "펌핑 정지가 PLC 에서 실행되지 않았는데 '처리됨' 으로 읽었다"
+    assert await wait_until(lambda: not sim.pump_req, 2), "Pumping Stop PLC 에서 실행되지 않았는데 '처리됨' 으로 읽었다"
     assert len(srv.cmds) == n + 1 and srv.cmds[-1][1] == A.CMD_PUMP_STOP
     nos = [no for no, _c in srv.cmds]
     assert len(set(nos)) == len(nos), f"같은 명령 번호를 두 번 썼다: {nos}"
@@ -352,7 +352,7 @@ async def test_prm_autofix_waits_while_plc_heartbeat_is_stalled(flaky):
     assert sim.reg[addr] == want + 7, "PLC 하트비트 멈춤 동안 PRM 을 썼다"
     sim.set_fault("plc_stop", False)
     assert await wait_until(lambda: sim.reg[addr] == want, 6), "멈춤이 풀린 뒤 PRM 을 맞추지 않았다"
-    assert any("파라미터" in m and "다시 썼습니다" in m for _lv, m in events)
+    assert any("파라미터" in m and "다시 씀" in m for _lv, m in events)
 
 
 # ===================== 3. 수동 조작 명령의 값 검사 =====================
@@ -369,25 +369,25 @@ async def test_manual_commands_reject_nan_and_wrong_shapes(wired, notices):
     lk, sim, cfg = wired
     nan, inf = float("nan"), float("inf")
     no0 = lk._cmd_no
-    cases = [("manual_mfc", {"sccm": {"1": nan}}, "올바르지 않습니다"),
-             ("manual_mfc", {"sccm": {"1": inf}}, "올바르지 않습니다"),
-             ("manual_mfc", {"sccm": [1, 2]}, "바꿀 MFC 값이 없습니다"),
-             ("manual_mfc", {"sccm": 5}, "바꿀 MFC 값이 없습니다"),
-             ("manual_heater", {"sv": [1], "power": 3}, "바꿀 히터 값이 없습니다"),
-             ("trend_export", {"t0": nan, "t1": 5}, "구간이 올바르지 않습니다"),
-             ("trend_export", {"t0": 1, "t1": inf}, "구간이 올바르지 않습니다"),
+    cases = [("manual_mfc", {"sccm": {"1": nan}}, "올바르지 않음"),
+             ("manual_mfc", {"sccm": {"1": inf}}, "올바르지 않음"),
+             ("manual_mfc", {"sccm": [1, 2]}, "바꿀 MFC 값이 없음"),
+             ("manual_mfc", {"sccm": 5}, "바꿀 MFC 값이 없음"),
+             ("manual_heater", {"sv": [1], "power": 3}, "바꿀 히터 값이 없음"),
+             ("trend_export", {"t0": nan, "t1": 5}, "구간이 올바르지 않음"),
+             ("trend_export", {"t0": 1, "t1": inf}, "구간이 올바르지 않음"),
              ("open_folder", {"which": ["export"]}, "열 수 없는 폴더"),
              ("sim_fault", {"key": ["emo"], "on": True}, "알 수 없는 시험 입력")]
     for ch in heater_channels(cfg, 1):              # 과온 한계가 있는 채널(없는 채널은 그 이유로 먼저 거절된다)
-        cases.append(("manual_heater", {"sv": {str(ch): nan}}, "올바르지 않습니다"))
+        cases.append(("manual_heater", {"sv": {str(ch): nan}}, "올바르지 않음"))
     if DEV.HAS_PCV:
-        cases.append(("manual_pcv", {"pct": nan}, "올바르지 않습니다"))
+        cases.append(("manual_pcv", {"pct": nan}, "올바르지 않음"))
     if DEV.HAS_RF:
-        cases += [("manual_rf", {"on": True, "watt": nan}, "올바르지 않습니다"),
-                  ("manual_rf", {"on": True, "watt": inf}, "올바르지 않습니다")]
+        cases += [("manual_rf", {"on": True, "watt": nan}, "올바르지 않음"),
+                  ("manual_rf", {"on": True, "watt": inf}, "올바르지 않음")]
     if DEV.HAS_O3:
-        cases += [("manual_o3", {"action": "set", "value": nan}, "올바르지 않습니다"),
-                  ("manual_o3", {"action": "on", "value": nan}, "O3 설정을 먼저 넣으세요")]
+        cases += [("manual_o3", {"action": "set", "value": nan}, "올바르지 않음"),
+                  ("manual_o3", {"action": "on", "value": nan}, "O3 설정 먼저 입력 필요")]
     for cmd, body, want in cases:
         del notices[:]
         await C.handle_command(dict(body, cmd=cmd))                 # 예외가 새지 않는다
@@ -402,7 +402,7 @@ def test_trend_range_rejects_nan():
     now = time.time()
     for t0, t1 in ((nan, nan), (nan, now), (now - 60, nan)):
         _a, _b, err = trendlog.clamp_range(t0, t1, 90, trendlog.QUERY_MAX_S, "이력 조회")
-        assert "올바르지 않습니다" in err, (t0, t1, err)
+        assert "올바르지 않음" in err, (t0, t1, err)
     a, b, err = trendlog.clamp_range(now - 60, now, 90, trendlog.QUERY_MAX_S, "이력 조회")
     assert not err and b - a == pytest.approx(60, abs=1)
     _a, _b, err = trendlog.clamp_range(float("-inf"), float("inf"), 90, trendlog.QUERY_MAX_S, "이력 조회")
@@ -415,7 +415,7 @@ def test_trend_history_api_nan_is_400_json():
                    base_url="http://127.0.0.1:8201")              # 원격(보기 전용)에서도 닿는 GET
     r = c.get("/api/trend/history?t0=nan&t1=nan")
     assert r.status_code == 400 and "NaN" not in r.text
-    assert "올바르지 않습니다" in r.json()["error"]
+    assert "올바르지 않음" in r.json()["error"]
 
 
 def test_http_responses_forbid_framing():
@@ -587,9 +587,9 @@ class Rig:
             #   보내고 허가가 선 뒤에 발생기를 보낸다(PC 의 O3 라인 켜기와 같은 순서)
             line = (1 << A.AUX_BYPASS_PUMP) | (1 << A.AUX_IVB)
             self.cmd12(aux=line, o3=self.conv.o3.to_raw(100.0))
-            assert self.run(20, 0.05, lambda: self.ilk(A.ILK_O3_OK)), "O3 허가가 안 났다"
+            assert self.run(20, 0.05, lambda: self.ilk(A.ILK_O3_OK)), "O3 Permit 안 났다"
             self.cmd12(aux=line | (1 << A.AUX_O3_GEN), o3=self.conv.o3.to_raw(100.0))
-            assert self.run(2, 0.05, lambda: s.o3_gen_on), "O3 발생기가 켜지지 않았다"
+            assert self.run(2, 0.05, lambda: s.o3_gen_on), "O3 Generator 켜지지 않았다"
         s.write(A.D_HEATER_POWER, [1])
         s.write(A.D_HEATER_SV, [heater_raw(100.0)] + [0] * 11)
         assert self.fs.cmd(A.CMD_HEATER_APPLY) == A.RESULT_OK
@@ -825,7 +825,7 @@ def test_fault_rf_reflected_trips_after_delay_and_rf_goes_off(cfg):
             if rig.run(0.02, 0.02, cond):
                 return True
         return False
-    assert hold(3, lambda: rig.ilk(A.ILK_RF_OK)), "RF 허가가 안 났다"
+    assert hold(3, lambda: rig.ilk(A.ILK_RF_OK)), "RF Permit 안 났다"
     rig.cmd12(aux=1 << A.AUX_RF, rf=rig.conv.rf.to_raw(100.0))
     assert hold(1, lambda: A.bit(s.reg[A.D_AUX_OUT], A.AUX_RF)), "RF 가 켜지지 않았다"
     hold(1.0)

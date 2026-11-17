@@ -164,7 +164,7 @@ def test_prepare_validates_and_lists_diff(cfg):
                           "server.port": 1, "access.local_only": False})
     assert not bad["ok"]
     joined = " ".join(bad["errors"])
-    assert "station" in joined and "숫자가 아닙니다" in joined
+    assert "station" in joined and "숫자가 아님" in joined
     assert "server.port" in joined and "access.local_only" in joined, "화면이 바꾸면 안 되는 항목"
 
 

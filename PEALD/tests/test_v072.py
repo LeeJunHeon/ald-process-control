@@ -326,7 +326,7 @@ def test_6_leak_button_uses_refuse_reasons(clean_state):
     assert lk.status(state.cfg, state)["blocked"] == why
     setup = _src("frontend", "js", "views", "setup.js")
     assert "var why = core.lockReason() || (lc.running ? '누설률 점검 중' : (lc.blocked || ''));" in setup
-    assert "disabled title=\"' + core.esc(core.lockReason()) + '\"') + '>Leak Check</button>'" in setup
+    assert "disabled data-tip=\"' + core.esc(core.lockReason()) + '\"') + '>Leak Check</button>'" in setup
 
 
 # ===================== 7. 작은 것 =====================
@@ -440,9 +440,9 @@ def test_7d_trip_chip_tooltip_rule(clean_state):
     out = _node(_fn(main, "tripTip") + r'''
       console.log(JSON.stringify([tripTip({ pc_trip_only: true }, true), tripTip({ pc_trip_only: true }, false),
                                   tripTip({ pc_trip_only: false, pc_trip_cause: 'EMO' }, true)]));''')
-    assert out[0].endswith("PLC 가 안전 정지 상태입니다. [Alarm Reset] 으로 풀립니다")
-    assert out[1].endswith("공정이 끝나면 PLC 가 안전 정지합니다. [Alarm Reset] 으로 풀립니다")
-    assert "원인은 EMO 입니다 — 원인을 없앤 뒤 [Alarm Reset]" in out[2] and "풀립니다" not in out[2], out
+    assert out[0].endswith("PLC 가 안전 정지 상태. [Alarm Reset] 으로 풀림")
+    assert out[1].endswith("공정이 끝나면 PLC 가 안전 정지함. [Alarm Reset] 으로 풀림")
+    assert "원인은 EMO — 원인을 없앤 뒤 [Alarm Reset]" in out[2] and "풀림" not in out[2], out
     assert "tripTip(t.plc, t.state.code === ST_SAFE_STOP)" in main
     state.link = FakeLink(_s(1, st=A.STATE_SAFE_STOP, a0=B6 | (1 << A.ALM0_EMO)))
     assert state._trip_cause(True) == {"pc_trip_only": False, "pc_trip_cause": "EMO"}

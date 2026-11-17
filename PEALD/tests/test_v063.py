@@ -126,17 +126,17 @@ def test_b1_fail_check_appends_plc_status_and_live_age_and_keeps_tmp():
         assert "‖" not in rep.rows[-1][3]                   # PASS 에는 붙이지 않는다
         # 짧은 기다림으로 시간 초과 FAIL — manual '벤트 → 대기압' 과 같은 판정
         ok = asyncio.run(op.wait(lambda: ((op.live.get("inputs0") or 0) >> A.IN0_ATM) & 1, 0.3))
-        rep.check("manual", "벤트 → 대기압", ok, "대기압 입력(700 Torr↑)", "657.8 Torr")
+        rep.check("manual", "Vent → 대기압", ok, "대기압 입력(700 Torr↑)", "657.8 Torr")
         row = rep.rows[-1]
         assert row[4] is False
         act = row[3]
         assert act.startswith("657.8 Torr ‖ 가짜 PLC: 압력 "), act
-        for part in (" Torr · VV 0 · IV-E 출력 0(리미트 열림 ", " · 닫힘 ", " · 대기압 입력 1 · 벤트 요청 0 · 인터락 0x",
+        for part in (" Torr · VV 0 · IV-E 출력 0(리미트 열림 ", " · 닫힘 ", " · 대기압 입력 1 · Vent 요청 0 · 인터락 0x",
                      " · 장비 ", " · 시퀀서 ", " · 프로그램 live 마지막 수신 "):
             assert part in act, (part, act)
         age = float(re.search(r"마지막 수신 (\d+\.\d) s 전", act).group(1))
         assert 2.0 <= age < 30, act
-        assert "FAIL" in rep.summary() and "벤트 → 대기압" in rep.summary()
+        assert "FAIL" in rep.summary() and "Vent → 대기압" in rep.summary()
         op.live_t = None
         assert "프로그램 live: 받은 적 없음" in E.fail_diag(h, op)
         # FAIL 이 있으면 --keep 없이도 임시 폴더(가짜 PLC 기록)를 남긴다

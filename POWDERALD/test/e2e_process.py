@@ -61,7 +61,7 @@ def free_pair() -> int:
             return p
         except OSError:
             continue
-    raise RuntimeError("빈 포트를 찾지 못했습니다")
+    raise RuntimeError("빈 포트를 찾지 못함")
 
 
 # ===================== 판정 기록 =====================
@@ -117,7 +117,7 @@ def fail_diag(h, op) -> str:
             return "1" if st.get(k) else "0"
         p = st.get("pressure")
         plc = (f"가짜 PLC: 압력 {p:.4g} Torr" if isinstance(p, (int, float)) else f"가짜 PLC: 압력 {p}") +               (f" · VV {b('vv')} · IV-E 출력 {b('iv_e')}(리미트 열림 {b('ive_open_in')} · 닫힘 {b('ive_close_in')})"
-               f" · 대기압 입력 {b('atm_in')} · 벤트 요청 {b('vent_req')} · 인터락 0x{int(st.get('interlock') or 0):04X}"
+               f" · 대기압 입력 {b('atm_in')} · Vent 요청 {b('vent_req')} · 인터락 0x{int(st.get('interlock') or 0):04X}"
                f" · 장비 {st.get('state_name')} · 시퀀서 {st.get('seq_name')}")
     else:
         plc = "가짜 PLC 상태: 받지 못함"
@@ -130,7 +130,7 @@ def keep_on_fail(h, rep) -> bool:
     """FAIL 이 하나라도 있으면 --keep 이 없어도 임시 폴더(가짜 PLC 기록 · 프로그램 로그 · 데이터 로그)를 남긴다(v0.6.3 B1)."""
     if rep.failed() and not h.keep:
         h.keep = True
-        print("(FAIL 이 있어 --keep 없이도 임시 폴더를 남깁니다 — 가짜 PLC 기록 fake_plc.log · 프로그램 로그 app.out · "
+        print("(FAIL 이 있어 --keep 없이도 임시 폴더를 남김 — 가짜 PLC 기록 fake_plc.log · 프로그램 로그 app.out · "
               "데이터 로그 app/)", flush=True)
     return h.keep
 
@@ -221,7 +221,7 @@ class Harness:
             if self.plc.poll() is not None:
                 break
             time.sleep(0.1)
-        raise RuntimeError("가짜 PLC 가 뜨지 않았습니다 — " + self._tail("fake_plc.out"))
+        raise RuntimeError("가짜 PLC 가 뜨지 않음 — " + self._tail("fake_plc.out"))
 
     def ctl(self, req: dict, quiet=False):
         try:
@@ -264,7 +264,7 @@ class Harness:
             if self.app.poll() is not None:
                 break
             time.sleep(0.1)
-        raise RuntimeError("프로그램이 뜨지 않았습니다 — " + self._tail("app.out"))
+        raise RuntimeError("프로그램이 뜨지 않음 — " + self._tail("app.out"))
 
     def stop_app(self):
         # ★ terminate 그대로 — comm 의 '프로그램 재시작 → 이어받기'는 갑자기 꺼진 프로그램을 흉내 낸다
@@ -302,7 +302,7 @@ class Harness:
         self.stop_app()
         self.stop_plc()
         if self.keep:
-            print(f"(임시 폴더를 남깁니다: {self.tmp})")
+            print(f"(임시 폴더를 남김: {self.tmp})")
         else:
             shutil.rmtree(self.tmp, ignore_errors=True)
 
@@ -582,11 +582,11 @@ class Run:
             t1 = time.monotonic()
             await op.send("pump_start")
             took = await op.wait(lambda: op.aux_on("PMP") or any(
-                "펌핑 시작" in n[2] and "처리되었습니다" in n[2] for n in op.notices_since(t1)), 2.0)
+                "Pumping Start" in n[2] and "처리됨" in n[2] for n in op.notices_since(t1)), 2.0)
             if took:
                 break
         ok = took and await op.wait(done, self.t(420, 30))
-        actual = f"CVG {op.cvg()}" + ("" if took else " · 펌핑 시작이 두 번 다 받아지지 않음")
+        actual = f"CVG {op.cvg()}" + ("" if took else " · Pumping Start 두 번 다 받아지지 않음")
         if not ok:
             recent = [f"[{n[1]}] {n[2]}" for n in op.notices_since(t0)][-3:]
             actual += " · 최근 알림: " + (" | ".join(recent) if recent else "(없음)")
@@ -817,13 +817,13 @@ class Run:
         ("pump_nofb", "펌프 운전 피드백 없음"),
         # v0.8.5: 공정 중 챔버 대기압 입력(압력은 그대로) — 0.5 s 뒤 'Valve Permit Lost in Process'
         ("atm_sw", "챔버 대기압 입력")] + (
-        [("rf_alm", "RF 알람")] if DEV.HAS_RF else [("o3_alm", "O3 발생기 알람"), ("bp_alm", "바이패스 펌프 알람")])
+        [("rf_alm", "RF 알람")] if DEV.HAS_RF else [("o3_alm", "O3 Generator 알람"), ("bp_alm", "Bypass Pump 알람")])
     # v0.8.4: 대기 중 고장 (키, 이름, 기다릴 s) — 수동으로 연 밸브가 닫히고(PLC 가 요청을 지운다) 풀고 리셋해도 저절로 다시
     #   열리지 않는다. 리드는 대기 중에는 알람이 없다(Valve Permit 만 꺼진다)
     IDLE_FAULTS = [("emo", "EMO", 10), ("air", "공압 저하", 10), ("n2", "N2 저하", 10), ("cw", "냉각수 이상", 10),
                    ("pump_alm", "펌프 알람", 10), ("leak", "가스 누출", 10), ("ot", "히터 과온", 10),
                    ("ive_stuck", "IV-E 리미트 안 따라옴", 20), ("pump_nofb", "펌프 운전 피드백 없음", 25)] + (
-        [("rf_alm", "RF 알람", 10)] if DEV.HAS_RF else [("o3_room", "실내 O3 감지", 10), ("bp_alm", "바이패스 펌프 알람", 10)]) + [
+        [("rf_alm", "RF 알람", 10)] if DEV.HAS_RF else [("o3_room", "실내 O3 감지", 10), ("bp_alm", "Bypass Pump 알람", 10)]) + [
         ("lid", "리드 열림", 10), ("atm_sw", "챔버 대기압 입력", 10)]     # 이 둘은 대기 중에는 알람이 없다(허가만 꺼진다)
     NO_IDLE_ALARM = ("lid", "atm_sw")
     # 시험 경우 → 가짜 PLC 고장 키(같은 고장을 다른 때에 넣는 경우)
@@ -888,14 +888,14 @@ class Run:
 
             def told():
                 return [n for n in op.logs_since(t0) if "PV-1" in n[2]
-                        and ("수동 요청을 지웠습니다" in n[2] or "반영되지 않았습니다" in n[2])]
+                        and ("수동 요청 해제" in n[2] or "반영되지 않음" in n[2])]
             closed = await op.wait(lambda: not op.valve_on("PV-1")
                                    and not (op.live.get("manual") or {}).get("valve_request"), 5)
             await op.wait(lambda: bool(told()), 4)
             lg = told()
             self.check(f"{label} → PV-1 닫힘 · 요청 지움 · 알림", closed and bool(lg),
-                       "출력 꺼짐 · 요청 0 · 'PLC 가 수동 요청을 지웠습니다 — PV-1 …' 또는 "
-                       "'… PLC 에 반영되지 않았습니다 — PV-1 …' 로그",
+                       "출력 꺼짐 · 요청 0 · 'PLC가 수동 요청 해제 — PV-1 …' 또는 "
+                       "'… PLC 에 반영되지 않음 — PV-1 …' 로그",
                        f"출력 {op.valve_on('PV-1')} · 요청 {(op.live.get('manual') or {}).get('valve_request')} · "
                        f"{lg[-1][2] if lg else '(로그 없음)'}")
             self.h.ctl({"op": "fault", "key": key, "on": False})
@@ -990,7 +990,7 @@ class Run:
         if self.only_faults and "vent_ive" not in self.only_faults:
             return
         op = self.op
-        label = "IV-E 알람 중 벤트"
+        label = "IV-E 알람 중 Vent"
         await self.plc_ready()
         await self.clear_alarms()
         await self.pumped(f"{label} → 준비: 베이스 압력")
@@ -1007,10 +1007,10 @@ class Run:
             self.h.ctl({"op": "fault", "key": "ive_stuck", "on": True})
             t0 = time.monotonic()
             await op.send("vent")                       # 알람 전 — PLC 가 받는다(IV-E 출력은 닫히고 닫힘 리미트는 안 온다)
-            sent = await op.wait(lambda: any("처리되었습니다" in n[2] for n in op.notices_since(t0)), 3)
+            sent = await op.wait(lambda: any("처리됨" in n[2] for n in op.notices_since(t0)), 3)
             ok = await op.wait(lambda: want in [a.get("name") for a in op.live.get("alarms") or []], 20)
-            self.check(f"{label} → 리미트 없이 벤트 → '{want}' · VV 안 열림", sent and ok and not vv_seen,
-                       f"벤트 받음 · '{want}' · VV 닫힘",
+            self.check(f"{label} → 리미트 없이 Vent → '{want}' · VV 안 열림", sent and ok and not vv_seen,
+                       f"Vent 받음 · '{want}' · VV 닫힘",
                        f"받음 {sent} · 알람 {[a.get('name') for a in op.live.get('alarms') or []]} · VV 열림 {len(vv_seen)}회")
             self.h.ctl({"op": "fault", "key": "ive_stuck", "on": False})       # 닫힘 리미트가 돌아온다
             permit = await op.wait(lambda: op.ilk(A.ILK_VENT_OK), 5)
@@ -1021,17 +1021,17 @@ class Run:
                        f"Vent Permit {op.ilk(A.ILK_VENT_OK)} · VV 열림 {len(vv_seen)}회 · CVG {cvg}")
             t1 = time.monotonic()
             await op.send("vent")                       # 알람이 래치된 동안 — 프로그램이 보내기 전에 거절한다
-            told = await op.wait(lambda: any("IV-E Fault 알람 중에는 Vent 를 할 수 없습니다" in n[2]
+            told = await op.wait(lambda: any("IV-E Fault 알람 중에는 Vent 를 할 수 없음" in n[2]
                                              for n in op.notices_since(t1)), 3)
             await asyncio.sleep(1.0)
-            self.check(f"{label} → 벤트 거절 알림 · 벤트 표시 없음", told and not vv_seen and not op.aux_on("VV"),
-                       "'IV-E Fault 알람 중에는 Vent 를 할 수 없습니다 — …' · VV 닫힘",
+            self.check(f"{label} → Vent 거절 알림 · Vent 표시 없음", told and not vv_seen and not op.aux_on("VV"),
+                       "'IV-E Fault 알람 중에는 Vent 를 할 수 없음 — …' · VV 닫힘",
                        f"알림 {[n[2] for n in op.notices_since(t1)][-1:] or '(없음)'} · VV {op.aux_on('VV')}")
             await self.clear_alarms()
             vv_seen.clear()
             await op.send("vent")                       # 원인을 없애고 리셋한 뒤 — 벤트가 된다
             opened = await op.wait(lambda: bool(vv_seen) or op.aux_on("VV"), 8)
-            self.check(f"{label} → 리셋 뒤 벤트 됨", opened, "VV 열림", f"VV {op.aux_on('VV')}")
+            self.check(f"{label} → 리셋 뒤 Vent 됨", opened, "VV 열림", f"VV {op.aux_on('VV')}")
         finally:
             task.cancel()
             self.h.ctl({"op": "fault", "key": "ive_stuck", "on": False})
@@ -1047,7 +1047,7 @@ class Run:
         if self.only_faults and "o3_line" not in self.only_faults:
             return
         op = self.op
-        label = "O3 라인"
+        label = "O3 Line"
         await self.plc_ready()
         await self.clear_alarms()
         await self.pumped(f"{label} → 준비: 베이스 압력")
@@ -1074,8 +1074,8 @@ class Run:
             logs = [n[2] for n in op.logs_since(t0)]
             self.check(f"{label} 켜기 → 바이패스 라인 먼저 · 허가 대기 표시 · 허가 뒤 발생기",
                        line and waiting and no_gen_yet and gen and not early and took >= 4.5
-                       and any("O3 Permit 을 기다립니다" in m for m in logs)
-                       and any("발생기를 켰습니다" in m for m in logs)
+                       and any("O3 Permit 을 기다림" in m for m in logs)
+                       and any("발생기를 켬" in m for m in logs)
                        and not ((op.live.get("manual") or {}).get("o3_on_wait_s") or 0),
                        "IV-B · BPMP 켜짐 → o3_on_wait_s ≥ 1 · 발생기 요청 없음 → (IV-B 뒤 5 s) 허가 → 발생기 켜짐",
                        f"라인 {line} · 대기 표시 {waiting} · 그때 발생기 없음 {no_gen_yet} · 발생기 {gen}({took:.1f} s) · "
@@ -1087,14 +1087,14 @@ class Run:
             off = await op.wait(lambda: not op.aux_on("O3GEN") and not self._o3_gen_req(), 5)
 
             def told():
-                return [n[2] for n in op.logs_since(t1) if "수동 요청을 지웠습니다" in n[2] and "O3GEN" in n[2]]
+                return [n[2] for n in op.logs_since(t1) if "수동 요청 해제" in n[2] and "O3GEN" in n[2]]
             await op.wait(lambda: bool(told()), 4)
             lg = told()
             names = [a.get("name") for a in op.live.get("alarms") or []]
             self.check(f"{label} → 리드 열림: 발생기만 꺼짐 · IV-B · BPMP 유지 · 알림",
-                       off and op.aux_on("BPMP") and bool(lg) and "O3 허가 없음" in lg[-1] and "기본 인터락" in lg[-1]
+                       off and op.aux_on("BPMP") and bool(lg) and "O3 Permit 없음" in lg[-1] and "기본 인터락" in lg[-1]
                        and not names and self.state_code() == A.STATE_IDLE,
-                       "발생기 출력 · 요청 0 · BPMP 켜짐 · 'PLC 가 수동 요청을 지웠습니다 — O3GEN (O3 허가 없음 — 필요: 기본 인터락 …)'"
+                       "발생기 출력 · 요청 0 · BPMP 켜짐 · 'PLC가 수동 요청 해제 — O3GEN (O3 Permit 없음 — 필요: 기본 인터락 …)'"
                        " · 알람 없음",
                        f"발생기 {op.aux_on('O3GEN')} · 요청 {self._o3_gen_req()} · BPMP {op.aux_on('BPMP')} · "
                        f"{names or '알람 없음'} · {lg[-1] if lg else '(로그 없음)'}")
@@ -1117,13 +1117,13 @@ class Run:
             waiting = await op.wait(lambda: ((op.live.get("manual") or {}).get("o3_on_wait_s") or 0) >= 1, 5)
             await asyncio.sleep(1.0)
             await op.send("manual_o3", action="off")
-            cancelled = await op.wait(lambda: any("O3 라인 켜기 취소" in n[2] and "운전자 OFF" in n[2]
+            cancelled = await op.wait(lambda: any("O3 Line 켜기 취소" in n[2] and "운전자 OFF" in n[2]
                                                   for n in op.logs_since(t2)), 3)
             permit = await op.wait(lambda: op.ilk(A.ILK_O3_OK), 8)          # 바이패스 라인은 끄기 지연(10 s) 동안 남는다
             gen_seen = await op.wait(lambda: op.aux_on("O3GEN") or self._o3_gen_req(), 2.5)
             self.check(f"{label} 켜기 → 기다리는 중 끄기: 취소 · 허가가 서도 발생기 안 보냄",
                        waiting and cancelled and permit and not gen_seen and not early,
-                       "'O3 라인 켜기 취소 — 운전자 OFF …' · O3 Permit · 발생기 꺼짐",
+                       "'O3 Line 켜기 취소 — 운전자 OFF …' · O3 Permit · 발생기 꺼짐",
                        f"대기 {waiting} · 취소 로그 {cancelled} · 허가 {permit} · 발생기 {gen_seen}")
             closed = await op.wait(lambda: not any(op.aux_on(x) for x in ("O3GEN", "IV-B", "BPMP")), 40)
             self.check(f"{label} → 끄기 순서 그대로(지연 뒤 바이패스 라인 닫힘)", closed, "발생기 · IV-B · BPMP 꺼짐",
@@ -1138,7 +1138,7 @@ class Run:
             line = await op.wait(lambda: op.aux_on("BPMP"), 5)
 
             def failed():
-                return [n[2] for n in op.logs_since(t3) if "O3 라인 켜기 실패" in n[2]]
+                return [n[2] for n in op.logs_since(t3) if "O3 Line 켜기 실패" in n[2]]
             await op.wait(lambda: bool(failed()), wait_s + 10)
             lg = failed()
             took = time.monotonic() - t3
@@ -1146,7 +1146,7 @@ class Run:
             self.check(f"{label} 켜기 → 제한 시간({wait_s:g} s) 안에 허가 없음: 발생기 안 보냄 · 빠진 조건 알림 · 라인 바로 닫힘",
                        line and bool(lg) and "기본 인터락" in lg[-1] and closed and not early
                        and not self._o3_gen_req() and wait_s - 1 <= took <= wait_s + 8,
-                       f"약 {wait_s:g} s 뒤 'O3 라인 켜기 실패 — … 필요: 기본 인터락 …' · 발생기 요청 없음 · IV-B · BPMP 꺼짐",
+                       f"약 {wait_s:g} s 뒤 'O3 Line 켜기 실패 — … 필요: 기본 인터락 …' · 발생기 요청 없음 · IV-B · BPMP 꺼짐",
                        f"{took:.1f} s · {lg[-1] if lg else '(로그 없음)'} · 닫힘 {closed} · 발생기 요청 {self._o3_gen_req()}")
         finally:
             task.cancel()
@@ -1209,22 +1209,22 @@ class Run:
             await op.send("alarm_ack")
             await asyncio.sleep(2.0 + 3)
             back = await self.plc_ready(15)
-            ns = [n for n in op.notices_since(t0) if "알람 확인" in n[2]]
+            ns = [n for n in op.notices_since(t0) if "Alarm Ack" in n[2]]
             bad = [n for n in ns if n[1] in ("warn", "err")]
-            done = [n for n in ns if "처리되었습니다" in n[2]]
-            maybe = [n for n in bad if "받았을 수 있습니다" in n[2]]
+            done = [n for n in ns if "처리됨" in n[2]]
+            maybe = [n for n in bad if "받았을 수 있음" in n[2]]
             got = len(re.findall(r"명령 받음: 번호 \d+ · 코드 %d " % A.CMD_ALARM_ACK, self.h.plc_log_text()[n0:]))
             cut_log = "명령 번호 쓰기에서 끊음" if "통신 끊기 대기" in self.h.plc_log_text()[n0:] else "끊기 대기 기록 없음"
             last = (bad or done or [(0, '', '(알림 없음)')])[-1][2]
             if mode == "blackhole":
                 self.check("블랙홀 — 명령 번호 쓰기에서 끊김 → 결과 모름 알림 · 다시 보내지 않음",
                            bool(armed and armed.get("ok")) and bool(maybe) and not done and got == 1 and back,
-                           "'받았을 수 있습니다' 알림 · '처리되었습니다' 없음 · PLC 받은 횟수 1 · 링크 회복",
+                           "'받았을 수 있음' 알림 · '처리됨' 없음 · PLC 받은 횟수 1 · 링크 회복",
                            f"{last} · PLC 받음 {got} 회 · 회복 {back} · {cut_log}")
             else:
                 self.check("케이블 뽑힘 — 명령 번호 쓰기에서 끊김 → 오류 알림 · 명령 닿지 않음",
                            bool(armed and armed.get("ok")) and bool(bad) and not done and got == 0 and back,
-                           "경고/오류 알림 · '처리되었습니다' 없음 · PLC 받은 횟수 0 · 링크 회복",
+                           "경고/오류 알림 · '처리됨' 없음 · PLC 받은 횟수 0 · 링크 회복",
                            f"{last} · PLC 받음 {got} 회 · 회복 {back} · {cut_log}")
         # PLC STOP → 하트비트 멈춤 → RUN(P00 첫 스캔) → PLC 재시작
         await self.ready()
@@ -1291,9 +1291,9 @@ class Run:
             run = op.proc.get("running")
             self.check("공정 중 블랙홀 4 s → 다시 붙음 · 공정 계속 · PC 끊김 트립(경고)", back and run and self._trip(),
                        "링크 회복 · 공정 중 · pc_trip", f"회복 {back} · 공정 {run} · pc_trip {self._trip()}")
-            await op.wait(lambda: any("PC 연결이 돌아왔습니다" in n[2] for n in op.notices_since(t0)), 3)
-            toast = [n for n in op.notices_since(t0) if "PC 연결이 돌아왔습니다" in n[2]]
-            self.check("다시 붙은 순간 알림 'PC 연결이 돌아왔습니다'", len(toast) == 1, "토스트 한 번",
+            await op.wait(lambda: any("PC 연결이 돌아옴" in n[2] for n in op.notices_since(t0)), 3)
+            toast = [n for n in op.notices_since(t0) if "PC 연결이 돌아옴" in n[2]]
+            self.check("다시 붙은 순간 알림 'PC 연결이 돌아옴'", len(toast) == 1, "토스트 한 번",
                        toast[-1][2] if toast else "(없음)")
             await op.send("alarm_reset")
             await op.wait(lambda: not self._trip(), 5)
@@ -1601,7 +1601,7 @@ class Run:
             base = float(self.h.cfg["params"].get("base_press_torr") or 0.05)
             await op.send("manual_mfc", sccm={"1": 300})
             ok = await op.wait(lambda: op.ilk(A.ILK_RF_OK), self.t(30, 10))
-            self.check("가스 흘림 → RF 허가", ok, f"압력 > 베이스 {base} Torr · RF Permit", f"{op.cvg()} Torr")
+            self.check("가스 흘림 → RF Permit", ok, f"압력 > 베이스 {base} Torr · RF Permit", f"{op.cvg()} Torr")
             await op.send("manual_rf", on=True, watt=50)
             ok = await op.wait(lambda: abs(((op.live.get("extra") or {}).get("rf_fwd") or 0) - 50) < 5, self.t(10, 6))
             ex = op.live.get("extra") or {}
@@ -1618,27 +1618,27 @@ class Run:
                 return bool((((op.live.get("manual") or {}).get("aux_request") or 0) >> A.AUX_RF) & 1)
 
             def rf_lost_log():
-                return [n for n in op.logs_since(t0) if "수동 요청을 지웠습니다" in n[2] and "RF 허가 없음" in n[2]]
+                return [n for n in op.logs_since(t0) if "수동 요청 해제" in n[2] and "RF Permit 없음" in n[2]]
             await op.send("manual_mfc", sccm={"1": 0})
             off = await op.wait(lambda: not op.ilk(A.ILK_RF_OK), self.t(60, 10))
             cleared = await op.wait(lambda: not rf_req(), 3)
             await op.wait(lambda: bool(rf_lost_log()), 3)
             lg = rf_lost_log()
             rf_on = (op.live.get("extra") or {}).get("rf_on")
-            self.check("RF 허가 꺼짐 → PLC 가 RF 요청 지움", off and cleared and bool(lg) and not rf_on,
-                       "RF 허가 꺼짐 · RF 요청 0 · 'PLC 가 수동 요청을 지웠습니다 — RF (RF 허가 없음 …)'",
+            self.check("RF Permit 꺼짐 → PLC 가 RF 요청 지움", off and cleared and bool(lg) and not rf_on,
+                       "RF Permit 꺼짐 · RF 요청 0 · 'PLC가 수동 요청 해제 — RF (RF Permit 없음 …)'",
                        f"허가 꺼짐 {off} · 요청 {rf_req()} · RF {rf_on} · {lg[-1][2] if lg else '(로그 없음)'}")
             await op.send("manual_mfc", sccm={"1": 300})
             back = await op.wait(lambda: op.ilk(A.ILK_RF_OK), self.t(30, 10))
             await asyncio.sleep(2.0)
             rf_on = (op.live.get("extra") or {}).get("rf_on")
-            self.check("RF 허가 돌아옴 → RF 저절로 안 켜짐", back and not rf_on and not rf_req(),
+            self.check("RF Permit 돌아옴 → RF 저절로 안 켜짐", back and not rf_on and not rf_req(),
                        "RF Permit · RF 꺼짐 · RF 요청 0", f"허가 {back} · RF {rf_on} · 요청 {rf_req()}")
             await op.send("manual_mfc", sccm={"1": 0})
         if DEV.HAS_O3:
             ok = await self.o3_line(True)
             ok = ok and await op.wait(lambda: abs(((op.live.get("extra") or {}).get("o3_pv") or 0) - 100) < 10, self.t(90, 10))
-            self.check("O3 라인 켜기 · 농도", ok, "O3 허가 · 100 ± 10", (op.live.get("extra") or {}).get("o3_pv"))
+            self.check("O3 Line 켜기 · 농도", ok, "O3 Permit · 100 ± 10", (op.live.get("extra") or {}).get("o3_pv"))
         # 공정 중 잠금
         name = "E2E Lock"
         started, _ = await self.run_recipe(name, long_recipe(name, 80, 100), wait_end=False)
@@ -1655,7 +1655,7 @@ class Run:
             await self.o3_line(False)
         await op.send("vent")
         ok = await op.wait(lambda: ((op.live.get("inputs0") or 0) >> A.IN0_ATM) & 1, self.t(150, 15))
-        self.check("벤트 → 대기압", ok, "대기압 입력(700 Torr↑)", f"{op.cvg()} Torr")
+        self.check("Vent → 대기압", ok, "대기압 입력(700 Torr↑)", f"{op.cvg()} Torr")
         # ★ v0.8.0: Valve Permit 이 없으면(대기압 · 펌프 꺼짐) 열기를 보내지 않는다 — 공정 시작이 잠금을 다시 걸었으니 풀고
         await op.send("manual_unlock", on=True)
         t0 = time.monotonic()
@@ -1685,14 +1685,14 @@ class Run:
         t0 = time.monotonic()
 
         def pv1_lost_log():
-            return [n for n in op.logs_since(t0) if "수동 요청을 지웠습니다" in n[2] and "PV-1" in n[2]]
+            return [n for n in op.logs_since(t0) if "수동 요청 해제" in n[2] and "PV-1" in n[2]]
         await op.send("pump_stop")
         off = await op.wait(lambda: not op.ilk(A.ILK_VALVE_OK), self.t(30, 8))
         cleared = await op.wait(lambda: not (op.live.get("manual") or {}).get("valve_request"), 3)
         await op.wait(lambda: bool(pv1_lost_log()), 3)
         lg = pv1_lost_log()
         self.check("Pumping Stop → PLC 가 PV-1 요청 지움", off and cleared and bool(lg) and not op.valve_on("PV-1"),
-                   "허가 꺼짐 · 요청 0 · 'PLC 가 수동 요청을 지웠습니다 — PV-1 …' 로그 · 출력 꺼짐",
+                   "허가 꺼짐 · 요청 0 · 'PLC가 수동 요청 해제 — PV-1 …' 로그 · 출력 꺼짐",
                    f"허가 꺼짐 {off} · 요청 {(op.live.get('manual') or {}).get('valve_request')} · "
                    f"{lg[-1][2] if lg else '(로그 없음)'}")
         await op.send("pump_start")
@@ -1802,7 +1802,7 @@ async def amain(args) -> int:
 def parse_args(argv=None):
     ap = argparse.ArgumentParser(description=f"{DEV.NAME} 실제 공정 시나리오 자동 시험")
     ap.add_argument("scenarios", nargs="*", help="시나리오 이름(없으면 전부)")
-    ap.add_argument("--speed", type=float, default=10.0, help="물리 배속(펌핑 · 벤트 · 승온 · O3 만)")
+    ap.add_argument("--speed", type=float, default=10.0, help="물리 배속(펌핑 · Vent · 승온 · O3 만)")
     ap.add_argument("--state", default="atm", help="가짜 PLC 시작 상태(atm · vac · hot)")
     ap.add_argument("--keep", action="store_true", help="임시 폴더(로그 · 데이터 로그 · 가짜 PLC 기록)를 남긴다")
     ap.add_argument("--verbose", action="store_true", help="프로그램 알림을 모두 찍는다")

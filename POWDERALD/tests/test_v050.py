@@ -69,7 +69,7 @@ def _fp(body: str):
       global.window = global; global.document = null;
       global.T = require(%s);
       global.Ops = require(%s);
-      global.UI = require(%s);            // v0.8.0: 이미 그 상태인 펌핑 · 벤트 규칙(UI.alreadyWhy — 명령줄과 같다)
+      global.UI = require(%s);            // v0.8.0: 이미 그 상태인 펌핑 · Vent 규칙(UI.alreadyWhy — 명령줄과 같다)
       global.fmt = { flow: v => Number(v).toFixed(1), temp: v => Number(v).toFixed(1), torr: String,
                      pct: v => String(Math.round(v)), watt: v => Number(v).toFixed(1), num: (v, n) => Number(v).toFixed(n) };
       const F = require(%s);
@@ -163,7 +163,7 @@ def test_faceplate_blocked_states_show_reason(change, offline, why):
     ''' % (json.dumps(st), "true" if offline else "false"))
     for k, r in out.items():
         assert r["n"] >= 1 and r["on"] == [], (k, r)              # 창은 열리되 단추는 막힌다
-        assert r["why"].startswith(why) and "조작할 수 없습니다" in r["why"], (k, r)
+        assert r["why"].startswith(why) and "조작할 수 없음" in r["why"], (k, r)
         assert r["inputsOff"], (k, r)
 
 

@@ -86,7 +86,7 @@ def test_result_level_colors():
 def test_restart_chip_is_neutral():
     js = _src("js", "views", "setup.js")
     assert 'chip warn">Restart' not in js and "core.chip('Restart', 'warn')" not in js
-    assert '<span class="chip" title="바꾸면 프로그램을 다시 시작해야 반영됩니다">Restart</span>' in js
+    assert '<span class="chip" data-tip="바꾸면 프로그램을 다시 시작해야 반영됨">Restart</span>' in js
 
 
 def test_alarm_named_inputs_are_gray_when_normal():
@@ -258,10 +258,10 @@ def test_pid_legend_one_line_english():
       const box = {}; core.bind = n => n === 'pidLegend' ? box : null; core.state = { device: %s };
       viewSchematic.render({ live: {} });
       console.log(JSON.stringify(box.innerHTML || ''));''' % json.dumps({"has_o3": DEV.HAS_O3}))
-    shown = re.sub(r'title="[^"]*"', '', out)
+    shown = re.sub(r'data-tip="[^"]*"', '', out)
     words = re.findall(r">([^<]+)<", shown)
     assert words == ["Open", "Closed", "Pending", "Unknown", "Flow"] + (["Auto"] if DEV.HAS_O3 else []) + ["Click to operate"], words
-    assert not HANGUL.search(shown) and len(re.findall(r'title="[^"]*[가-힣][^"]*"', out)) == len(words), out
+    assert not HANGUL.search(shown) and len(re.findall(r'data-tip="[^"]*[가-힣][^"]*"', out)) == len(words), out
     assert "Idle" not in words and "Exhaust" not in words
     css = _src("css", "style.css")
     assert "#schemSvg [data-fp]:focus .fp-hit { stroke: transparent; }" in css      # 포인터를 올릴 때만(키보드는 focus-visible)
@@ -335,10 +335,10 @@ def test_d4_no_korean_labels_left():
     assert "Base Pressure" in names and labels["params.base_press_torr"].startswith("Base Pressure")
     assert "PC Heartbeat Timeout" in names and labels["params.pc_wdt_ms"].startswith("PC Heartbeat Timeout")
     setup = _src("js", "views", "setup.js")
-    for old in ("PIN 없음 — 처음 편집할 때 정합니다', 'warn')", "chip warn\">바꾸면 다시 시작해야 반영",
+    for old in ("PIN 없음 — 처음 편집할 때 정함', 'warn')", "chip warn\">바꾸면 다시 시작해야 반영",
                 "class=\"unconf\">없음<", "' — 값 없음", "'잠김'", "'바꾼 항목 없음'"):
         assert old not in setup, old
-    assert "core.chip('No PIN', 'warn', 'PIN 없음 — 처음 편집할 때 정합니다')" in setup
+    assert "core.chip('No PIN', 'warn', 'PIN 없음 — 처음 편집할 때 정함')" in setup
     recipe = _src("js", "views", "recipe.js")
     assert "(블록 준비 " not in recipe and "(incl. Block Prep " in recipe
     assert "' — 값 없음'" not in _src("js", "views", "main.js")

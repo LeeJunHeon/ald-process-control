@@ -52,8 +52,8 @@ HEATER_WORDS = range(A.D_HEATER_POWER, A.D_HEATER_SV + 12)        # 히터 전�
 HB_WATCH_S = 0.7                                                  # 제어 프로그램이 붙어 있나 — 하트비트를 지켜보는 최소 시간
 HB_WATCH_BAD_S = 1.3                                              # 와치독 PRM 이 0 이거나 이상할 때
 DEVICE_WORD = DEV.KEY.upper()                                     # ID 0 일 때 칠 이름(PEALD / POWDERALD)
-ATTACHED_MSG = ("거절: 제어 프로그램이 이 PLC 에 붙어 있습니다(PC 하트비트 D01000 이 바뀜) — 프로그램을 끄고 쓰거나, "
-                "프로그램의 조작 창으로 하세요")
+ATTACHED_MSG = ("거절: 제어 프로그램이 이 PLC 에 붙어 있음(PC 하트비트 D01000 이 바뀜) — 프로그램을 끄고 쓰거나, "
+                "프로그램의 조작 창으로 필요")
 
 PRM_NAMES = {
     A.D_PRM_PC_WDT_MS: "PC 하트비트 끊김 판정 ms", A.D_PRM_BASE_PRESS: "베이스 압력(CVG 원시값)",
@@ -61,7 +61,7 @@ PRM_NAMES = {
     A.D_PRM_MFC_STABLE: "MFC 안정 판정 s", A.D_PRM_MFC_TOL: "MFC1 허용 편차(원시값)",
     A.D_PRM_MFC_TIMEOUT: "MFC 안정 대기 제한 s", A.D_PRM_VALVE_MIN_MS: "펄스 밸브 최소 열림 ms",
     A.D_PRM_RF_MAX: "RF 설정 상한(원시값)", A.D_PRM_RF_REF_MAX: "반사 전력 한계(원시값)",
-    A.D_PRM_RF_REF_MS: "반사 초과 허용 ms", A.D_PRM_RF_MAX_PRESS: "RF 허가 최대 압력(CVG 원시값)",
+    A.D_PRM_RF_REF_MS: "반사 초과 허용 ms", A.D_PRM_RF_MAX_PRESS: "RF Permit 최대 압력(CVG 원시값)",
     A.D_PRM_O3_MAX: "O3 설정 상한(원시값)",
 }
 
@@ -170,7 +170,7 @@ class Modbus:
         while len(buf) < n:
             part = self.sock.recv(n - len(buf))
             if not part:
-                raise ConnectionError("PLC 가 연결을 끊었습니다")
+                raise ConnectionError("PLC 가 연결을 끊음")
             buf += part
         return buf
 
@@ -180,7 +180,7 @@ class Modbus:
             n = min(125, count)
             body = self._req(struct.pack(">BHH", 3, addr, n))
             if len(body) < 2 + 2 * n:
-                raise IOError(f"읽기 응답이 짧습니다 (자료 {max(0, len(body) - 2)} / {2 * n} 바이트)")
+                raise IOError(f"읽기 응답이 짧음 (자료 {max(0, len(body) - 2)} / {2 * n} 바이트)")
             out += list(struct.unpack(">" + "H" * n, body[2:2 + 2 * n]))
             addr += n
             count -= n
@@ -190,7 +190,7 @@ class Modbus:
         vals = [int(v) & 0xFFFF for v in values]
         body = self._req(struct.pack(">BHHB", 16, addr, len(vals), 2 * len(vals)) + struct.pack(">" + "H" * len(vals), *vals))
         if len(body) < 5 or struct.unpack(">HH", body[1:5]) != (addr, len(vals)):
-            raise IOError("쓰기 응답이 올바르지 않습니다 — 썼는지 알 수 없습니다(되읽어 확인하세요)")
+            raise IOError("쓰기 응답이 올바르지 않음 — 썼는지 알 수 없음(되읽어 확인 필요)")
 
 
 def fake_ctl(port: int, req: dict, timeout: float = 2.0):
@@ -275,10 +275,10 @@ def cmd_write(args, mb: Modbus, is_fake: bool) -> int:
         addr = _pkg.parse_int(args.addr)
         vals = [_pkg.parse_int(v) for v in args.values]
     except ValueError:
-        print(f"주소 · 값을 읽지 못했습니다: {args.addr} {' '.join(args.values)}")
+        print(f"주소 · 값을 읽지 못함: {args.addr} {' '.join(args.values)}")
         return 2
     # ★ v0.6.2(D8): 범위 밖은 거절 — 전에는 값은 조용히 & 0xFFFF, 주소는 struct.error traceback
-    why = check_range(addr, len(vals)) or next((f"값 {v} 는 -32768~65535 밖입니다" for v in vals
+    why = check_range(addr, len(vals)) or next((f"값 {v} 는 -32768~65535 밖" for v in vals
                                                 if not -32768 <= v <= 0xFFFF), "")
     if why:
         print(f"거절: {why}")
@@ -292,10 +292,10 @@ def cmd_write(args, mb: Modbus, is_fake: bool) -> int:
     print(f"장비 상태 {A.STATE_NAMES.get(s[A.D_STATE], s[A.D_STATE])}")
     print(f"쓰기: D{addr:05d}~D{addrs[-1]:05d} ← {vals}")
     if dev_id not in (DEV.DEVICE_ID, 0) and not args.force:
-        print("거절: 이 장비의 PLC 가 아닙니다(장비 ID 다름) — 정말 쓰려면 --force")
+        print("거절: 이 장비의 PLC 가 아님(장비 ID 다름) — 정말 쓰려면 --force")
         return 3
     if s[A.D_STATE] in RUNNING_STATES:
-        print("거절: 공정 중에는 쓰지 않습니다")
+        print("거절: 공정 중에는 쓰지 않음")
         return 3
     attached, hb = program_attached(mb)
     if attached:
@@ -304,24 +304,24 @@ def cmd_write(args, mb: Modbus, is_fake: bool) -> int:
     kinds = {area_of(a) for a in addrs}
     if "other" in kinds and not args.raw:
         bad = [a for a in addrs if area_of(a) == "other"]
-        print(f"거절: D{bad[0]:05d} 는 쓰기 허용 목록 밖입니다(명령 데이터 D01004~D01042 · 레시피 D02000~D03119 · "
+        print(f"거절: D{bad[0]:05d} 는 쓰기 허용 목록 밖(명령 데이터 D01004~D01042 · 레시피 D02000~D03119 · "
               "하트비트 · 명령 D01000~D01003 · PRM D01100~D01124 만). PLC 작업 이미지(D04xxx)는 래더가 바로 요청으로 "
-              "써서 다음 스캔에 밸브가 열리거나 RF 가 켜질 수 있습니다 — 정말 써야 하면 --raw 를 주고 주소를 한 번 더 치세요")
+              "써서 다음 스캔에 밸브가 열리거나 RF 가 켜질 수 있음 — 정말 써야 하면 --raw 를 주고 주소를 한 번 더 치기 필요")
         return 3
     # ★ v0.6.2(D1): 확인은 누적이다 — 허용 목록 밖이 섞였다고 하트비트 · 명령 · PRM · 히터의 WRITE 확인을 건너뛰지 않는다
     strong = [a for a in addrs if area_of(a) in ("guard", "prm") or a in HEATER_WORDS]
     if dev_id == 0:
         # ★ v0.6.2(D5): ID 렁 전 PLC — --force(다른 장비도 통과) 대신 이 장비 이름을 치게
-        print("★ 장비 ID 없음(0 — ID 렁 전): PLC 로 장비를 확인할 수 없습니다 — 이 PLC 가 이 장비 것인지 직접 확인하세요")
-        ans = _pkg.ask(f"이 장비 이름({DEVICE_WORD})을 그대로 치세요 > ")
+        print("★ 장비 ID 없음(0 — ID 렁 전): PLC 로 장비를 확인할 수 없음 — 이 PLC 가 이 장비 것인지 직접 확인 필요")
+        ans = _pkg.ask(f"이 장비 이름({DEVICE_WORD}) 그대로 치기 필요 > ")
         if _refuse_eof(ans):
             return 1
         if ans.strip() != DEVICE_WORD:
             print("취소")
             return 1
     if "other" in kinds:
-        print("★ 허용 목록 밖(--raw) — 명령 12 의 검사 · 프로그램의 수동 잠금을 건너뛰고 래더가 바로 씁니다")
-        ans = _pkg.ask(f"주소를 한 번 더 치세요(D{addr:05d}) > ")
+        print("★ 허용 목록 밖(--raw) — 명령 12 의 검사 · 프로그램의 수동 잠금을 건너뛰고 래더가 바로 씀")
+        ans = _pkg.ask(f"주소를 한 번 더 치기 필요(D{addr:05d}) > ")
         if _refuse_eof(ans):
             return 1
         try:
@@ -336,14 +336,14 @@ def cmd_write(args, mb: Modbus, is_fake: bool) -> int:
         for a, o, n in zip(addrs, old, vals):
             print(f"  D{a:05d} {word_name(a)}: {o} → {n & 0xFFFF}")
         if kinds & {"guard"}:
-            print("★ 하트비트 · 명령 영역입니다 — 제어 프로그램이 돌고 있으면 명령이 겹칩니다.")
+            print("★ 하트비트 · 명령 영역 — 제어 프로그램이 돌고 있으면 명령이 겹침.")
         if kinds & {"prm"}:
-            print("★ PRM(와치독 · 베이스 압력 · 과온 · RF 한계)입니다 — 프로그램이 연결할 때 설정값으로 다시 씁니다.")
+            print("★ PRM(와치독 · 베이스 압력 · 과온 · RF 한계) — 프로그램이 연결할 때 설정값으로 다시 씀.")
         if any(a in HEATER_WORDS for a in addrs):
-            print("★ 히터 전원 · 설정 온도 요청 워드입니다 — 프로그램의 다음 명령 13(히터 적용)이 이 값을 그대로 반영합니다"
-                  "(화면에서 히터 하나만 바꿔도 12 채널 전부를 이 워드에서 읽어 씁니다). 확인이 끝나면 되돌리세요:")
+            print("★ 히터 전원 · 설정 온도 요청 워드 — 프로그램의 다음 명령 13(히터 적용)이 이 값을 그대로 반영함"
+                  "(화면에서 히터 하나만 바꿔도 12 채널 전부를 이 워드에서 읽어 씀). 확인이 끝나면 되돌리기 필요:")
             print("  " + revert_line(args, addr, old))
-        print("쓰려면 WRITE 를 치세요")
+        print("쓰려면 WRITE 치기 필요")
         ans = _pkg.ask("> ")
         if _refuse_eof(ans):
             return 1
@@ -354,7 +354,7 @@ def cmd_write(args, mb: Modbus, is_fake: bool) -> int:
         for a in addrs:
             print(f"  D{a:05d} {word_name(a)}")
         if "cmd" in kinds:
-            print("★ 명령 데이터는 요청만 놓습니다 — 명령 12/13/14 를 보내야 반영됩니다(실기 확인은 프로그램의 조작 창으로)")
+            print("★ 명령 데이터는 요청만 놓음 — 명령 12/13/14 를 보내야 반영됨(실기 확인은 프로그램의 조작 창으로)")
         if not (args.yes and is_fake):
             ans = _pkg.ask("쓸까요? [y/N] ")
             if _refuse_eof(ans):
@@ -365,14 +365,14 @@ def cmd_write(args, mb: Modbus, is_fake: bool) -> int:
     # 쓰기 바로 직전에 한 번 더 — 질문하는 사이에 공정이 시작됐거나 프로그램이 붙었을 수 있다
     st, hb2 = mb.read(A.D_STATE, 1)[0], mb.read(A.D_PC_HB, 1)[0]
     if st in RUNNING_STATES:
-        print("거절: 공정 중이 되었습니다 — 쓰지 않음")
+        print("거절: 공정 중이 됨 — 쓰지 않음")
         return 3
     if hb2 != hb:
         print(ATTACHED_MSG + " — 쓰지 않음")
         return 3
     mb.write(addr, vals)
     back = mb.read(addr, len(vals))
-    print(f"썼습니다 — 되읽은 값 {back}")
+    print(f"씀 — 되읽은 값 {back}")
     if any(a in HEATER_WORDS for a in addrs):
         print("되돌리기: " + revert_line(args, addr, old))
     return 0
@@ -405,9 +405,9 @@ def resolve_target(args):
 def check_range(addr: int, count: int) -> str:
     """주소 0~65535 · 개수 1 이상 — 아니면 이유."""
     if count < 1:
-        return f"개수 {count} — 1 이상이어야 합니다"
+        return f"개수 {count} — 1 이상이어야 함"
     if not 0 <= addr <= 0xFFFF or addr + count - 1 > 0xFFFF:
-        return f"주소 D{addr} (+{count}) 는 0~65535 밖입니다"
+        return f"주소 D{addr} (+{count}) 는 0~65535 밖"
     return ""
 
 
@@ -419,7 +419,7 @@ def parse_args(argv=None):
     ap.add_argument("--ctl-port", type=int, default=0, help="가짜 PLC 제어 포트(기본 --port + 1)")
     ap.add_argument("--config", default="", help="환산에 쓸 설정 파일(기본: 프로그램 config.json, 없으면 예시 설정)")
     ap.add_argument("--yes", action="store_true", help="y 확인 생략 — 가짜 PLC 에만('WRITE' · 주소 다시 치기는 생략 안 함)")
-    ap.add_argument("--force", action="store_true", help="장비 ID 가 달라도 쓴다(쓰지 마세요 — 다른 장비 PLC 일 수 있다)")
+    ap.add_argument("--force", action="store_true", help="장비 ID 가 달라도 쓴다(쓰지 마기 필요 — 다른 장비 PLC 일 수 있다)")
     ap.add_argument("--raw", action="store_true", help="허용 목록 밖 주소도 쓴다(주소를 한 번 더 쳐야 한다)")
     sub = ap.add_subparsers(dest="cmd", required=True)
     p = sub.add_parser("status")
@@ -466,11 +466,11 @@ def main(argv=None) -> int:
             "plant": lambda: {"op": "state", "name": args.state},
         }[args.cmd]()
         if args.host not in ("127.0.0.1", "localhost"):
-            print("가짜 PLC 전용 명령입니다 — 실제 PLC 에는 보내지 않습니다")
+            print("가짜 PLC 전용 명령 — 실제 PLC 에는 보내지 않음")
             return 2
         out = fake_ctl(ctl_port, req)
         if out is None:
-            print(f"가짜 PLC 제어 포트 {ctl_port} 가 답하지 않습니다 — 가짜 PLC 가 떠 있나요?")
+            print(f"가짜 PLC 제어 포트 {ctl_port} 가 답하지 않음 — 가짜 PLC 가 떠 있나요?")
             return 2
         if args.cmd == "faults":
             for f in out.get("faults", []):
@@ -483,7 +483,7 @@ def main(argv=None) -> int:
     try:
         mb = Modbus(args.host, args.port, args.unit)
     except OSError as e:
-        print(f"PLC {args.host}:{args.port} 에 연결하지 못했습니다 — {e}")
+        print(f"PLC {args.host}:{args.port} 에 연결하지 못함 — {e}")
         return 2
     try:
         if args.cmd == "status":
@@ -500,7 +500,7 @@ def main(argv=None) -> int:
             try:
                 addr, cnt = _pkg.parse_int(args.addr), _pkg.parse_int(args.count)
             except ValueError:
-                print(f"주소 · 개수를 읽지 못했습니다: {args.addr} {args.count}")
+                print(f"주소 · 개수를 읽지 못함: {args.addr} {args.count}")
                 return 2
             why = check_range(addr, cnt)
             if why:

@@ -109,7 +109,7 @@ async def link(sim):
         if lk.connected:
             break
         await asyncio.sleep(0.05)
-    assert lk.connected, "시뮬레이터에 연결하지 못했습니다"
+    assert lk.connected, "시뮬레이터에 연결하지 못함"
     try:
         yield lk, s, cfg
     finally:
@@ -165,7 +165,7 @@ class FakeSim:
             self.step(1, 0.05)
             if A.bit(s.reg[A.D_INTERLOCK], A.ILK_VALVE_OK):
                 return
-        raise AssertionError("공정 밸브 허가가 서지 않았다")
+        raise AssertionError("Valve Permit 서지 않았다")
 
     def o3_ready(self):
         """Powder: O3 라인을 래더대로 켠다(바이패스 펌프 → IV-B → 5 s 뒤 O3 허가 → 발생기).
@@ -186,7 +186,7 @@ class FakeSim:
                 s.man_aux |= 1 << A.AUX_O3_GEN
                 if s.o3_gen_on:
                     return
-        raise AssertionError("O3 허가가 서지 않았다")
+        raise AssertionError("O3 Permit 서지 않았다")
 
 
 async def valve_permit_live(sim, timeout=10.0):
@@ -195,7 +195,7 @@ async def valve_permit_live(sim, timeout=10.0):
     from peald import addresses as A
     sim.base_pressure = 1.0
     sim.pump_req = sim.exh_req = True
-    assert await wait_until(lambda: A.bit(sim.reg[A.D_INTERLOCK], A.ILK_VALVE_OK), timeout), "공정 밸브 허가가 서지 않았다"
+    assert await wait_until(lambda: A.bit(sim.reg[A.D_INTERLOCK], A.ILK_VALVE_OK), timeout), "Valve Permit 서지 않았다"
 
 
 async def o3_line_live(sim, timeout=10.0):
@@ -210,5 +210,5 @@ async def o3_line_live(sim, timeout=10.0):
         sim.write(A.D_PRM_O3_MAX, [16000])
     # ★ v0.8.5: 두 단계 — 허가 전의 발생기 요청은 래더 P50 이 지운다. 허가가 선 뒤에 발생기 요청을 넣는다
     sim.man_aux |= (1 << A.AUX_BYPASS_PUMP) | (1 << A.AUX_IVB)
-    assert await wait_until(lambda: A.bit(sim.reg[A.D_INTERLOCK], A.ILK_O3_OK), timeout), "O3 허가가 서지 않았다"
+    assert await wait_until(lambda: A.bit(sim.reg[A.D_INTERLOCK], A.ILK_O3_OK), timeout), "O3 Permit 서지 않았다"
     sim.man_aux |= 1 << A.AUX_O3_GEN

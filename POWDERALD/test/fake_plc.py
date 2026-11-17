@@ -599,9 +599,9 @@ async def amain(args) -> int:
             return 2
         args.port = target[1]
     elif target is None or target[1] != args.port:
-        warn = ("프로그램은 이 가짜 PLC(포트 %d)에 붙지 않습니다 — %s" % (
+        warn = ("프로그램은 이 가짜 PLC(포트 %d)에 붙지 않음 — %s" % (
             args.port, _pkg.why_not_fake(cfg, cfg_what, cfg_used) if target is None
-            else f"config.json 의 plc.port 는 {target[1]} 입니다"))
+            else f"config.json 의 plc.port 는 {target[1]}"))
         print(f"[warn] {warn}", flush=True)
     plant = load_plant(args.plant)
     sim = PlantSim(cfg, plant, args.speed, args.seed)
@@ -619,7 +619,7 @@ async def amain(args) -> int:
     try:
         ctl_srv = await asyncio.start_server(ctl.client, "127.0.0.1", ctl_port)
     except OSError as e:
-        print(f"[error] 제어 포트 {ctl_port} 를 열지 못했습니다 — {e}", flush=True)
+        print(f"[error] 제어 포트 {ctl_port} 를 열지 못함 — {e}", flush=True)
         await srv.stop()
         return 2
     tasks = []

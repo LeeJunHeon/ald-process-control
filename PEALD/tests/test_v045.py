@@ -219,9 +219,9 @@ def test_valve_min_default_comes_from_plc_default_table(cfg):
     assert param_words(cfg, Converters(cfg))[A.D_PRM_VALVE_MIN_MS][1] == 200
     rec = short_recipe("최소열림")                  # 첫 스텝 100 ms 에 밸브가 새로 열린다
     warns = R.validate(cfg, rec)["warnings"]
-    assert any("200 ms 로 늘립니다" in w["msg"] for w in warns), warns
+    assert any("200 ms 로 늘림" in w["msg"] for w in warns), warns
     cfg["params"]["valve_min_ms"] = 0              # 0 은 '최소 열림 없음' — 기본값으로 바꾸지 않는다
-    assert not any("늘립니다" in w["msg"] for w in R.validate(cfg, rec)["warnings"])
+    assert not any("늘림" in w["msg"] for w in R.validate(cfg, rec)["warnings"])
 
 
 # ===================== 6. 끝 판정 · 마지막 위치 · 스냅샷 =====================
@@ -370,14 +370,14 @@ def o3_recipe(name, o3):
     return r
 
 
-@pytest.mark.skipif(not DEV.HAS_O3, reason="O3 라인이 없는 장비")
+@pytest.mark.skipif(not DEV.HAS_O3, reason="O3 Line 없는 장비")
 async def test_o3_recipe_needs_generator_on(wired):
     lk, sim, cfg = wired
     cfg["process"]["o3_off_delay_s"] = 60          # 끄기 뒤에도 바이패스 라인(O3 허가)은 남긴다
     await pumped(lk, sim)
     await C.handle_command({"cmd": "manual_o3", "action": "off"})
     assert await wait_until(lambda: not A.bit(lk.status[A.D_AUX_OUT], A.AUX_O3_GEN), 3)
-    assert A.bit(lk.status[A.D_INTERLOCK], A.ILK_O3_OK), "O3 허가는 남아 있어야 한다(래더는 이것만 본다)"
+    assert A.bit(lk.status[A.D_INTERLOCK], A.ILK_O3_OK), "O3 Permit 남아 있어야 한다(래더는 이것만 본다)"
     # O3 를 쓰는 레시피 — 발생기가 꺼져 있으면 시작 거절
     rec = o3_recipe("오존", 50)
     assert storage.save("오존", rec)
@@ -402,7 +402,7 @@ async def test_o3_recipe_needs_generator_on(wired):
     C._cancel_o3_timer()
 
 
-@pytest.mark.skipif(not DEV.HAS_O3, reason="O3 라인이 없는 장비")
+@pytest.mark.skipif(not DEV.HAS_O3, reason="O3 Line 없는 장비")
 async def test_o3_on_refused_when_plc_o3_limit_zero(wired, notices):
     lk, sim, cfg = wired
     lk.prm_autofix = False
@@ -411,7 +411,7 @@ async def test_o3_on_refused_when_plc_o3_limit_zero(wired, notices):
     before = sim.reg[A.D_MANUAL_AUX]
     await C.handle_command({"cmd": "manual_o3", "action": "on", "value": 50})
     assert sim.reg[A.D_MANUAL_AUX] == before
-    assert any("O3 한계" in m and "O3 허가가 나지 않습니다" in m for _l, m in notices), notices
+    assert any("O3 한계" in m and "O3 Permit 나지 않음" in m for _l, m in notices), notices
 
 
 # ===================== 8. 온도조절기 통신 없는 히터 채널 =====================
@@ -426,7 +426,7 @@ async def test_heater_power_refused_without_tc_comm(wired, notices):
     assert h2["comm_ok"] is False and "과온 감시" in h2["power_block"]
     await C.handle_command({"cmd": "manual_heater", "power": {str(a): True}})
     assert not (sim.heater_power >> (a - 1)) & 1
-    assert any("온도조절기 통신이 없어 PLC 과온 감시가 동작하지 않습니다" in m for _l, m in notices)
+    assert any("온도조절기 통신이 없어 PLC 과온 감시가 동작하지 않음" in m for _l, m in notices)
     # 다른 국번 채널은 켜진다
     await C.handle_command({"cmd": "manual_heater", "power": {str(b): True}})
     assert await wait_until(lambda: (sim.heater_power >> (b - 1)) & 1, 3)
@@ -442,7 +442,7 @@ async def test_heater_power_refused_without_tc_comm(wired, notices):
     # 설정 온도는 거절하지 않되 '전달 안 됨' 경고
     notices.clear()
     await C.handle_command({"cmd": "manual_heater", "sv": {str(a): 50}})
-    assert any("온도조절기에 전달되지 않았습니다" in m for _l, m in notices), notices
+    assert any("온도조절기에 전달되지 않음" in m for _l, m in notices), notices
     sim.set_fault("tc1_comm", False)
 
 
@@ -522,7 +522,7 @@ async def _browser_page(pw, port):
         except Exception:  # noqa: BLE001
             continue
     if b is None:
-        pytest.skip("headless 브라우저를 띄울 수 없습니다")
+        pytest.skip("headless 브라우저를 띄울 수 없음")
     page = await b.new_page()
     page.on("dialog", lambda d: asyncio.ensure_future(d.dismiss()))
     await page.goto(f"http://127.0.0.1:{port}/")
@@ -578,7 +578,7 @@ async def test_editor_groups_in_browser(served):
             await page.fill("[data-rcg='repeat']", "3")
             await _shows(page, "rcSum", "Group 1 /")          # 서버 검증 왕복이 끝났다
             errs = await page.inner_text("[data-bind='rcCheck']")
-            assert "범위를 벗어납니다" not in errs, errs
+            assert "범위를 벗어남" not in errs, errs
             await page.click("[data-rcbtn='save']")
             assert await wait_until(lambda: _saved_groups("화면그룹")
                                     == [{"from_block": 1, "to_block": 2, "repeat": 3}], 10), \

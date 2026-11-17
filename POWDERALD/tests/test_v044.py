@@ -186,7 +186,7 @@ def test_ws_handler_exception_keeps_connection(monkeypatch):
                 m = ws.receive_json()
                 if m.get("type") == "notice":
                     break
-            assert "처리하지 못했습니다" in m["msg"]
+            assert "처리하지 못함" in m["msg"]
             ws.send_json({"cmd": "plc_recipe_read"})         # 연결이 살아 있다
             ws.receive_json()
 
@@ -328,7 +328,7 @@ async def test_start_refused_when_plc_table_changed_before_command(wired):
     await asyncio.sleep(1.3)                                        # PLC 가 표를 다시 검사
     sim.write(A.D_PRM_BASE_PRESS, [16000])                          # 이제 베이스 압력 도달
     ok, msg = await asyncio.wait_for(task, 20)
-    assert not ok and "다릅니다" in msg
+    assert not ok and "다름" in msg
     assert sim.reg[A.D_STATE] != A.STATE_RUN
 
 
@@ -440,7 +440,7 @@ async def test_error_after_command_number_says_maybe_received(link, monkeypatch)
         return await orig(addr, count)
     monkeypatch.setattr(lk.client, "read_holding", rh)
     r, text = await lk.send_command(A.CMD_ALARM_ACK)
-    assert r is None and "받았을 수 있습니다" in text
+    assert r is None and "받았을 수 있음" in text
 
 
 # ===================== 4. 응답 하나 유실 · PRM =====================
@@ -492,7 +492,7 @@ async def test_one_lost_response_heartbeat_gap_and_no_prm_writes_in_process(sim)
         assert not (s.reg[A.D_ALARM0] >> A.ALM0_PC_LINK) & 1
         assert any("통신 끊김" in m for _l, m in events), "재연결이 일어나지 않았다"
         assert prm_writes == [], f"공정 중 재연결 때 PRM 을 썼다: {prm_writes}"
-        assert any("공정 중이라 PLC 파라미터를 쓰지 않았습니다" in m for _l, m in events)
+        assert any("공정 중이라 PLC 파라미터를 쓰지 않음" in m for _l, m in events)
         assert s.reg[A.D_PRM_VALVE_MIN_MS] == want_vmin + 50
 
         # 공정이 끝나 대기가 되면 스스로 맞춘다
@@ -501,7 +501,7 @@ async def test_one_lost_response_heartbeat_gap_and_no_prm_writes_in_process(sim)
             "대기 중 PRM 불일치를 맞추지 않았다"
         # 공정 중 미뤄 둔 쓰기는 그렇게 알린다('PLC 가 다시 시작됐을 수 있다'가 아니라)
         assert await wait_until(
-            lambda: any("공정 중 미뤄 둔 PLC 파라미터를 썼습니다" in m for _l, m in events), 2), events
+            lambda: any("공정 중 미뤄 둔 PLC 파라미터를 씀" in m for _l, m in events), 2), events
         assert not any("다시 시작됐거나" in m for _l, m in events)
     finally:
         await lk.stop()
@@ -566,7 +566,7 @@ def test_settings_save_rejects_bad_prm_and_overflow(cfg):
     from powderald import settings as S
     for edits, word in (({"params.pc_wdt_ms": 0}, "pc_wdt_ms"),
                         ({"params.mfc_stable_s": -1}, "mfc_stable_s"),
-                        ({"params.valve_min_ms": "1e400"}, "숫자가 아닙니다")):
+                        ({"params.valve_min_ms": "1e400"}, "숫자가 아님")):
         res = S.prepare(cfg, edits)
         assert not res["ok"] and any(word in e for e in res["errors"]), res["errors"]
     key = "params.rf_ref_max_w" if DEV.HAS_RF else "params.o3_max"
@@ -586,7 +586,7 @@ async def test_link_does_not_write_invalid_prm(sim):
         assert await wait_until(lambda: lk.connected, 5)
         await asyncio.sleep(0.5)
         assert s.reg[A.D_PRM_PC_WDT_MS] != 0
-        assert any("올바르지 않아 PLC 에 쓰지 않았습니다" in m for m in events)
+        assert any("올바르지 않아 PLC 에 쓰지 않음" in m for m in events)
     finally:
         await lk.stop()
 

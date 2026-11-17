@@ -173,7 +173,7 @@ def test_p50_clears_rf_request_when_rf_permit_lost(cfg):
         return f
 
     _pump_permit(fs)
-    assert _until(fs, rf_ok, 60, 0.05, each=hold(0.5)), "RF 허가가 나오지 않았다"
+    assert _until(fs, rf_ok, 60, 0.05, each=hold(0.5)), "RF Permit 나오지 않았다"
     assert _cmd12(fs, 0, rf, rf=1000) == A.RESULT_OK
     assert _until(fs, rf_out, 1, each=hold(0.5))
     # 압력이 범위를 벗어나 RF 허가가 꺼진다 → 요청 지움 · RF 꺼짐
@@ -197,7 +197,7 @@ def test_p50_clears_rf_request_when_rf_permit_lost(cfg):
         seen["on"] = seen["on"] or rf_out(x)
 
     assert _until(fs, lambda x: x.pressure <= 0.02, 300, 0.05, each=watch)
-    assert seen["in_range"], "펌프다운이 RF 허가 범위를 지나지 않았다(시험 전제)"
+    assert seen["in_range"], "펌프다운이 RF Permit 범위를 지나지 않았다(시험 전제)"
     assert not seen["on"], "지운 RF 요청이 펌프다운 중 저절로 켜졌다"
 
 
@@ -253,9 +253,9 @@ async def test_clear_reason_valve_permit_and_toast(cfg):
     fresh[A.D_INTERLOCK] = 1 << A.ILK_BASIC                 # 펌프 · IV-E 없음
     lk, events = _link_with(cfg, fresh, seen_valve=_pv("PV-2"))
     await lk._read_display()
-    msg = next(m for _l, m in events if "수동 요청을 지웠습니다" in m)
+    msg = next(m for _l, m in events if "수동 요청 해제" in m)
     assert "PV-2" in msg and "Valve Permit 없음 — 필요: Pump 운전 · IV-E 열림" in msg, msg
-    assert "저절로 다시 열리거나 켜지지 않습니다" in msg and "사유 확인 필요" not in msg
+    assert "필요하면 다시 조작" in msg and "사유 확인 필요" not in msg
     assert lk.pending_toasts == [("warn", msg)]
 
 
@@ -266,8 +266,8 @@ async def test_clear_reason_rf_permit(cfg):
     fresh[A.D_INPUT0] = 1 << A.IN0_IVE_OPEN                 # RF 준비 입력 없음
     lk, events = _link_with(cfg, fresh, seen_aux=1 << A.AUX_RF)
     await lk._read_display()
-    msg = next(m for _l, m in events if "수동 요청을 지웠습니다" in m)
-    assert "RF 허가 없음 — 필요: RF 준비 입력" in msg, msg
+    msg = next(m for _l, m in events if "수동 요청 해제" in m)
+    assert "RF Permit 없음 — 필요: RF 준비 입력" in msg, msg
 
 
 def test_rf_permit_missing_rules(cfg):
@@ -287,7 +287,7 @@ def test_rf_permit_missing_rules(cfg):
     bad[A.D_ALARM1] = 1 << A.ALM1_RF_REF
     bad[A.D_CVG_RAW] = raw(760.0)
     miss = P.rf_permit_missing(bad, prm, conv)
-    assert miss[:4] == ["Valve Permit", "RF 준비 입력", "RF 알람 입력 꺼짐", "반사 전력 알람 리셋"], miss
+    assert miss[:4] == ["Valve Permit", "RF 준비 입력", "RF 알람 입력 꺼짐", "반사 전력 Alarm Reset"], miss
     assert miss[4] == "PLC 의 RF 상한(PRM_RF_MAX) > 0", miss
     assert len(miss) == 6 and miss[5].startswith("압력 ") and "(지금 " in miss[5], miss
     good = list(s)
@@ -330,8 +330,8 @@ async def test_manual_rf_refused_without_rf_permit(wired, notices):
     state.manual_unlock_until = 9e9
     no = sim.reg[A.D_CMD_NO]
     await C.handle_command({"cmd": "manual_rf", "on": True, "watt": 50})
-    assert await wait_until(lambda: any("RF Permit 이 없어 보내지 않았습니다 — 필요:" in m for _l, m in notices), 2), notices
-    m = next(m for lv, m in notices if "RF Permit 이 없어 보내지 않았습니다" in m and lv == "warn")
+    assert await wait_until(lambda: any("RF Permit 없음 — 보내지 않음 (필요:" in m for _l, m in notices), 2), notices
+    m = next(m for lv, m in notices if "RF Permit 없음 — 보내지 않음" in m and lv == "warn")
     assert "Valve Permit" in m
     await asyncio.sleep(0.1)
     assert sim.reg[A.D_CMD_NO] == no, "명령을 보냈다"
@@ -343,7 +343,7 @@ def test_texts_no_auto_open_promise():
              ("views", "panels.js")]
     for f in files:
         src = _src(*f)
-        assert "허가가 생기면 바로 열립니다" not in src and "허가가 생기면 바로 열림" not in src, f
+        assert "허가가 생기면 바로 열림" not in src and "허가가 생기면 바로 열림" not in src, f
     assert "래더 P50" in _src("uimodel.js") and "래더 P50" in _src("views", "faceplate.js")
     assert "(mn.pending || []).indexOf(tag)" in _src("views", "manual.js")
 

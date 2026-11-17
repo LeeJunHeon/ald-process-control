@@ -66,20 +66,21 @@ def test_a3_legend_two_lines_then_more():
     assert ".legend-inline { max-height: 30px; line-height: 15px;" in css           # 두 줄(15 × 2)
     assert ".chartpanel .panel-head { height: auto; min-height: 30px;" in css
     js = _src("js", "views", "trend.js")
-    assert "fitLegend(box);" in js and "more.textContent = '+' + hid.length;" in js and "more.title = hid.join" in js
+    assert "fitLegend(box);" in js and "more.textContent = '+' + hid.length;" in js and "core.tip(more, hid.join" in js
 
 
 # ===================== A6. 남은 한글 라벨 =====================
 def test_a6_no_korean_labels_left():
     main = _src("js", "views", "main.js")
-    assert "'레시피를 고르세요'" not in main and "'Select a recipe'" in main
+    assert "'레시피 선택 필요'" not in main and "'Select a recipe'" in main
     setup = _src("js", "views", "setup.js")
     assert '<span class="dim">개수는 장비 고정</span>' not in setup and ">Fixed by Device<" in setup
     html = _src("index.html")
     notes = re.findall(r'<span class="note"[^>]*>([^<]*)</span>', html)
     assert notes and not [n for n in notes if HANGUL.search(n)], notes
     sch = _src("js", "views", "schematic.js")
-    assert "누르면 조작 창" not in sch and "' — click to operate'" in sch
+    # v0.8.6: 배관도 누르기 영역의 설명은 한국어 설명창(data-tip) — 브라우저 SVG title(영문 'click to operate')은 없앴다
+    assert "' — 누르면 조작 창'" in sch and "click to operate" not in sch and "el('title'" not in sch
 
 
 # ===================== B1 · B12. 'EXHAUST' 제목은 배기 배관 왼쪽, 닿지 않는다 =====================

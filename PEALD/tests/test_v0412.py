@@ -166,7 +166,7 @@ def _schem(body: str):
       svg.querySelector = () => null; svg.querySelectorAll = () => [];
       global.window = global;
       global.document = { createElementNS: (ns, t) => El(t), getElementById: () => svg };
-      global.core = { register() {}, bind() { return null; }, state: {}, bit() { return false; }, esc: s => String(s) };
+      global.core = { tip() {}, tipAttr: s => (s ? ' data-tip="' + s + '"' : ''), tipKo: () => '', register() {}, bind() { return null; }, state: {}, bit() { return false; }, esc: s => String(s) };
       global.fmt = { DASH: '—', flow: String, temp: String, torr: String, pct: String, watt: String, num: String };
       global.T = require(%s);                                  // v0.5.0: 용어 사전(terms.js)
       // v0.8.0: 그림은 모델(pid_model.js) · 검사기(pidcheck.js)로 — 먼저 올린다
@@ -183,7 +183,7 @@ def _schem(body: str):
 def test_a3_schematic_font_floor_and_full_names():
     out = _schem(r'''
       const texts = all.filter(e => e.tag === 'text');
-      const titles = all.filter(e => e.tag === 'title').map(e => e.textContent);
+      const titles = all.filter(e => e.a && e.a['data-tip']).map(e => e.a['data-tip']);   // v0.8.6: SVG title → 설명창 data-tip
       const shown = texts.map(e => e.textContent);
       console.log(JSON.stringify({ min: Math.min(...texts.map(e => Number(e.a['font-size']))), titles, shown,
                                    vb: svg.a.viewBox }));
@@ -416,7 +416,7 @@ async def test_b2_adopt_without_table_when_read_keeps_failing(cfg, monkeypatch):
         assert await r.adopt_running(log) is True
         assert r.active_run and r.run is not None and r.active_table is None
         assert r._b13_pre is True
-        assert any("읽지 못했습니다" in m for m in logs)
+        assert any("읽지 못함" in m for m in logs)
     finally:
         state.link = None
 

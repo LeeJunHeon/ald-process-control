@@ -24,7 +24,7 @@ def _src(*parts):
 #   문제 항목은 색으로 말한다(모든 항목이 늘 보이므로 앞으로 모을 필요가 없다). 같은 의도(문제 항목이 늘 보임)를 램프판 렌더로 본다
 _ANN = r'''
   global.window = global; global.T = require(%s); global.UI = require(%s);
-  global.core = { esc: s => String(s), bind: () => null, html: () => {}, setTab() {} };
+  global.core = { tip() {}, tipAttr: s => (s ? ' data-tip="' + s + '"' : ''), tipKo: () => '', esc: s => String(s), bind: () => null, html: () => {}, setTab() {} };
   global.document = { addEventListener() {} };
   require(%s);
   const S = %s;
@@ -87,14 +87,14 @@ def test_4_heater_note_english():
     main = _src("js", "views", "main.js")
     m = re.search(r"core\.setText\('tcNote', ([^;]*);", main)
     assert m and not HANGUL.search(m.group(1)), m and m.group(1)
-    assert "tn.title = miss.length ? 'PLC 한계에 0 을 써서 막습니다' : '';" in main
+    assert "core.tip(tn, miss.length ? 'PLC 한계에 0 을 써서 막음' : '');" in main
 
 
 # ===================== 5. H2O 상자 안은 'H2O' 한 줄(PEALD) =====================
 def test_5_h2o_box_single_line():
     out = _schem(r'''
       const shown = all.filter(e => e.tag === 'text').map(e => e.textContent);
-      const titles = all.filter(e => e.tag === 'title').map(e => e.textContent);
+      const titles = all.filter(e => e.a && e.a['data-tip']).map(e => e.a['data-tip']);   // v0.8.6: SVG title → 설명창 data-tip
       console.log(JSON.stringify({ shown, titles }));
     ''')
     assert "Canister R" not in out["shown"]

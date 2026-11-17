@@ -345,7 +345,7 @@ def test_p7_toast_when_back_in_process_and_no_auto_reset(clean_state):
     link.connected = True
     link.status = _s(4, st=A.STATE_RUN, a0=1 << A.ALM0_PC_LINK)
     r.tick(lambda *a: None)
-    assert r.pending_toasts and r.pending_toasts[0][1].startswith("PC 연결이 돌아왔습니다 — 끊긴 4 s 동안 공정은 계속")
+    assert r.pending_toasts and r.pending_toasts[0][1].startswith("PC 연결이 돌아옴 — 끊긴 4 s 동안 공정은 계속")
     assert r.active_run and r.last_result == ""
     # PC 가 스스로 알람 리셋을 보내지 않는다
     for f in ("process.py", "plclink.py", "loops.py", "server.py", "state.py"):
@@ -358,7 +358,7 @@ def test_p7_pc_notices_by_state(clean_state):
     n = state.pc_notices(True)
     assert ["warn", P_TRIP_RUN, "plc"] in n                  # v0.7.1(U2): 'plc' — PLC 값으로 만든 알림 표시
     link.status = _s(6, st=A.STATE_SAFE_STOP, a0=1 << A.ALM0_PC_LINK)
-    assert ["err", "PC 끊김 트립이 남아 PLC 가 안전 정지 상태입니다 — [Alarm Reset] 으로 풀립니다.", "plc"] in \
+    assert ["err", "PC 끊김 트립이 남아 PLC 가 안전 정지 상태 — [Alarm Reset] 으로 풀림.", "plc"] in \
         state.pc_notices(True)
     link.status = _s(1)
     assert not [x for x in state.pc_notices(True) if "PC 끊김" in x[1] or "PC 연결" in x[1]]
@@ -367,8 +367,8 @@ def test_p7_pc_notices_by_state(clean_state):
     assert "(t.pc_notices || [])" in _src("frontend", "js", "views", "alarm.js")
 
 
-P_TRIP_RUN = ("PC 연결이 끊겼던 기록(PC Link Lost)이 남아 있습니다 — 공정은 계속됩니다. 그대로 두면 공정이 끝날 때 PLC 가 "
-              "안전 정지합니다(밸브 · 수동 요청 끔, 펌프 · 히터 유지). [Alarm Reset] 으로 풀립니다.")
+P_TRIP_RUN = ("PC 연결이 끊겼던 기록(PC Link Lost)이 남아 있음 — 공정은 계속됨. 그대로 두면 공정이 끝날 때 PLC 가 "
+              "안전 정지함(밸브 · 수동 요청 끔, 펌프 · 히터 유지). [Alarm Reset] 으로 풀림.")
 
 
 def _closed_log(cfg, rec, tbl, result=None):
@@ -533,7 +533,7 @@ def test_a1_alarm_cause_check_everywhere(clean_state):
     assert defs["A0-06"]["cause"].startswith("PC 하트비트가 PC Heartbeat Timeout 넘게 멈춤")
     assert defs["A0-00"]["check"].startswith("버튼을 돌려 풀고 원인을 없앤 뒤 Alarm Reset")
     alarm = _src("frontend", "js", "views", "alarm.js")
-    assert 'tabindex="0" role="button" aria-expanded="' in alarm and "almhelp" in alarm and "title=\"' + core.esc(tip)" in alarm
+    assert 'tabindex="0" role="button" aria-expanded="' in alarm and "almhelp" in alarm and "core.tipKo(df.ko || a.name" in alarm
     core = _src("frontend", "js", "core.js")
     assert "'<div class=\"am-check\">확인: '" in core
     # v0.7.1(U1): 첫 문장으로 자르지 않는다(' — ' 뒤의 안전 문구가 빠졌다) — 전부 보인다
@@ -688,7 +688,7 @@ def test_a3_refuse_reasons(clean_state):
     st2 = list(st)
     st2[A.D_STATE] = A.STATE_RUN
     state.link.status = st2
-    assert "공정 중입니다" in lk.refuse_reasons(state)
+    assert "공정 중" in lk.refuse_reasons(state)
     m1 = next((m for m in cfg.get("mfc") or [] if m.get("full_scale_sccm")), None)
     if m1:
         st3 = list(st)
@@ -699,11 +699,11 @@ def test_a3_refuse_reasons(clean_state):
     if DEV.HAS_O3:
         st4[A.D_AUX_OUT] = 1 << A.AUX_O3_GEN
         state.link.status = st4
-        assert any("O3 라인이 켜져 있습니다" in w for w in lk.refuse_reasons(state))
+        assert any("O3 Line 켜져 있음" in w for w in lk.refuse_reasons(state))
     else:
         st4[A.D_AUX_OUT] = 1 << A.AUX_RF
         state.link.status = st4
-        assert "RF 출력이 켜져 있습니다" in lk.refuse_reasons(state)
+        assert "RF 출력이 켜져 있음" in lk.refuse_reasons(state)
     st5 = list(st)
     st5[A.D_INPUT0] = 0
     state.link.status = st5
@@ -729,9 +729,9 @@ async def test_a3_blocks_start_manual_and_operator_cancels(clean_state, monkeypa
     monkeypatch.setattr("peald.leakcheck.leak", fake)
     state.runner = ProcessRunner(state)
     await C._cmd_process_start({}, None)
-    assert any("누설률 점검 중에는 공정을 시작할 수 없습니다" in n for n in notes)
+    assert any("누설률 점검 중에는 공정을 시작할 수 없음" in n for n in notes)
     state.link = None
-    assert C._manual_allowed() == (False, "누설률 점검 중에는 수동 밸브를 조작할 수 없습니다")
+    assert C._manual_allowed() == (False, "누설률 점검 중에는 수동 밸브를 조작할 수 없음")
     await C.handle_command({"cmd": "vent"})
     assert fake.cancel_args and fake.cancel_args[0].startswith("운전자") and fake.cancel_args[1] is False
     assert leak is not None and CN is not None
@@ -977,6 +977,6 @@ def test_b1_prm_table_match_column_visible():
 
 def test_p8_texts():
     cf = _src(DEV.KEY, "config.py")
-    assert "PLC 가 PC 끊김 트립을 걸 수 있습니다" in cf and "PC 끊김으로 공정을 세울 수 있습니다" not in cf
+    assert "PLC 가 PC 끊김 트립을 걸 수 있음" in cf and "PC 끊김으로 공정을 세울 수 있음" not in cf
     pl = _src(DEV.KEY, "plclink.py")
     assert "PC 가 스스로 리셋을 보내지 않는다" in pl and "PC 끊김으로 보고 안전 정지한다" not in pl

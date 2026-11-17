@@ -593,9 +593,9 @@ async def test_rf_output_needs_rf_permit(link):
     r, _ = await lk.send_command(A.CMD_MANUAL_APPLY, {A.D_MANUAL_AUX: 1 << A.AUX_RF, A.D_RF_SV: 1000})
     assert r == A.RESULT_OK
     await asyncio.sleep(0.2)
-    assert not s.man_aux & (1 << A.AUX_RF), "RF 허가 없는 RF 요청이 남았다"
+    assert not s.man_aux & (1 << A.AUX_RF), "RF Permit 없는 RF 요청이 남았다"
     assert not A.bit(s.reg[A.D_INTERLOCK], A.ILK_RF_OK)
-    assert not A.bit(s.reg[A.D_AUX_OUT], A.AUX_RF), "RF 허가 없이 RF 가 켜졌다"
+    assert not A.bit(s.reg[A.D_AUX_OUT], A.AUX_RF), "RF Permit 없이 RF 가 켜졌다"
 
 
 async def test_simulator_publishes_device_id(link):

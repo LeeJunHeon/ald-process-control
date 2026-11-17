@@ -304,7 +304,7 @@ async def test_base_wait_broken_when_pump_stops_elsewhere(wired):
     assert await wait_until(lambda: state.runner.phase == BASE_WAIT, 10)
     await lk.send_command(A.CMD_VENT)                   # 처리기를 거치지 않는다
     assert await wait_until(lambda: state.runner.phase == IDLE and not state.runner.busy, 5)
-    assert any(("꺼졌" in m or "대기압" in m or "대기가 아닙니다" in m) for m in ws.notices()), ws.notices()
+    assert any(("꺼짐" in m or "대기압" in m or "대기가 아님" in m) for m in ws.notices()), ws.notices()
 
 
 # ===================== B2 RF · O3 풀스케일 · RF 시작 조건 · RF 경고 =====================
@@ -372,7 +372,7 @@ def test_rf_never_on_in_rf_step_warns_once(cfg):
         r._watch_rf(s, log)
         s[A.D_SEQ_STEP] = 2
         r._watch_rf(s, log)
-    assert len(logs) == 1 and "RF 가 한 번도 켜지지 않았습니다" in logs[0] and "블록 1" in logs[0]
+    assert len(logs) == 1 and "RF 가 한 번도 켜지지 않음" in logs[0] and "블록 1" in logs[0]
     # RF 출력이 켜진 스텝은 경고 없음
     r2 = ProcessRunner(state)
     r2.run = {"recipe": rec}
@@ -776,7 +776,7 @@ async def test_rename_and_delete_reply_to_sender(wired):
     await C.handle_command({"cmd": "recipe_rename", "name": "가", "new_name": "나"}, ws)
     rep = [m for m in ws.sent if m.get("type") == "recipe_renamed"][-1]
     assert rep == {"type": "recipe_renamed", "ok": False, "old": "가", "new": "나",
-                   "why": "같은 이름이 이미 있습니다: 나"}
+                   "why": "같은 이름이 이미 있음: 나"}
     assert storage.load("나")["name"] == "나"                        # 덮어쓰지 않았다
     await C.handle_command({"cmd": "recipe_rename", "name": "가", "new_name": "다"}, ws)
     rep = [m for m in ws.sent if m.get("type") == "recipe_renamed"][-1]

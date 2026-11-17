@@ -568,7 +568,7 @@ async def test_b1_alarm_tab_unknown_when_plc_down(rig):
         await pg.wait_for_function("() => { const e = core.bind('alarmCount'); return !!e && e.textContent === 'Unknown'; }",
                                    timeout=15000)
         txt = await pg.evaluate("() => core.bind('alarmTbl').textContent")
-        assert "알 수 없습니다" in txt and "없습니다" in txt and "현재 알람이 없습니다" not in txt
+        assert "알 수 없음" in txt and "없음" in txt and "현재 알람이 없음" not in txt
     finally:
         await b.close()
         await pw.stop()
@@ -696,7 +696,7 @@ def test_c5_mfc_timeout_ends_by_safe_stop_never_state1_seq8(cfg):
     assert (A.STATE_IDLE, 8) not in seen, seen
     assert seen[-1] == (A.STATE_SAFE_STOP, 8) and alm0(s, A.ALM0_MFC), seen
     if DEV.HAS_O3:
-        assert alm1(s, A.ALM1_O3_GEN), "래더: 공정 중 안전 정지면 O3 허가 알람 b3 도 선다"
+        assert alm1(s, A.ALM1_O3_GEN), "래더: 공정 중 안전 정지면 O3 Permit 알람 b3 도 선다"
 
 
 def _three_blocks(cfg, groups):
@@ -1010,7 +1010,7 @@ def test_e5_abort_not_reaching_plc_and_restart_with_follow(cfg, monkeypatch):
         r.abort_result(False, unknown=True)
         time.sleep(0.1)
         r.tick(lambda lv, m: logs.append(m))              # 공정이 계속 돈다
-        assert not r._abort_unknown and logs[-1] == "중단 명령이 PLC 에 닿지 않았습니다 — 공정 계속"
+        assert not r._abort_unknown and logs[-1] == "중단 명령이 PLC 에 닿지 않음 — 공정 계속"
         state.alarms.update(1 << A.ALM0_EMO, 0)
         state.link.status = _s(0, st=A.STATE_SAFE_STOP, blk=0, cyc=0)
         r.tick(lambda lv, m: logs.append(m))

@@ -75,7 +75,7 @@ async def valve_permit(lk, sim):
     await lk.send_command(A.CMD_PUMP_START)
     assert await wait_until(lambda: A.bit(sim.reg[A.D_INTERLOCK], A.ILK_VALVE_OK)
                             and A.bit(lk.status[A.D_INTERLOCK], A.ILK_VALVE_OK), 20), \
-        "공정 밸브 허가가 나오지 않았다"
+        "Valve Permit 나오지 않았다"
 
 
 def heater_channels(cfg, n=2):
@@ -117,7 +117,7 @@ async def pumped(lk, sim):
             sim.write(A.D_PRM_O3_MAX, [16000])
         await C.handle_command({"cmd": "manual_o3", "action": "on", "value": 50})
         assert await wait_until(lambda: A.bit(lk.status[A.D_INTERLOCK], A.ILK_O3_OK), 10), \
-            "O3 허가가 나오지 않았다"
+            "O3 Permit 나오지 않았다"
 
 
 # ===================== 올리기 =====================
@@ -370,7 +370,7 @@ async def test_valve_not_revived_after_emo(wired):
          f"다른 비트가 있으면 이전 밸브가 되살아남")
 
 
-@pytest.mark.skipif(not DEV.HAS_O3, reason="O3 라인이 있는 장비")
+@pytest.mark.skipif(not DEV.HAS_O3, reason="O3 Line 있는 장비")
 async def test_o3_line_not_revived_after_safe_stop(wired):
     """안전 정지로 꺼진 O3 라인이 밸브 하나 누른다고 다시 켜지지 않는다."""
     lk, sim, _cfg = wired
@@ -392,7 +392,7 @@ async def test_o3_line_not_revived_after_safe_stop(wired):
     await C.handle_command({"cmd": "manual_valve", "tag": DEV.RECIPE_VALVES[0], "on": True})
     assert sim.reg[A.D_CMD_NO] != no, "밸브 명령 12 가 나가지 않았다"
     await asyncio.sleep(0.2)
-    assert sim.man_aux == 0, "O3 라인이 되살아났다"
+    assert sim.man_aux == 0, "O3 Line 되살아났다"
     assert not (sim.reg[A.D_AUX_OUT] & DEV.AUX_CMD_MASK)
 
 
@@ -461,7 +461,7 @@ async def test_valve_at_atmosphere_reports_not_applied(wired, notices):
     tag = DEV.RECIPE_VALVES[0]
     no = sim.reg[A.D_CMD_NO]
     await C.handle_command({"cmd": "manual_valve", "tag": tag, "on": True})
-    msgs = [m for lv, m in notices if lv == "warn" and "보내지 않았습니다" in m]
+    msgs = [m for lv, m in notices if lv == "warn" and "보내지 않음" in m]
     assert msgs, notices
     assert tag in msgs[0] and "대기압" in msgs[0]
     assert sim.reg[A.D_CMD_NO] == no
@@ -484,7 +484,7 @@ async def test_valve_cleared_by_plc_reports_not_applied(wired, notices, monkeypa
                 "valve_out": 0, "aux_out": 0}
     monkeypatch.setattr(lk, "manual_apply", fake_apply)
     await C.handle_command({"cmd": "manual_valve", "tag": tag, "on": True})
-    msgs = [m for _l, m in notices if "반영되지 않았습니다" in m]
+    msgs = [m for _l, m in notices if "반영되지 않음" in m]
     assert msgs and tag in msgs[0], notices
 
 
@@ -606,7 +606,7 @@ async def test_rf_over_limit_blocked(wired):
     assert not (sim.reg[A.D_MANUAL_AUX] & (1 << A.AUX_RF))
 
 
-@pytest.mark.skipif(not DEV.HAS_O3, reason="O3 라인이 없는 장비")
+@pytest.mark.skipif(not DEV.HAS_O3, reason="O3 Line 없는 장비")
 async def test_o3_off_turns_generator_first(wired):
     """끄기는 발생기 먼저, 바이패스 라인은 지연 뒤에 — 서버 타이머가 마무리한다
     (화면을 닫거나 새로 고쳐도 진행)."""
@@ -618,13 +618,13 @@ async def test_o3_off_turns_generator_first(wired):
     assert await wait_until(lambda: sim.man_aux & (1 << A.AUX_O3_GEN), 10)
     await C.handle_command({"cmd": "manual_o3", "action": "off"})
     assert not (sim.man_aux & (1 << A.AUX_O3_GEN)), "발생기가 꺼지지 않았다"
-    assert sim.man_aux & (1 << A.AUX_BYPASS_PUMP), "바이패스 펌프를 함께 꺼 버렸다"
+    assert sim.man_aux & (1 << A.AUX_BYPASS_PUMP), "Bypass Pump 함께 꺼 버렸다"
     assert state.o3_off_at > 0 and state.manual_state()["o3_off_left_s"] >= 0
     assert await wait_until(lambda: sim.man_aux == 0, 3), "지연 뒤 바이패스 라인이 닫히지 않았다"
     assert state.o3_off_at == 0.0
 
 
-@pytest.mark.skipif(not DEV.HAS_O3, reason="O3 라인이 있는 장비")
+@pytest.mark.skipif(not DEV.HAS_O3, reason="O3 Line 있는 장비")
 async def test_o3_finish_cancelled_when_plc_cleared_line(wired, notices):
     """지연 사이 PLC 가 라인을 지웠으면(안전 정지 등) 닫기를 취소하고 로그만 남긴다."""
     lk, sim, cfg = wired
@@ -636,7 +636,7 @@ async def test_o3_finish_cancelled_when_plc_cleared_line(wired, notices):
     assert await wait_until(lambda: any("닫기 취소" in m for _l, m in notices), 3), notices
 
 
-@pytest.mark.skipif(DEV.HAS_O3, reason="O3 라인이 있는 장비")
+@pytest.mark.skipif(DEV.HAS_O3, reason="O3 Line 있는 장비")
 async def test_o3_command_rejected_without_o3_line(wired):
     lk, sim, _cfg = wired
     before = sim.reg[A.D_MANUAL_AUX]
@@ -1035,6 +1035,6 @@ def test_start_checks_no_address_text(monkeypatch):
     from peald.process import NO_ADDR_TEXT
     runner = ProcessRunner(state)
     monkeypatch.setattr(state, "link", types.SimpleNamespace(
-        connected=False, config_error="plc.host 가 비어 있습니다", addr_text="주소 없음", plc_hb_ok=False))
+        connected=False, config_error="plc.host 가 비어 있음", addr_text="주소 없음", plc_hb_ok=False))
     checks = runner.start_checks()
     assert checks[0]["detail"] == NO_ADDR_TEXT

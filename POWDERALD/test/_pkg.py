@@ -15,7 +15,7 @@ if ROOT not in sys.path:
 
 PKG = next((n for n in ("peald", "powderald") if os.path.isdir(os.path.join(ROOT, n))), None)
 if PKG is None:
-    raise SystemExit("프로그램 패키지(peald / powderald)를 찾지 못했습니다 — test/ 는 프로그램 폴더 안에 있어야 합니다")
+    raise SystemExit("프로그램 패키지(powderald / powderald)를 찾지 못함 — test/ 는 프로그램 폴더 안에 있어야 함")
 
 
 def mod(name: str):
@@ -70,12 +70,12 @@ def check_config(path: str):
     """★ v0.6.2(D8): 직접 준 --config 를 못 읽으면(경로 오타 · 읽기 오류) 예시 설정으로 넘어가지 않고 이유를 찍고 종료 코드 2."""
     p = os.path.abspath(path)
     if not os.path.isfile(p):
-        print(f"[error] --config 파일이 없습니다: {p}", flush=True)
+        print(f"[error] --config 파일이 없음: {p}", flush=True)
         raise SystemExit(2)
     data, problems = mod("config")._read(p)
     if data is None:
-        why = "; ".join(m for _lv, m in problems) or "읽지 못했습니다"
-        print(f"[error] --config 를 읽지 못했습니다: {why}", flush=True)
+        why = "; ".join(m for _lv, m in problems) or "읽지 못함"
+        print(f"[error] --config 를 읽지 못함: {why}", flush=True)
         raise SystemExit(2)
 
 
@@ -87,7 +87,7 @@ def clamp_speed(value) -> float:
     import math
     v = float(value)
     if not math.isfinite(v):
-        raise ValueError(f"배속은 유한한 수여야 합니다: {value!r}")
+        raise ValueError(f"배속은 유한한 수여야 함: {value!r}")
     return min(SPEED_MAX, max(SPEED_MIN, v))
 
 
@@ -117,7 +117,7 @@ def load_config(path: str = ""):
 
 LOCAL_HOSTS = ("127.0.0.1", "localhost")
 FAKE_HINT = ("이 폴더의 config/config.example.json 을 config.json 으로 복사해 plc 의 host 127.0.0.1 · port · simulate false 만 "
-             "바꾸세요(두 프로그램 폴더 모두 — 포트는 PEALD 15301 · Powder 15401)")
+             "바꾸기 필요(두 프로그램 폴더 모두 — 포트는 POWDERALD 15301 · Powder 15401)")
 
 
 def fake_target(cfg: dict, what: str):
@@ -139,12 +139,12 @@ def why_not_fake(cfg: dict, what: str, used: str) -> str:
     """fake_target 이 None 인 까닭 한 줄."""
     plc = cfg.get("plc") or {}
     if what != "설정 파일":
-        return f"이 폴더에 config.json 이 없습니다(예시 설정 {os.path.basename(used)} — 프로그램이 내장 시뮬레이터로 뜹니다)"
+        return f"이 폴더에 config.json 이 없음(예시 설정 {os.path.basename(used)} — 프로그램이 내장 시뮬레이터로 뜸)"
     if plc.get("simulate", True):
-        return "config.json 의 plc.simulate 가 true 입니다(프로그램이 내장 시뮬레이터로 뜹니다)"
+        return "config.json 의 plc.simulate 가 true(프로그램이 내장 시뮬레이터로 뜸)"
     if str(plc.get("host", "")).strip() not in LOCAL_HOSTS:
-        return f"config.json 의 plc.host 가 {plc.get('host')} 입니다(실제 PLC 자리 — 가짜 PLC 는 127.0.0.1)"
-    return f"config.json 의 plc.port 가 {plc.get('port')!r} 입니다"
+        return f"config.json 의 plc.host 가 {plc.get('host')}(실제 PLC 자리 — 가짜 PLC 는 127.0.0.1)"
+    return f"config.json 의 plc.port 가 {plc.get('port')!r}"
 
 
 def ask(prompt: str):

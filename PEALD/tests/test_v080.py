@@ -255,7 +255,7 @@ def test_start_slots_fixed_ten(struct):
     assert icons("lost")[0] == "no" and icons("lost")[1:] == ["unknown"] * 9
     assert out["lost"]["items"][1]["text"] == "연결되면 확인"
     assert icons("id")[:2] == ["ok", "no"] and icons("id")[2:] == ["unknown"] * 8
-    assert out["id"]["items"][2]["text"] == "Device ID 를 먼저 맞추세요"
+    assert out["id"]["items"][2]["text"] == "Device ID 먼저 맞추기 필요"
     assert icons("base")[6] == "wait" and out["base"]["summary"]["text"] == "Ready"          # base 는 막지 않는다
     # v0.8.1: 자리 안 짧은 글은 '현재 → 목표'(노란 시계 아이콘이 '시작 뒤 대기'), 긴 글은 title
     assert out["base"]["items"][6]["text"] == "759.60 → 5.0E-2"
@@ -304,7 +304,7 @@ def test_annunciator_render_one_cell_per_item(struct):
     out = _node("global.window = global; require(" + _j("fmt.js") + "); global.T = require(" + _j("terms.js") + ");\n"
                 "global.UI = require(" + _j("uimodel.js") + ");\n" + r'''
       const S = ''' + json.dumps({"structure": struct["structure"]}) + r''';
-      global.core = { esc: s => String(s), bind: () => null, html: () => {}, setTab() {} };
+      global.core = { tip() {}, tipAttr: s => (s ? ' data-tip="' + s + '"' : ''), tipKo: () => '', esc: s => String(s), bind: () => null, html: () => {}, setTab() {} };
       global.document = { addEventListener() {} };
       require(''' + _j("views", "panels.js") + r''');
       const lamps = [];
@@ -426,7 +426,7 @@ _SCHEM_HEAD = r'''
   svg.querySelector = () => null; svg.querySelectorAll = () => [];
   global.window = global;
   global.document = { createElementNS: (ns, t) => El(t), getElementById: () => svg };
-  global.core = { register() {}, bind() { return null; }, state: {}, bit() { return false; }, esc: s => String(s) };
+  global.core = { tip() {}, tipAttr: s => (s ? ' data-tip="' + s + '"' : ''), tipKo: () => '', register() {}, bind() { return null; }, state: {}, bit() { return false; }, esc: s => String(s) };
   global.fmt = { DASH: '—', flow: String, temp: String, torr: String, pct: String, watt: String, num: String };
   global.T = require(''' + _j("terms.js") + r''');
   global.UI = require(''' + _j("uimodel.js") + r''');
@@ -486,10 +486,10 @@ def test_faceplate_valve_permit_pending_and_busy():
       console.log(JSON.stringify({ b: m.map(B), why: m.map(x => [x.why, x.whyLvl]), busy: [B(busy), busy.why],
                                    rows: m[2].rows }));''')
     assert out["b"][0] == [["open", False], ["close", False]]                        # 허가 없음 → Open 막힘
-    assert out["why"][0][0] == "Valve Permit 이 없어 열 수 없습니다 — 필요: Pump 운전 · IV-E 열림"
+    assert out["why"][0][0] == "Valve Permit 이 없어 열 수 없음 — 필요: Pump 운전 · IV-E 열림"
     assert out["b"][1] == [["open", True], ["close", False]] and out["why"][1] == ["", ""]
     assert out["b"][2] == [["open", False], ["close", True]]                         # pending → Close 살아 있음 + 노랑
-    assert out["why"][2][1] == "warn" and out["why"][2][0].startswith("PLC 가 지우지 않은 요청이 남아 있습니다")
+    assert out["why"][2][1] == "warn" and out["why"][2][0].startswith("PLC 가 지우지 않은 요청이 남아 있음")
     assert out["b"][3] == [["open", False], ["close", True]]                         # 이미 요청 · 열림 → Open 막힘
     assert out["busy"] == [[["open", False], ["close", False]], "응답을 기다리는 중"]
     assert ["Valve Permit", "No — Pump 운전"] in out["rows"] and ["Request", "Open"] in out["rows"]
@@ -505,9 +505,9 @@ def test_faceplate_o3_rf_pump_vent_rules():
       console.log(JSON.stringify({ run: B(F.model('pump', 'PMP', S[0], false)), stop: B(F.model('pump', 'PMP', S[1], false)),
         runWhy: F.model('pump', 'PMP', S[0], false).why, vent: B(F.model('vent', 'VV', S[2], false)),
         ventWhy: F.model('vent', 'VV', S[2], false).why, vent0: B(F.model('vent', 'VV', S[1], false)) }));''')
-    assert out["run"] == [["pump_start", False], ["pump_stop", True]] and out["runWhy"] == "이미 펌핑 중입니다"
+    assert out["run"] == [["pump_start", False], ["pump_stop", True]] and out["runWhy"] == "이미 펌핑 중"
     assert out["stop"] == [["pump_start", True], ["pump_stop", False]]
-    assert out["vent"] == [["vent", False]] and out["ventWhy"] == "이미 벤트 중입니다" and out["vent0"] == [["vent", True]]
+    assert out["vent"] == [["vent", False]] and out["ventWhy"] == "이미 Vent 중" and out["vent0"] == [["vent", True]]
     if DEV.HAS_O3:
         gen = ax["O3GEN"]
         off = _fstate(live__extra={"o3_sv": 50.0, "o3_unit": "g/Nm3"})                 # O3 Permit 없음 · 라인 꺼짐 · 설정값 있음
@@ -518,7 +518,7 @@ def test_faceplate_o3_rf_pump_vent_rules():
           const on = m => m.buttons.filter(x => x.a === 'on')[0].on;
           console.log(JSON.stringify(S.map(s => { const m = F.model('o3', 'O3', s, false); return [on(m), m.why]; })));''')
         assert o[0] == [True, ""], o                                                # ★ O3 Permit 으로 막지 않는다
-        assert o[1][0] is False and o[1][1] == "O3 라인이 이미 켜져 있습니다"
+        assert o[1][0] is False and o[1][1] == "O3 Line 이미 켜져 있음"
         assert o[2] == [True, ""], o           # v0.8.1: PLC 설정값 0 이어도 ON 은 살아 있다(입력 칸 값으로 보낸다)
     else:
         bit = next(k["bit"] for k in DEV.INTERLOCKS if k["tag"] == "RF Permit")
@@ -548,8 +548,8 @@ def test_pump_start_confirm_when_request_left():
       core.state = mk({ valve_request: 0, valve_permit: false, pending: [], aux_pending: ['O3GEN', 'IV-B'] }); r.push(confirmFor('pump_start'));
       console.log(JSON.stringify(r));''')
     assert out[0] is None and out[1] is None                                 # 한순간(pending 없음)은 묻지 않는다
-    assert "PLC 가 지우지 않은 수동 요청이 남아 있습니다: <b>PV-1</b>" in out[2]["b"] and out[2]["ok"] == "b.pumpStart"
-    assert "래더 P50" in out[2]["b"] and "그대로 펌핑할까요?" in out[2]["b"]
+    assert "PLC 가 지우지 않은 수동 요청이 남아 있음: <b>PV-1</b>" in out[2]["b"] and out[2]["ok"] == "b.pumpStart"
+    assert "래더 P50" in out[2]["b"] and "그대로 Pumping Start?" in out[2]["b"]
     assert "<b>RF</b>" in out[3]["b"]
     assert out[4] is None                                                    # Powder O3 라인은 묻지 않는다
 
@@ -631,7 +631,7 @@ def test_ws_rid_done_and_notice_rid(monkeypatch):
             assert n and n[-1]["rid"] == 8 and "알 수 없는 명령" in n[-1]["msg"] and got[-1]["type"] == "done"
             ws.send_json({"cmd": "v080_boom", "rid": 9})                 # 예외가 나도 done
             got = _until_done(ws, 9)
-            assert any(m["type"] == "notice" and m.get("rid") == 9 and "처리하지 못했습니다" in m["msg"] for m in got)
+            assert any(m["type"] == "notice" and m.get("rid") == 9 and "처리하지 못함" in m["msg"] for m in got)
             # rid 가 없거나 이상하면 done 없음 — 뒤에 보낸 정상 rid 의 done 만 온다
             for bad in (None, True, -1, "3", 0, 2 ** 31):
                 ws.send_json({"cmd": "ping"} if bad is None else {"cmd": "ping", "rid": bad})
@@ -690,7 +690,7 @@ async def test_m_manual_valve_permit_same_request_and_readback(wired, notices):
     w0, m0 = _plc_words(sim), _maint(cfg)
     await C.handle_command({"cmd": "manual_valve", "tag": tag, "on": True})
     warn = [m for lv, m in notices if lv == "warn"]
-    assert any("Valve Permit 이 없어 보내지 않았습니다 — 필요: Pump 운전 · IV-E 열림" in m for m in warn), notices
+    assert any("Valve Permit 없음 — 보내지 않음 (필요: Pump 운전 · IV-E 열림)" in m for m in warn), notices
     await asyncio.sleep(0.2)
     assert _plc_words(sim) == w0 and _maint(cfg) == m0
     assert tag not in state.manual_state()["pending"]
@@ -703,7 +703,7 @@ async def test_m_manual_valve_permit_same_request_and_readback(wired, notices):
     no = sim.reg[A.D_CMD_NO]
     notices.clear()
     await C.handle_command({"cmd": "manual_valve", "tag": tag, "on": True})
-    assert any(lv == "info" and "이미 열기 요청 상태입니다 — 다시 보내지 않았습니다" in m for lv, m in notices), notices
+    assert any(lv == "info" and "이미 열기 요청 상태 — 다시 보내지 않음" in m for lv, m in notices), notices
     assert sim.reg[A.D_CMD_NO] == no and not [m for lv, m in notices if lv == "warn"]
     # ④ 닫기 → '닫힘 확인' ⑤ 닫기 다시 → info
     notices.clear()
@@ -808,7 +808,7 @@ async def test_m_same_value_noop_except_heater(wired, notices):
     notices.clear()
     await C.handle_command(dict(cmd))
     assert sim.reg[A.D_CMD_NO] == no
-    assert any(lv == "info" and "바뀌는 것이 없어 다시 보내지 않았습니다" in m for lv, m in notices), notices
+    assert any(lv == "info" and "바뀌는 것이 없어 다시 보내지 않음" in m for lv, m in notices), notices
     ch = heater_channels(cfg, 1)
     if not ch:
         pytest.skip("한계가 있는 히터 채널이 없다")
@@ -1041,7 +1041,7 @@ _BIG = """() => {
       if (e.scrollWidth > e.clientWidth + 1 || e.getBoundingClientRect().right > inner(e.closest('.vt')).r + 0.5) bad.push('tile clip ' + e.textContent); });
     document.querySelectorAll('.view.on .p-heater .tbl th, .view.on .p-heater .tbl td, .view.on .p-mfc .tbl th, .view.on .p-mfc .tbl td').forEach(c => {
       if (c.classList.contains('nm')) {
-        if (c.scrollWidth > c.clientWidth + 1 && !(c.title || c.closest('tr').title)) bad.push('name clip without title ' + c.textContent);
+        if (c.scrollWidth > c.clientWidth + 1 && !(c.getAttribute('data-tip') || c.closest('tr').getAttribute('data-tip'))) bad.push('name clip without title ' + c.textContent);
         return;
       }
       const box = inner(c), chip = c.querySelector('.chip');
@@ -1145,7 +1145,7 @@ async def test_browser_valve_tile_faceplate_and_one_command(served80):
         # ⑨ v0.8.1: Unlock → 2 s 안에 결과 줄이 잠금 해제 알림 글('기다리는 중' 이 남지 않음)
         await pg.click('#faceplate [data-fpa="unlock"]')
         await pg.wait_for_function("() => (document.querySelector('#faceplate [data-fpbind=\"res\"]') || {}).textContent === "
-                                   "'수동 조작 잠금 해제 — 5분 뒤 · 공정이 시작되면 다시 잠깁니다'", timeout=2000)
+                                   "'수동 조작 잠금 해제 — 5분 뒤 · 공정이 시작되면 다시 잠김'", timeout=2000)
         await pg.keyboard.press("Escape")
         await pg.evaluate("() => app.send('manual_unlock', {on: true})")
         await pg.evaluate("() => app.send('pump_start')")
@@ -1216,7 +1216,7 @@ async def test_browser_o3_line_on_from_start_slot(served80):
     """⑩ v0.8.1(Powder): 시작 조건 'O3 Line ON' 단추 → o3 조작 창 → 입력 100 → ON 살아 있음(PLC 설정값 0 이어도) → 확인 →
     O3 Permit 켜짐. 자리 이름 '.sct b' 는 좁은 · 넓은 배치 모두 잘리지 않는다."""
     if not DEV.HAS_O3:
-        pytest.skip("O3 라인이 없는 장비")
+        pytest.skip("O3 Line 없는 장비")
     clip = "() => [...document.querySelectorAll('.view.on .sct b')].filter(e => e.scrollWidth > e.clientWidth + 1).map(e => e.textContent)"
     pw, b, pg, errors = await _page80(served80, 960, 1000)
     try:

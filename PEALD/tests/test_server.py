@@ -170,7 +170,7 @@ def test_local_command_blocked_when_plc_down(monkeypatch):
             commands.handle_command({"cmd": "pump_start"}, ws))
     finally:
         manager.active.pop(ws, None)
-    assert any("연결되어 있지 않습니다" in n for n in ws.notices())
+    assert any("연결되어 있지 않음" in n for n in ws.notices())
 
 
 # ===================== 단일 실행 =====================
@@ -239,10 +239,10 @@ def test_config_validation_catches_problems(cfg):
     bad = copy.deepcopy(cfg)
     idx = next(i for i, h in enumerate(bad["heaters"]) if h.get("max_c") is not None)
     bad["heaters"][idx]["default_sv"] = 9999
-    assert any("과온 한계" in m and "높습니다" in m for _, m in C.validate(bad))
+    assert any("과온 한계" in m and "높음" in m for _, m in C.validate(bad))
 
     # 한계가 null 이면 경고를 낸다(PLC 소프트 과온 감시가 꺼지므로 PC 가 설정·전원을 막는다)
-    assert any("과온 한계가 정해지지 않았" in m
+    assert any("과온 한계가 정해지지 않" in m
                for _, m in C.validate(cfg)) or all(
         h.get("max_c") is not None for h in cfg["heaters"] if h["enabled"])
 

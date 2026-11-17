@@ -60,14 +60,14 @@ async def _start_until_command(cfg, monkeypatch, send_text):
 
 
 async def test_c1_no_reply_is_unknown_result(cfg, monkeypatch):
-    r, ok, why, logs = await _start_until_command(cfg, monkeypatch, "PLC 응답 없음 (명령이 처리됐는지 확인하세요)")
-    assert not ok and why.startswith("시작 결과 모름 — PLC 상태로 확인합니다")
+    r, ok, why, logs = await _start_until_command(cfg, monkeypatch, "PLC 응답 없음 (명령이 처리됐는지 확인 필요)")
+    assert not ok and why.startswith("시작 결과 모름 — PLC 상태로 확인함")
     assert ("warn", why) in logs and not any("거절" in m for _lv, m in logs)
 
 
 async def test_c1_not_sent_says_so(cfg, monkeypatch):
-    r, ok, why, logs = await _start_until_command(cfg, monkeypatch, "PLC 연결이 없습니다")
-    assert not ok and why == "공정 시작 명령을 보내지 못했습니다 — PLC 연결이 없습니다"
+    r, ok, why, logs = await _start_until_command(cfg, monkeypatch, "PLC 연결이 없음")
+    assert not ok and why == "공정 시작 명령을 보내지 못함 — PLC 연결이 없음"
     assert ("err", why) in logs and not any("결과 모름" in m for _lv, m in logs)
     assert not r.active_run and r.run is None                # 스냅샷은 되돌린다
 

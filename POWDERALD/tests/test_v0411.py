@@ -452,7 +452,7 @@ async def test_u4_buttons_and_reasons_when_stalled(rig):
         r = await pg.evaluate("""() => {
             const t = JSON.parse(JSON.stringify(core.state.live)); t.plc.hb_stalled = true; core.applyLive(t);
             return { reason: core.lockReason(), plc: core.plcReason(), mn: core.bind('mnOpen').disabled,
-                     mnTitle: core.bind('mnOpen').title,
+                     mnTitle: core.bind('mnOpen').getAttribute('data-tip') || '',
                      exp: document.querySelector('[data-hact="export"]').disabled,
                      dl: document.querySelector('[data-dlact="folder"]').disabled,
                      note: (core.state.live.plc.prm || []).every(x => x.match === null) };
@@ -461,7 +461,7 @@ async def test_u4_buttons_and_reasons_when_stalled(rig):
         assert r["mn"] is True and "멈춤" in r["mnTitle"] and r["exp"] is True and r["dl"] is True
         assert r["note"] is True
         txt = await pg.evaluate("() => { core.setTab('alarm'); return core.bind('pcNotices').textContent; }")
-        assert "PLC 하트비트 멈춤" in txt and "접속하지 못했습니다" not in txt
+        assert "PLC 하트비트 멈춤" in txt and "접속하지 못함" not in txt
     finally:
         await b.close()
         await pw.stop()
