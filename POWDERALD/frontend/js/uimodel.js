@@ -82,10 +82,10 @@
   }
 
   var DOWN = {
-    offline: ['Server Lost', '서버 연결이 끊겼습니다 — 다시 연결하는 중'],
-    noaddr: ['No Address', 'PLC 주소가 없어 연결하지 않았습니다 — Settings 에서 넣으세요'],
-    stalled: ['PLC Stalled', 'PLC 하트비트 멈춤 — PLC 가 STOP 이거나 멈췄습니다'],
-    lost: ['PLC Lost', 'PLC 연결이 끊겼습니다 — 다시 연결하는 중'],
+    offline: ['Server Lost', '서버 연결이 끊김 — 다시 연결하는 중'],
+    noaddr: ['No Address', 'PLC 주소가 없어 연결하지 않음 — Settings 에서 입력 필요'],
+    stalled: ['PLC Stalled', 'PLC 하트비트 멈춤 — PLC 가 STOP 이거나 멈춤'],
+    lost: ['PLC Lost', 'PLC 연결이 끊김 — 다시 연결하는 중'],
     hb: ['PLC Stalled', 'PLC 하트비트를 확인하는 중']
   };
 
@@ -146,7 +146,7 @@
     var pr = conn ? (t.pressure || {}) : {};
     var unconf = (s.unconfirmed || []).indexOf('CVG Pressure') >= 0;
     out.pr = { text: conn ? f.torr(pr.cvg) : DASH, unit: 'Torr · CVG', unconf: unconf, lvl: conn ? '' : 'unknown',
-               sub: '', subLvl: '', title: unconf ? 'CVG 환산이 확정되지 않았습니다(Settings — 환산 확인)' : '' };
+               sub: '', subLvl: '', title: unconf ? 'CVG 환산이 확정되지 않음(Settings — 환산 확인)' : '' };
     if (conn && run) {
       var ex = t.extra || {};
       out.pr.sub = 'In process' + (dev.has_pcv ? ' · PCV ' + f.pct(ex.pcv_pv) + ' %' : '') +
@@ -209,9 +209,9 @@
   /** 이미 그 상태인 명령(명령줄 · 조작 창 같은 규칙) — 막는 이유 또는 ''. live 는 연결된 값이어야 한다 */
   function alreadyWhy(cmd, structure, live) {
     var am = auxMap(structure, live || {}, true);
-    if (cmd === 'pump_start' && am.PMP && am['IV-E']) return '이미 펌핑 중입니다';
-    if (cmd === 'pump_stop' && !am.PMP && !am['IV-E']) return '이미 멈춰 있습니다';
-    if (cmd === 'vent' && am.VV) return '이미 벤트 중입니다';
+    if (cmd === 'pump_start' && am.PMP && am['IV-E']) return '이미 펌핑 중';
+    if (cmd === 'pump_stop' && !am.PMP && !am['IV-E']) return '이미 멈춰 있음';
+    if (cmd === 'vent' && am.VV) return '이미 Vent 중';
     return '';
   }
 
@@ -233,6 +233,10 @@
     return checkDetail(c);
   }
 
+  // v0.8.6: 시작 조건 자리의 상태 말(설명창 상태 줄 첫 줄)
+  var SLOT_STATE = { ok: '통과', no: '미통과 — 시작 막힘', wait: '시작 뒤 기다림(시작은 막지 않음)', na: '해당 없음',
+                     unknown: '모름 — 연결 · Device ID 확인 전' };
+
   /** 시작 조건 자리 — slots(장비 구조 START_SLOTS) 수 · 순서 그대로. progress: live.process,
    *  ctx: { conn, running }. 반환 { items: [{label, icon, text, title, o3btn}], summary: {text, lvl}, dim }.
    *  icon: ok · no · wait(베이스 압력 — 시작 뒤 대기로 채움) · na(그 항목이 없음) · unknown(연결 · 장비 ID 를 모름) */
@@ -245,30 +249,33 @@
     var idOnly = !noConn && checks.every(function (x) { return x.key === 'plc' || x.key === 'device_id'; });
     var items = (slots || []).map(function (sl, i) {
       var got = (sl.keys || []).map(function (k) { return byKey[k]; }).filter(Boolean);
-      var it = { label: sl.label, icon: 'unknown', text: '', title: '', o3btn: false };
+      // v0.8.6: ko · desc = 설명창 첫 줄 · 둘째 줄(device.py START_SLOTS), title = 설명창 상태 줄(통과 · 미통과 이유)
+      var it = { label: sl.label, ko: sl.ko || '', desc: sl.desc || '', icon: 'unknown', text: '', title: '', o3btn: false };
       if (noConn) {
         if (i === 0) {
           var pc = byKey.plc;
           it.icon = 'no';
           it.text = pc ? (pc.detail || '연결 안 됨') : '연결 안 됨';
-          it.title = it.text;
+          it.title = SLOT_STATE.no + ' — ' + it.text;
         } else {
           it.text = '연결되면 확인';
+          it.title = SLOT_STATE.unknown;
         }
         return it;
       }
       if (!got.length) {
-        if (idOnly) { it.text = 'Device ID 를 먼저 맞추세요'; return it; }
+        if (idOnly) { it.text = 'Device ID 먼저 맞추기 필요'; it.title = SLOT_STATE.unknown + ' — ' + it.text; return it; }
         it.icon = 'na';
         it.text = (!p.recipe && sl.norecipe) ? sl.norecipe : (sl.absent || DASH);
-        it.title = sl.label + ' — ' + it.text;
+        it.title = SLOT_STATE.na + ' — ' + it.text;
         return it;
       }
       var bad = got.filter(function (x) { return !x.ok; });
       var show = bad[0] || got[0];
       it.icon = !bad.length ? 'ok' : (bad.every(function (x) { return x.key === 'base'; }) ? 'wait' : 'no');
       it.text = slotText(show);
-      it.title = got.map(function (x) { var dd = checkDetail(x); return x.label + (dd ? ' — ' + dd : ''); }).join('\n');
+      it.title = SLOT_STATE[it.icon] + '\n' +
+        got.map(function (x) { var dd = checkDetail(x); return (x.ok ? '✓ ' : '✗ ') + x.label + (dd ? ' — ' + dd : ''); }).join('\n');
       it.o3btn = it.icon === 'no' && bad.some(function (x) { return x.action === 'o3_on'; });
       return it;
     });
@@ -296,13 +303,32 @@
     permit: 'PLC 가 계산한 허가 — 초록 = 해도 됨 · 노랑 = 아직 조건이 안 됨',
     state: '상태 입력 — 초록 = 켜짐 · 빈 원 = 꺼짐',
     rf: 'RF 발생기 허가 · 입력 — 초록 = 해도 됨 · 켜짐, 노랑 = 아직 조건이 안 됨, 빨강 = 알람',
-    o3: 'O3 라인 허가 · 입력(발생기 · 실내 O3 · 바이패스 펌프) — 초록 = 해도 됨 · 켜짐, 노랑 = 아직 조건이 안 됨, 빨강 = 알람'
+    o3: 'O3 Line 허가 · 입력(발생기 · 실내 O3 · Bypass Pump) — 초록 = 해도 됨 · 켜짐, 노랑 = 아직 조건이 안 됨, 빨강 = 알람'
   };
 
   function annDef(str, key) {
     var i = key.indexOf(':'), kind = key.slice(0, i), tag = key.slice(i + 1);
     var list = kind === 'in0' ? str.inputs0 : kind === 'in1' ? str.inputs1 : str.interlocks;
     return { kind: kind, def: find(list, function (x) { return x.tag === tag; }) };
+  }
+
+  // v0.8.6: 램프 상태 말(설명창 상태 줄) — 허가(인터락)가 꺼졌으면 빠진 조건(서버 계산 — manual.*_permit_missing)을 붙인다
+  var LAMP_STATE = { ok: '지금: 켜짐', warn: '지금: 꺼짐 — 조건 안 됨', alarm: '지금: 이상', off: '지금: 꺼짐', unknown: '지금: 모름 — 연결 끊김' };
+  var PERMIT_MISSING = { 'Valve Permit': 'valve_permit_missing', 'RF Permit': 'rf_permit_missing', 'O3 Permit': 'o3_permit_missing' };
+
+  function lampState(a, d, lvl, t) {
+    var s = LAMP_STATE[lvl] || '';
+    if (a.kind === 'ilk') {
+      if (lvl === 'warn') {
+        var mk = PERMIT_MISSING[d.tag], miss = mk ? ((t.manual || {})[mk] || []) : [];
+        s += miss.length ? '\n빠진 조건: ' + miss.join(' · ') : (d.why ? '\n조건: ' + d.why : '');
+      } else if (d.why) {
+        s += '\n조건: ' + d.why;
+      }
+    } else {
+      s += ' (입력 워드 ' + (a.kind === 'in0' ? 0 : 1) + ' b' + d.bit + ')';
+    }
+    return s;
   }
 
   /** 램프판 — 장비 구조의 줄 · 자리 그대로(상태와 상관없이 같은 수 · 순서 · 이름). */
@@ -315,9 +341,9 @@
           var a = annDef(str, key), d = a.def || {};
           var word = !conn ? null : a.kind === 'in0' ? t.inputs0 : a.kind === 'in1' ? t.inputs1 : t.interlock;
           var nm = d.lamp || d.short || d.tag || key;
-          var title = a.kind === 'ilk' ? nm + ' — ' + (d.why || '')
-            : nm + ' — ' + (d.desc || d.name || '') + ' (입력 워드 ' + (a.kind === 'in0' ? 0 : 1) + ' b' + d.bit + ')';
-          return { key: key, name: nm, lvl: lamp(word, a.def, a.kind === 'ilk' ? 'ilk' : 'in'), title: title };
+          var lvl = lamp(word, a.def, a.kind === 'ilk' ? 'ilk' : 'in');
+          // v0.8.6: 설명창 — ko(첫 줄) · desc(둘째 줄) · title(지금 상태 · 빠진 조건)
+          return { key: key, name: nm, lvl: lvl, ko: d.ko || nm, desc: d.desc || d.name || '', title: lampState(a, d, lvl, t) };
         })
       };
     });
@@ -333,13 +359,35 @@
   /* ===================== 밸브 띠 ===================== */
   var AUX_FP = { 'VV': 'vent:VV', 'IV-E': 'pump:PMP', 'IV-B': 'o3:O3' };
   var VALUE_FP = { PCV: 'pcv:PCV', RF: 'rf:RF', O3: 'o3:O3', BPMP: 'o3:O3' };
+  var VALUE_KO = { PCV: ['인라인 PCV', 'PCV 개도(Position) — 누르면 조작 창'], RF: ['RF 전력', 'RF 순방향 전력 — 누르면 조작 창'],
+                   O3: ['O3 농도', 'O3 농도(Actual) — 누르면 조작 창'], BPMP: ['바이패스 펌프', 'O3 바이패스 라인 펌프 — 누르면 조작 창'] };
   var STATE_TIP = {
     open: 'Open — 출력 켜짐',
     closed: 'Closed — 출력 꺼짐',
-    pending: 'Pending — 요청은 남아 있는데 출력이 1 s 넘게 꺼져 있음(허가 · 조건 대기). 수동 밸브라면 PLC 가 지우지 않은 요청(래더 P50 확인) — 허가가 생기면 열릴 수 있으니 필요 없으면 Close',
+    pending: 'Pending — 요청은 있는데 출력이 1 s 넘게 꺼짐(허가 · 조건 대기). 수동 밸브면 PLC 가 지우지 않은 요청(래더 P50 확인) — 허가가 생기면 열릴 수 있으니 필요 없으면 Close',
     unknown: 'Unknown — 연결이 끊겨 상태를 모름',
-    auto: 'PLC 가 자동으로 다루는 밸브(O3 발생기 켜짐 · PV-R 닫힘이면 열림)'
+    auto: 'PLC 가 자동으로 다루는 밸브(O3 Generator 켜짐 · PV-R 닫힘이면 열림)'
   };
+
+  /** v0.8.6: 조작 창 열쇠(fp — 'valve:PV-1' · 'vent:VV' · 'pump:PMP' · 'heater:1' · 'mfc:2' · 'pcv:PCV' · 'rf:RF' · 'o3:O3')의
+   *  설명창 [한국어 이름, 설명] — 장비 구조(device.py ko · desc · names_ko)에서. 없으면 ['', ''] */
+  function fpKo(structure, fp) {
+    var str = structure || {}, s = String(fp || ''), i = s.indexOf(':'), kind = s.slice(0, i), tag = s.slice(i + 1);
+    var nk = str.names_ko || {};
+    var pick = function (list, tg) { var x = find(list, function (y) { return y.tag === tg; }); return x ? [x.ko || '', x.desc || ''] : ['', '']; };
+    if (kind === 'valve') return pick(str.valves, tag);
+    if (kind === 'vent') return pick(str.aux, 'VV');
+    if (kind === 'pump') return pick(str.aux, 'PMP');
+    if (kind === 'heater' || kind === 'mfc') {
+      var list = kind === 'heater' ? str.heaters : str.mfc;
+      var it = find(list, function (y) { return String(kind === 'heater' ? y.ch : y.no) === tag; }) || {};
+      var ko = (nk[kind] || {})[it.name];
+      if (ko) return [ko[0], ko[1]];
+      return [kind === 'heater' ? '히터 CH' + tag : 'MFC' + tag, kind === 'heater' ? '히터 채널' : '질량 유량 제어기'];
+    }
+    return ({ pcv: ['인라인 PCV', '공정 압력을 맞추는 제어 밸브'], rf: ['RF 전원 · 매처', '플라즈마용 RF 전원'],
+              o3: ['O3 라인', 'O3 Generator · Bypass Pump · IV-B'] })[kind] || ['', ''];
+  }
 
   /** 밸브 띠 — 장비 구조(valve_strip)의 묶음 · 순서 그대로. opts: { recipeValves }.
    *  반환 { groups: [[{key, kind, tag, label, state, value, auto, fp, title}]], pending: [이름] } */
@@ -353,14 +401,16 @@
     var groups = (str.valve_strip || []).map(function (g) {
       return g.map(function (key) {
         var i = key.indexOf(':'), kind = key.slice(0, i), tag = key.slice(i + 1);
-        var it = { key: key, kind: kind, tag: tag, label: tag, state: 'unknown', value: '', auto: false, fp: '', title: '' };
+        var it = { key: key, kind: kind, tag: tag, label: tag, state: 'unknown', value: '', auto: false, fp: '', title: '', ko: '', desc: '' };
         if (kind === 'valve' || kind === 'aux') {
           var d = find(kind === 'valve' ? str.valves : str.aux, function (x) { return x.tag === tag; }) || {};
           var on = conn && (kind === 'valve' ? (t.valves != null && bit(t.valves, d.bit)) : !!am[tag]);
           it.auto = kind === 'valve' && (!!d.auto || (rv.length > 0 && rv.indexOf(tag) < 0));
           it.state = !conn ? 'unknown' : on ? 'open' : pend.indexOf(tag) >= 0 ? 'pending' : 'closed';
           it.fp = it.auto ? '' : kind === 'valve' ? 'valve:' + tag : (AUX_FP[tag] || '');
-          it.title = tag + (d.name ? ' — ' + d.name : '') + '\n' + STATE_TIP[it.state] + (it.auto ? '\n' + STATE_TIP.auto : '');
+          it.ko = d.ko || tag;
+          it.desc = d.desc || d.name || '';
+          it.title = '지금: ' + STATE_TIP[it.state] + (it.auto ? '\n' + STATE_TIP.auto : '');
           if (it.state === 'pending') pending.push(tag);
         } else {
           it.fp = VALUE_FP[tag] || '';
@@ -371,8 +421,10 @@
           else if (tag === 'BPMP') it.value = am.BPMP ? 'ON' : 'OFF';
           it.state = !conn ? 'unknown' : (tag === 'BPMP' ? (am.BPMP ? 'open' : 'closed')
             : tag === 'RF' ? (ex.rf_on ? 'open' : 'closed') : tag === 'O3' ? (ex.o3_on ? 'open' : 'closed') : '');
-          it.title = tag + ' — ' + ({ PCV: 'Inline PCV 개도(Position)', RF: 'RF 순방향 전력', O3: 'O3 농도(Actual)',
-                                      BPMP: '바이패스 펌프' })[tag];
+          var vk = VALUE_KO[tag] || [tag, ''];
+          it.ko = vk[0];
+          it.desc = vk[1];
+          it.title = '';
         }
         return it;
       });
@@ -440,7 +492,7 @@
     stateLevel: stateLevel, linkState: linkState, stripModel: stripModel, alreadyWhy: alreadyWhy,
     checkDetail: checkDetail, startSlots: startSlots,
     lamp: lamp, annunciator: annunciator, annRows: annRows, ANN_TIPS: ANN_TIPS,
-    valveStrip: valveStrip, events: events, toastMerge: toastMerge, toastText: toastText, busyStore: busyStore
+    valveStrip: valveStrip, fpKo: fpKo, events: events, toastMerge: toastMerge, toastText: toastText, busyStore: busyStore
   };
   if (typeof module !== 'undefined' && module.exports) module.exports = UI;
   else root.UI = UI;

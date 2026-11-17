@@ -44,7 +44,7 @@
     fetch('api/datalog/list').then(function (r) { return r.json(); }).then(function (js) {
       items = js.items || [];
       paintList();
-    }).catch(function () { core.toast('데이터 로그 목록을 읽지 못했습니다', 'warn'); });
+    }).catch(function () { core.toast('데이터 로그 목록을 읽지 못함', 'warn'); });
   }
 
   function paintList() {
@@ -69,12 +69,12 @@
         (it.number != null ? ' <span class="dim">#' + core.esc(it.number) + '</span>' : '') +
         // v0.7.0(A2): 작업자 · 시료
         // v0.7.1(U5): 띄어쓰기 없는 긴 시료 이름이 시간 · 줄 수를 밀어내지 않게 — 줄임표 + title
-        ((it.operator || it.sample) ? ' <span class="dim dl-who" title="' +
+        ((it.operator || it.sample) ? ' <span class="dim dl-who" data-tip="' +
           core.esc([it.operator, it.sample].filter(Boolean).join(' · ')) + '">· ' +
           core.esc([it.operator, it.sample].filter(Boolean).join(' · ')) + '</span>' : '') +
         '<span class="dim right">' + (it.took_s != null ? fmt.hms(it.took_s) : fmt.DASH) +
         (it.rows != null ? ' · ' + core.esc(it.rows) + ' rows' : '') + (it.guessed ? ' (추정)' : '') + '</span></div></div>';
-    }).join('') || '<div class="empty">데이터 로그가 없습니다</div>';
+    }).join('') || '<div class="empty">데이터 로그가 없음</div>';
   }
 
   function open(name) {
@@ -98,14 +98,14 @@
           ((m.operator || m.sample || m.memo)
             ? '<div class="dim dl-run">' + (m.operator ? 'Operator ' + core.esc(m.operator) : '') +
               (m.sample ? (m.operator ? ' · ' : '') + 'Sample ' + core.esc(m.sample) : '') +
-              (m.memo ? '<div class="dl-memo" title="' + core.esc(m.memo) + '">' + core.esc(m.memo) + '</div>' : '') + '</div>'
+              (m.memo ? '<div class="dl-memo" data-tip="' + core.esc(m.memo) + '">' + core.esc(m.memo) + '</div>' : '') + '</div>'
             : '');
       }
       buildPicker();
       var rb = core.bind('dlRecipeBox');
-      if (rb) rb.textContent = js.recipe ? JSON.stringify(js.recipe, null, 2) : '레시피 사본이 없습니다';
+      if (rb) rb.textContent = js.recipe ? JSON.stringify(js.recipe, null, 2) : '레시피 사본이 없음';
       setView(view);
-    }).catch(function () { if (my === openNo) core.toast('파일을 열 수 없습니다: ' + name, 'warn'); });
+    }).catch(function () { if (my === openNo) core.toast('파일을 열 수 없음: ' + name, 'warn'); });
   }
 
   function buildPicker() {
@@ -234,8 +234,8 @@
     if (!fb) return;
     var why = core.lockReason();
     fb.disabled = !!why;
-    var tip = why ? why + ' — 쓸 수 없습니다' : '';
-    if (fb.title !== tip) fb.title = tip;
+    var tip = why ? why + ' — 쓸 수 없음' : '';
+    core.tip(fb, tip);
   }
 
   core.register('datalog', { render: render, update: function () { folderLock(); } });

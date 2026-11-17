@@ -28,7 +28,7 @@ CLOSE_WAIT_S = 10.0
 OPEN_WAIT_S = 15.0
 RECENT_N = 10
 RUNNING_STATES = (A.STATE_READY, A.STATE_RUN, A.STATE_PAUSE, A.STATE_STOPPING)
-REOPEN_TEXT = "[Pumping Start] 로 IV-E 를 다시 여세요"
+REOPEN_TEXT = "[Pumping Start] 로 IV-E 다시 열기 필요"
 RELINK_WAIT_S = 10.0            # 되돌리기 전에 짧은 링크 끊김이 다시 붙기를 기다리는 시간(v0.7.1 L5)
 MEASURE_MIN_S = 10.0            # leakcheck.measure_s 최소(설정 검사와 같게 — v0.7.1 W4)
 RANGE_BAD_N = 3                 # 게이지 범위 밖이 이만큼 이어져야 멈춘다(한 번 튄 값으로 멈추지 않게 — v0.7.2)
@@ -114,9 +114,9 @@ class LeakCheck:
         link = state.link
         why = []
         if self.running:
-            return ["누설률 점검이 이미 진행 중입니다"]
+            return ["누설률 점검이 이미 진행 중"]
         if not (link and link.connected):
-            return ["PLC 에 연결되어 있지 않습니다"]
+            return ["PLC 에 연결되어 있지 않음"]
         blocked = link.id_block_text() if hasattr(link, "id_block_text") else ""
         if blocked:
             return [blocked]
@@ -124,16 +124,16 @@ class LeakCheck:
             return ["PLC 하트비트 멈춤"]
         s = link.status
         if s[A.D_STATE] in RUNNING_STATES:
-            why.append("공정 중입니다")
+            why.append("공정 중")
         if state.runner and state.runner.busy:
-            why.append("공정 시작 절차가 진행 중입니다")
+            why.append("공정 시작 절차가 진행 중")
         if state.alarms.has_critical():
             why.append("중대 알람: " + " · ".join(a["name"] for a in state.alarms.list() if a["crit"]))
         ilk, i0 = s[A.D_INTERLOCK], s[A.D_INPUT0]
         if not A.bit(ilk, A.ILK_PUMP):
             why.append("인터락 Pump 아님(펌프 운전 · 알람 없음)")
         if not A.bit(i0, A.IN0_IVE_OPEN):
-            why.append("IV-E 열림 입력 꺼짐 — [Pumping Start] 로 배기 중이어야 합니다")
+            why.append("IV-E 열림 입력 꺼짐 — [Pumping Start] 로 배기 중이어야 함")
         if not A.bit(ilk, A.ILK_VACUUM):
             why.append("인터락 Vacuum OK 아님(베이스 압력 도달 전)")
         rmask = 0
@@ -141,7 +141,7 @@ class LeakCheck:
             if v["tag"] in DEV.RECIPE_VALVES:
                 rmask |= 1 << v["bit"]
         if s[A.D_VALVE_OUT] & rmask:
-            why.append("레시피 밸브 출력이 켜져 있습니다 — 모두 닫은 뒤에")
+            why.append("레시피 밸브 출력이 켜져 있음 — 모두 닫은 뒤에")
         flow = []
         for m in state.cfg.get("mfc") or []:
             sc = state.conv.mfc.get(m["no"])
@@ -154,25 +154,25 @@ class LeakCheck:
             why.append("MFC 유량이 풀스케일 1 % 이상 — " + " · ".join(flow))
         aux = s[A.D_AUX_OUT]
         if DEV.HAS_RF and A.bit(aux, A.AUX_RF):
-            why.append("RF 출력이 켜져 있습니다")
+            why.append("RF 출력이 켜져 있음")
         if DEV.HAS_O3:
             o3 = A.bit(aux, A.AUX_O3_GEN) or A.bit(aux, A.AUX_IVB) or A.bit(aux, A.AUX_BYPASS_PUMP)
             if o3 or getattr(link, "applied_aux", 0):
-                why.append("O3 라인이 켜져 있습니다 — 명령 11 이 수동 보조 출력을 끄므로 수동 조작의 O3 라인 끄기를 먼저 하세요")
+                why.append("O3 Line 켜져 있음 — 명령 11 이 수동 보조 출력을 끄므로 수동 조작의 O3 Line 끄기 먼저 필요")
         return why
 
     # ===================== 시작 · 취소 =====================
     def start(self, state, push_log, push_notice) -> tuple:
         why = self.refuse_reasons(state)
         if why:
-            return False, "누설률 점검을 시작할 수 없습니다 — " + " · ".join(why)
+            return False, "누설률 점검을 시작할 수 없음 — " + " · ".join(why)
         self._cancel_why = ""
         self._cancel_restore = True
         self.phase = "closing"
         self.started_mono = time.monotonic()
         self.progress = {}
         self.task = asyncio.create_task(self._run(state, push_log, push_notice))
-        return True, "누설률 점검을 시작합니다 — IV-E 닫기 → 안정 → 측정 → IV-E 다시 열기"
+        return True, "누설률 점검을 시작함 — IV-E 닫기 → 안정 → 측정 → IV-E 다시 열기"
 
     def cancel(self, why: str = "운전자 취소", restore: bool = True) -> bool:
         if not self.running:
@@ -264,7 +264,7 @@ class LeakCheck:
         except asyncio.CancelledError:
             # 프로그램 종료 — 보낼 수 없다. 명령 11 을 보낸 뒤면 IV-E 는 닫힌 채 남는다
             rec.update(result=rec["result"] or "ABORT",
-                       why=_join(rec["why"], "프로그램 종료" + (" — IV-E 는 닫힌 채 남습니다" if self._closed else "")))
+                       why=_join(rec["why"], "프로그램 종료" + (" — IV-E 는 닫힌 채 남음" if self._closed else "")))
             self._finish(rec)
             logger.write("warn", self.line(rec))
             self.phase = ""
@@ -280,11 +280,11 @@ class LeakCheck:
         """★ v0.7.1(L1): 격리 확인 — IV-E 닫힘 입력 켜짐 · IV-E 출력 꺼짐 · VV 출력 꺼짐이 이어지는가. 깨졌으면 이유."""
         s = link.status
         if not A.bit(s[A.D_INPUT0], A.IN0_IVE_CLOSE):
-            return "격리 깨짐 — IV-E 닫힘 입력이 꺼졌습니다"
+            return "격리 깨짐 — IV-E 닫힘 입력이 꺼짐"
         if A.bit(s[A.D_AUX_OUT], A.AUX_IVE):
-            return "격리 깨짐 — IV-E 출력이 켜졌습니다"
+            return "격리 깨짐 — IV-E 출력이 켜짐"
         if A.bit(s[A.D_AUX_OUT], A.AUX_VV):
-            return "격리 깨짐 — VV(벤트) 출력이 켜졌습니다"
+            return "격리 깨짐 — VV(Vent) 출력이 켜짐"
         return ""
 
     async def _wait_closed(self, state, link):
@@ -293,7 +293,7 @@ class LeakCheck:
     async def _steps(self, state, p, rec, push_log, push_notice):
         """닫기 → 안정 → 측정. 멈추면 rec 에 결과 · 이유를 적고 돌아온다(되돌리기는 _run 이)."""
         link = state.link
-        await push_log("누설률 점검 시작 — 명령 11(모두 닫기)로 IV-E 를 닫습니다", "info")
+        await push_log("누설률 점검 시작 — 명령 11(모두 닫기)로 IV-E 를 닫음", "info")
         # ★ v0.7.2: 명령 11 을 보내기 직전부터 '닫혔을 수 있음' — 보내는 중 끊김 · 종료 · 예외에도 되돌리기(명령 8)를 하고
         #   'IV-E 는 닫힌 채' 를 적는다. 거절(처리 안 됨)이 확실할 때만 거둔다
         self._closed = True
@@ -308,9 +308,9 @@ class LeakCheck:
             if not ok:
                 rec.update(result="ABORT", why=f"모두 닫기 결과 모름({text}) · IV-E 닫힘 입력이 {CLOSE_WAIT_S:g} s 안에 "
                                                "켜지지 않음")
-                await push_notice(f"누설률 점검 — 모두 닫기 결과를 몰라 멈춥니다({text}). IV-E 를 다시 엽니다", "warn")
+                await push_notice(f"누설률 점검 — 모두 닫기 결과를 몰라 멈춤({text}). IV-E 를 다시 엶", "warn")
                 return
-            await push_log(f"누설률 점검 — 모두 닫기 결과는 몰랐지만({text}) IV-E 닫힘 입력이 켜져 계속합니다", "warn")
+            await push_log(f"누설률 점검 — 모두 닫기 결과는 몰랐지만({text}) IV-E 닫힘 입력이 켜져 계속함", "warn")
         elif result != A.RESULT_OK:
             self._closed = False            # 거절 — 닫지 않았다
             rec.update(result="ABORT", why=f"모두 닫기 거절 — {text}")
@@ -397,16 +397,16 @@ class LeakCheck:
         if not self._cancel_restore:
             return
         if not self._link_ok(link):
-            await push_notice(f"누설률 점검을 멈췄지만 IV-E 를 다시 열지 못했습니다 — {REOPEN_TEXT}", "warn")
+            await push_notice(f"누설률 점검을 멈췄지만 IV-E 를 다시 열지 못함 — {REOPEN_TEXT}", "warn")
             rec["why"] = _join(rec["why"], "IV-E 를 다시 열지 못함")
             return
         try:
             result, text = await link.send_command(A.CMD_PUMP_START)
-            logger.command("펌핑 시작(누설률 점검 끝)", link._cmd_no, text, "local")
+            logger.command("Pumping Start(누설률 점검 끝)", link._cmd_no, text, "local")
         except Exception as e:  # noqa: BLE001
             result, text = None, str(e)
         if result != A.RESULT_OK:
-            await push_notice(f"누설률 점검 뒤 펌핑 시작이 처리되지 않았습니다({text}) — {REOPEN_TEXT}", "warn")
+            await push_notice(f"누설률 점검 뒤 Pumping Start 처리되지 않음({text}) — {REOPEN_TEXT}", "warn")
             rec["why"] = _join(rec["why"], "IV-E 다시 열기 실패")
             return
         self._closed = False                # ★ v0.7.2: 명령 8 처리됨 — 이제 'IV-E 는 닫힌 채' 가 아니다
@@ -417,7 +417,7 @@ class LeakCheck:
             if link.connected and A.bit(link.status[A.D_INPUT0], A.IN0_IVE_OPEN):
                 return
             await asyncio.sleep(0.2)
-        await push_notice(f"누설률 점검 뒤 IV-E 열림 입력이 {OPEN_WAIT_S:g} s 안에 켜지지 않았습니다 — 확인하세요", "warn")
+        await push_notice(f"누설률 점검 뒤 IV-E 열림 입력이 {OPEN_WAIT_S:g} s 안에 켜지지 않음 — 확인 필요", "warn")
 
     @staticmethod
     def line(rec) -> str:
@@ -463,7 +463,7 @@ class LeakCheck:
         알람 · Pump · Vacuum OK · IV-E 열림 · 레시피 밸브 · MFC 유량 · RF/O3 포함) — 눌러 본 뒤에야 거절되지 않게."""
         link = getattr(state, "link", None) if state is not None else None
         if not (link and link.connected):
-            return "PLC 에 연결되어 있지 않습니다"
+            return "PLC 에 연결되어 있지 않음"
         return " · ".join(self.refuse_reasons(state))
 
     def status(self, cfg, state=None) -> dict:

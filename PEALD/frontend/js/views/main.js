@@ -21,12 +21,12 @@
 
   // 확인 창이 필요한 명령 — 되돌리기 어렵거나 챔버 상태를 크게 바꾼다.
   var CONFIRM = {
-    pump_stop: { t: 'Pumping Stop 을 할까요?', b: '배기 격리(IV-E)를 닫고 펌프를 멈춥니다. 챔버 압력이 서서히 올라갑니다.', ok: T('b.pumpStop') },
-    vent: { t: 'Vent 를 시작할까요?', b: '배기 격리(IV-E)를 닫고 N2 로 챔버를 대기압까지 올립니다.<br>공정 중에는 실행할 수 없습니다.', ok: T('b.vent') },
-    all_close: { t: '전체 밸브를 닫을까요?', b: '공정 밸브와 수동 보조 출력 요청을 모두 지우고 배기 격리를 닫습니다.<br>펌프는 그대로 둡니다.', ok: T('b.closeAll') },
-    process_abort: { t: '공정을 즉시 중단할까요?', b: '진행 중인 스텝을 그 자리에서 끊고 모든 공정 밸브를 닫습니다.<br>웨이퍼는 중간 상태로 남습니다 — 되돌릴 수 없습니다.', ok: T('b.abort') },
-    process_stop_after_cycle: { t: '이번 사이클 후에 정지할까요?', b: '지금 돌고 있는 사이클을 끝까지 마친 뒤 정지합니다.<br>남은 블록·그룹 반복은 실행하지 않습니다.', ok: T('b.stopAfterCycle') },
-    alarm_reset: { t: '알람을 리셋할까요?', b: '원인이 사라진 알람만 지웁니다. 원인이 남아 있으면 즉시 다시 걸립니다.<br>PC 통신 끊김 알람도 이것으로 풀립니다.', ok: T('b.reset') }
+    pump_stop: { t: 'Pumping Stop?', b: '배기 격리(IV-E)를 닫고 펌프를 멈춤. 챔버 압력이 서서히 올라감.', ok: T('b.pumpStop') },
+    vent: { t: 'Vent 시작?', b: '배기 격리(IV-E)를 닫고 N2 로 챔버를 대기압까지 올림.<br>공정 중에는 실행할 수 없음.', ok: T('b.vent') },
+    all_close: { t: 'Close All Valves?', b: '공정 밸브와 수동 보조 출력 요청을 모두 지우고 배기 격리를 닫음.<br>펌프는 그대로 둠.', ok: T('b.closeAll') },
+    process_abort: { t: '공정 Abort?', b: '진행 중인 스텝을 그 자리에서 끊고 모든 공정 밸브를 닫음.<br>웨이퍼는 중간 상태로 남음 — 되돌릴 수 없음.', ok: T('b.abort') },
+    process_stop_after_cycle: { t: 'Stop after Cycle?', b: '지금 돌고 있는 사이클을 끝까지 마친 뒤 정지함.<br>남은 블록·그룹 반복은 실행하지 않음.', ok: T('b.stopAfterCycle') },
+    alarm_reset: { t: 'Alarm Reset?', b: '원인이 사라진 알람만 지움. 원인이 남아 있으면 즉시 다시 걸림.<br>PC 통신 끊김 알람도 이것으로 풀림.', ok: T('b.reset') }
   };
 
   // 배치 치수(px, 캔버스 기준) — 칸 높이는 이것과 장비 구조로만 정해진다
@@ -121,11 +121,12 @@
     dense(tbl, room, n);
     // v0.8.1: 단위 ℃ 는 칸 이름(Heater (℃))에 — 머리에 붙이면 좁은 배치 이름 열이 남지 않는다. Output 열은 Power 칩에 합친다
     var html = colgroup(HEATER_COLS) + '<thead><tr><th>' + T('v.channel') + '</th><th>' + T('v.setpoint') + '</th><th>' +
-      T('v.actual') + '</th><th title="전원(ON/OFF) · 출력(MV — 온도조절기가 내는 출력 %)">' + T('v.power') + '</th><th>' +
+      T('v.actual') + '</th><th data-tip="전원(ON/OFF) · 출력(MV — 온도조절기가 내는 출력 %)">' + T('v.power') + '</th><th>' +
       T('v.status') + '</th></tr></thead><tbody>';
     heaters.forEach(function (h) {
       if (!h.enabled) return;   // 사용 채널만 보여 준다
-      html += '<tr data-hrow="' + h.ch + '" data-fp="heater:' + h.ch + '" tabindex="0" role="button" title="CH' + core.esc(h.ch) +
+      var hk = w.UI.fpKo(s.structure, 'heater:' + h.ch);
+      html += '<tr data-hrow="' + h.ch + '" data-fp="heater:' + h.ch + '" tabindex="0" role="button"' + core.tipKo(hk[0], hk[1]) + ' data-tip="CH' + core.esc(h.ch) +
         ' ' + core.esc(h.name) + ' — 누르면 조작 창">' +
         '<td class="nm">CH' + core.esc(h.ch) + ' ' + core.esc(h.name) + '</td>' +
         '<td class="sv" data-hsv="' + h.ch + '">—</td>' +
@@ -137,7 +138,7 @@
     var miss = heaters.filter(function (h) { return h.enabled && h.max_c == null; });
     core.setText('tcNote', miss.length ? '⚠ ' + T('s.limitUnset') + ' ' + miss.length + ' ch' : '');
     var tn = core.bind('tcNote');            // v0.5.3: 설명 문장은 툴팁(한글)
-    if (tn) tn.title = miss.length ? 'PLC 한계에 0 을 써서 막습니다' : '';
+    core.tip(tn, miss.length ? 'PLC 한계에 0 을 써서 막음' : '');
   }
 
   /* ---------- MFC 표 + 장비 전용 줄(PEALD: RF · PCV / Powder: O3) ---------- */
@@ -149,9 +150,10 @@
     var html = colgroup(MFC_COLS) + '<thead><tr><th>MFC</th><th>' + T('v.gas') + '</th><th>' + T('v.fullScale') + '</th><th>' +
       T('v.setpoint') + '</th><th>' + T('v.actual') + '</th></tr></thead><tbody>';
     mfc.forEach(function (m) {
-      html += '<tr data-fp="mfc:' + core.esc(m.no) + '" tabindex="0" role="button" title="MFC' + core.esc(m.no) + ' ' +
+      var mk = w.UI.fpKo(s.structure, 'mfc:' + m.no);
+      html += '<tr data-fp="mfc:' + core.esc(m.no) + '" tabindex="0" role="button"' + core.tipKo(mk[0], mk[1]) + ' data-tip="MFC' + core.esc(m.no) + ' ' +
         core.esc(m.name) + ' — 누르면 조작 창"><td class="nm">' + core.esc(m.no) + ' ' + core.esc(m.name) + '</td>' +
-        '<td class="nm" title="' + core.esc(m.gas || '') + '">' + core.esc(m.gas || fmt.DASH) + '</td>' +
+        '<td class="nm" data-tip="' + core.esc(m.gas || '') + '">' + core.esc(m.gas || fmt.DASH) + '</td>' +
         '<td>' + (m.full_scale_sccm == null
           ? '<span class="unconf">Unset</span>'
           : core.esc(fmt.int(m.full_scale_sccm)) + '<span class="unit">sccm</span>') + '</td>' +
@@ -162,7 +164,7 @@
     var xn = 0;
     var xrow = function (key, name, fp, title, word) {
       xn++;
-      return '<tr class="xrow"' + (fp ? ' data-fp="' + fp + '" tabindex="0" role="button"' : '') + ' title="' + core.esc(title || name) + '"' +
+      return '<tr class="xrow"' + (fp ? ' data-fp="' + fp + '" tabindex="0" role="button"' : '') + ' data-tip="' + core.esc(title || name) + '"' +
         '><td colspan="2" class="nm">' + name + '</td><td colspan="3" class="' + (word ? 'wv' : 'pv') + '" data-mx="' + key + '">—</td></tr>';
     };
     if (dev.has_rf) html += xrow('rf', 'RF Forward / Reflected', 'rf:RF');
@@ -256,7 +258,7 @@
     if (rv) {
       rv.classList.toggle('est', !!est);
       var rt = est ? T('v.estimate') + ' — 레시피 기준 예상 시간(공정 전)' : '';
-      if (rv.title !== rt) rv.title = rt;
+      core.tip(rv, rt);
     }
     setIn(root, 'pqPlannedEnd', run ? (p.eta || D) : D);
 
@@ -280,7 +282,7 @@
         var a = Math.max(0, Math.min(steps.length - n, cur - 1 - Math.floor(n / 2)));
         html = steps.slice(a, a + n).map(function (x, i) {
           var no = a + i + 1, on = no === cur;
-          return '<span class="st' + (on ? ' on' : '') + '" title="' + core.esc((x.name || no) + ' · ' + fmt.ms(x.ms) + ' s') +
+          return '<span class="st' + (on ? ' on' : '') + '" data-tip="' + core.esc((x.name || no) + ' · ' + fmt.ms(x.ms) + ' s') +
             '"><b>' + no + '</b> <span class="nm">' + core.esc(x.name || '') + '</span><i>' +
             (on ? core.esc(fmt.ms(p.step_ms)) + ' / ' : '') + core.esc(fmt.ms(x.ms)) + ' s</i></span>';
         }).join('');
@@ -289,7 +291,7 @@
         if (p.last_result && !run && !msg) { msg = p.last_result; last = true; }
         if (!msg && conn && !p.recipe) msg = 'Select a recipe';
         var lv = T.resultLevel(msg);
-        html = msg ? '<span class="procmsg' + (lv ? ' ' + lv : '') + '" title="' + core.esc(msg) + '">' +
+        html = msg ? '<span class="procmsg' + (lv ? ' ' + lv : '') + '" data-tip="' + core.esc(msg) + '">' +
           (last ? '<span class="chip">Last</span> ' : '') + core.esc(msg) + '</span>' : '';
         cls += ' msg';
       }
@@ -304,22 +306,27 @@
     // 상태에 맞는 단추만 살린다 — 누를 수 없는 단추를 눌러 보게 두지 않는다.
     var local = core.canOperate();
     var flow = p.phase && p.phase !== 'idle';
-    en('process_start', local && conn && !run && !flow && !!p.can_start);
-    en('process_pause', local && conn && run && !p.paused);
-    en('process_resume', local && conn && !!p.paused);
-    en('process_stop_after_cycle', local && conn && run && !p.paused);
-    en('process_abort', local && conn && run);
-    en('process_cancel_wait', local && p.phase === 'base_wait');
+    // v0.8.6: 막힌 단추의 이유(설명창 상태 줄) — 판단은 그대로, 이유 글만
+    var base = !local ? '원격 접속 — 보기 전용' : !conn ? 'PLC 연결 없음' : '';
+    var bad = (p.checks || []).filter(function (x) { return !x.ok && x.key !== 'base'; })
+      .map(function (x) { return x.label + (x.detail ? ' — ' + x.detail : ''); });
+    var startWhy = base || (run ? '공정 중' : flow ? '시작 절차 진행 중' : !p.can_start ? '시작 조건 미달' + (bad.length ? '\n' + bad.join('\n') : '') : '');
+    en('process_start', local && conn && !run && !flow && !!p.can_start, startWhy);
+    en('process_pause', local && conn && run && !p.paused, base || (!run ? '공정 중 아님' : '이미 일시정지 중'));
+    en('process_resume', local && conn && !!p.paused, base || '일시정지 중 아님');
+    en('process_stop_after_cycle', local && conn && run && !p.paused, base || (!run ? '공정 중 아님' : '일시정지 중 — 먼저 Resume'));
+    en('process_abort', local && conn && run, base || '공정 중 아님');
+    en('process_cancel_wait', local && p.phase === 'base_wait', base || '베이스 압력 기다림 중 아님');
   }
 
-  /** 공정 단추 — 두 탭(운전 · P&ID 넓은 배치)의 같은 단추를 모두. 진행 중(응답 기다림)이면 막고 이유 */
-  function en(cmd, ok) {
+  /** 공정 단추 — 두 탭(운전 · P&ID 넓은 배치)의 같은 단추를 모두. 진행 중(응답 기다림)이면 막고 이유(설명창) */
+  function en(cmd, ok, why) {
     var busy = core.busy.has('cmd:' + cmd);
     Array.prototype.forEach.call(d.querySelectorAll('.procbar [data-cmd="' + cmd + '"]'), function (b) {
       var off = !ok || busy;
       if (b.disabled !== off) b.disabled = off;
-      var tip = busy ? core.BUSY_TIP : '';
-      if (b.title !== tip) b.title = tip;
+      var tip = busy ? core.BUSY_TIP : off && why ? '막힘: ' + why : '';
+      core.tip(b, tip);
     });
   }
 
@@ -328,13 +335,13 @@
   /** v0.7.2: 'Trip' 칩 툴팁 — Program Notices 와 같은 규칙(v0.7.1 P6). '[Alarm Reset] 으로 풀립니다' 는 트립만이 원인일
    *  때만, 비상정지 · 중대 알람이 같이 있으면 그 원인을 적는다. v0.8.0: 상단 띠(strip.js)도 이 규칙을 쓴다 */
   function tripTip(plc, safeStop) {
-    var head = 'PC 연결이 끊겼던 기록(PC Link Lost)이 남아 있습니다. ';
+    var head = 'PC 연결이 끊겼던 기록(PC Link Lost)이 남아 있음. ';
     if (!plc.pc_trip_only) {
       return head + (safeStop ? 'PC 끊김 트립도 남아 있지만 PLC 안전 정지 원인은 ' : 'PLC 안전 정지 원인 ') +
-        (plc.pc_trip_cause || '중대 알람') + (safeStop ? ' 입니다' : '') + ' — 원인을 없앤 뒤 [Alarm Reset]';
+        (plc.pc_trip_cause || '중대 알람') + (safeStop ? '' : '') + ' — 원인을 없앤 뒤 [Alarm Reset]';
     }
-    return head + (safeStop ? 'PLC 가 안전 정지 상태입니다. ' : '공정이 끝나면 PLC 가 안전 정지합니다. ') +
-      '[Alarm Reset] 으로 풀립니다';
+    return head + (safeStop ? 'PLC 가 안전 정지 상태. ' : '공정이 끝나면 PLC 가 안전 정지함. ') +
+      '[Alarm Reset] 으로 풀림';
   }
 
   function auxMap(s, t, conn) {
@@ -362,7 +369,7 @@
       if (!conn) { core.html(st, fmt.DASH); return; }
       if (!h.comm_ok) core.html(st, core.chip(T('s.commLost'), 'stop', h.power_block || ''));
       else if (h.alarm) core.html(st, core.chip(T('s.ctrlAlarm'), 'stop', '온도조절기(Controller) 알람'));
-      else if (def.max_c == null) core.html(st, core.chip(T('s.limitUnset'), 'warn', '과온 한계가 없어 PLC 소프트 과온 감시가 꺼집니다 — PC 가 설정·전원 켜기를 막습니다'));
+      else if (def.max_c == null) core.html(st, core.chip(T('s.limitUnset'), 'warn', '과온 한계가 없어 PLC 소프트 과온 감시가 꺼짐 — PC 가 설정·전원 켜기를 막음'));
       else core.html(st, core.chip(T('s.normal'), 'ok'));
     });
   }
@@ -391,7 +398,7 @@
 
   /* ---------- 잠금 · 명령줄 ---------- */
   var RUN_LOCKED = { pump_stop: 1, vent: 1, all_close: 1 };
-  var RUN_TIP = '공정 중에는 쓸 수 없습니다 — 먼저 중단하세요';
+  var RUN_TIP = '공정 중에는 쓸 수 없음 — 먼저 중단 필요';
 
   /** 이미 그 상태인 명령 — 조작 창과 같은 규칙(UI.alreadyWhy). 막는 이유(한글) 또는 '' */
   function alreadyWhy(c, s, t, conn) { return conn ? w.UI.alreadyWhy(c, s.structure, t) : ''; }
@@ -400,13 +407,13 @@
     var local = core.canOperate();
     var msg = '';
     var p = t.plc || {};
-    if (t.offline) msg = '🔒 서버 연결이 끊겨 명령을 보낼 수 없습니다 — 다시 연결하는 중';
-    else if (p.config_error) msg = '🔒 PLC 주소가 없어 연결하지 않았습니다 — 설정 탭에서 이 장비 PLC 주소를 넣으세요';
-    else if (p.id_state === 'wrong') msg = '🔒 다른 장비의 PLC 입니다 — 주소를 확인하세요';
-    else if (p.id_state === 'missing') msg = '🔒 PLC 장비 ID 가 없습니다(0) — 이 장비 PLC 인지 확인할 수 없습니다';
-    else if (p.stalled) msg = '🔒 PLC 하트비트 멈춤 — PLC 가 STOP 이거나 멈췄습니다 · 명령을 보내지 않습니다';
-    else if (!core.canOperate()) msg = '🔒 원격 접속은 보기 전용입니다';
-    else if (!conn) msg = '🔒 PLC 연결이 끊겨 명령을 보낼 수 없습니다';
+    if (t.offline) msg = '🔒 서버 연결이 끊겨 명령을 보낼 수 없음 — 다시 연결하는 중';
+    else if (p.config_error) msg = '🔒 PLC 주소가 없어 연결하지 않음 — 설정 탭에서 이 장비 PLC 주소 입력 필요';
+    else if (p.id_state === 'wrong') msg = '🔒 다른 장비의 PLC — 주소 확인 필요';
+    else if (p.id_state === 'missing') msg = '🔒 PLC 장비 ID 가 없음(0) — 이 장비 PLC 인지 확인할 수 없음';
+    else if (p.stalled) msg = '🔒 PLC 하트비트 멈춤 — PLC 가 STOP 이거나 멈춤 · 명령을 보내지 않음';
+    else if (!core.canOperate()) msg = '🔒 원격 접속은 보기 전용';
+    else if (!conn) msg = '🔒 PLC 연결이 끊겨 명령을 보낼 수 없음';
 
     // ★ 공정 단추는 updateProcess 가 상태별로 따로 판단한다 — 여기서 덮어쓰지 않는다.
     //   명령줄 · 알람 탭의 확인 · 리셋 모두 같은 규칙(원격 · 다른 장비 · 끊김이면 잠금 · 진행 중이면 잠금).
@@ -423,20 +430,21 @@
       var busy = core.busy.has('cmd:' + c);
       var off = !local || !conn || !!lockRun || !!already || busy;
       if (b.disabled !== off) b.disabled = off;
-      var tip = busy ? core.BUSY_TIP : lockRun ? RUN_TIP : already;
-      if (b.title !== tip) b.title = tip;
+      var why = busy ? core.BUSY_TIP : lockRun ? RUN_TIP : already ||
+        (!local ? '원격 접속 — 보기 전용' : !conn ? 'PLC 연결 없음' : '');
+      core.tip(b, off && why ? '막힘: ' + why : '');      // v0.8.6: 막힌 이유는 설명창 상태 줄
       // 알람 확인 전(부저 울림)이면 Alarm Ack 를 빨간 테두리로
       if (c === 'alarm_ack') b.classList.toggle('attn', conn && !!t.alarm_new);
     });
     core.setText('lockMsg', msg);
     var lm = core.bind('lockMsg');
-    if (lm && lm.title !== msg) lm.title = msg;           // 두 줄까지(넘치면 말줄임) — 툴팁에 전체 글
+    core.tip(lm, msg);           // 두 줄까지(넘치면 말줄임) — 툴팁에 전체 글
     // '수동 조작…' — 서버 끊김 · PLC 끊김 · 멈춤이면 잠근다(값도 명령도 없다). 원격은 보기로 연다. 두 탭 모두
     var why = t.offline ? '서버 연결 끊김' : p.stalled ? 'PLC 하트비트 멈춤' : !conn ? 'PLC 끊김' : '';
-    var mt = why ? why + ' — 수동 조작을 열 수 없습니다' : '';
+    var mt = why ? why + ' — 수동 조작을 열 수 없음' : '';
     Array.prototype.forEach.call(d.querySelectorAll('[data-bind="mnOpen"]'), function (mo) {
       mo.disabled = !!why;
-      if (mo.title !== mt) mo.title = mt;
+      core.tip(mo, mt);
     });
   }
 
@@ -478,11 +486,11 @@
       var names = (mn.pending || []).slice();
       if ((mn.aux_pending || []).indexOf('RF') >= 0) names.push('RF');     // Powder O3 라인(O3GEN · IV-B)은 묻지 않는다
       if (!names.length) return null;
-      return { t: 'Pumping Start 를 할까요?', ok: T('b.pumpStart'),
-        b: 'PLC 가 지우지 않은 수동 요청이 남아 있습니다: <b>' + core.esc(names.join(' · ')) + '</b> — 펌핑으로 허가가 생기면 ' +
-           '바로 열리거나 켜집니다(래더 P50 확인).<br>먼저 그 밸브를 Close' + (names.indexOf('RF') >= 0 ? '(RF 는 OFF)' : '') +
-           ' 하거나 [Close All Valves] 로 지우세요. ' +
-           '그대로 펌핑할까요?' };
+      return { t: 'Pumping Start?', ok: T('b.pumpStart'),
+        b: 'PLC 가 지우지 않은 수동 요청이 남아 있음: <b>' + core.esc(names.join(' · ')) + '</b> — 펌핑으로 허가가 생기면 ' +
+           '바로 열리거나 켜짐(래더 P50 확인).<br>먼저 그 밸브를 Close' + (names.indexOf('RF') >= 0 ? '(RF 는 OFF)' : '') +
+           ' 하거나 [Close All Valves] 로 지우기 필요. ' +
+           '그대로 Pumping Start?' };
     }
     var cf = CONFIRM[c];
     if (!cf || c !== 'all_close') return cf;
@@ -492,21 +500,21 @@
     var o3on = aux['O3GEN'] || aux['IV-B'] || aux['BPMP'] || (mn2.aux_request || 0) !== 0;
     if (!o3on) return cf;
     return { t: cf.t, ok: cf.ok,
-      b: cf.b + '<br><br><b>O3 라인(발생기·IV-B·바이패스 펌프)도 한꺼번에 꺼집니다</b> — ' +
-         '순서대로 끄려면 수동 조작의 O3 라인 끄기를 먼저 하세요.' };
+      b: cf.b + '<br><br><b>O3 Line(발생기·IV-B·Bypass Pump)도 한꺼번에 꺼짐</b> — ' +
+         '순서대로 끄려면 수동 조작의 O3 Line 끄기 먼저 필요.' };
   }
 
   /** 시작은 흐름이다 — 무엇을 올리고 무엇을 기다리는지 먼저 알려 준다. */
   function askStart() {
     var p = ((core.state || {}).live || {}).process || {};
     var est = p.estimate || {};
-    core.confirmAsk('공정을 시작할까요?',
+    core.confirmAsk('공정 Start?',
       '레시피 <b>' + core.esc(p.recipe || '') + '</b>' +
       (p.number ? ' (번호 ' + core.esc(p.number) + ')' : '') + '<br>' +
       T('v.step') + ' ' + core.esc(est.step_count || 0) + ' · ' + T('v.block') + ' ' + core.esc(est.block_count || 0) +
       ' · ' + T('v.estimate') + ' <b>' + fmt.hms((est.total_ms || 0) / 1000) + '</b><br><br>' +
-      'PLC 에 레시피 표를 올리고, 베이스 압력에 도달하면 시작합니다.<br>' +
-      '대기 중에는 [Cancel Wait]로 멈출 수 있습니다.' +
+      'PLC 에 레시피 표를 올리고, 베이스 압력에 도달하면 시작함.<br>' +
+      '대기 중에는 [Cancel Wait]로 멈출 수 있음.' +
       ((p.checks || []).filter(function (c) { return !c.ok; }).length
         ? '<br><br>아직 안 된 조건:<br>' +
           (p.checks || []).filter(function (c) { return !c.ok; })
@@ -527,7 +535,7 @@
     return '<div class="runinfo">' + RUN_INFO.map(function (f) {
       return '<label><span>' + f[1] + '</span><input class="inp" data-runinfo="' + f[0] + '" maxlength="' + f[2] + '"' +
         (f[0] === 'operator' ? ' value="' + core.esc(last) + '"' : '') + ' placeholder="(선택)"></label>';
-    }).join('') + '<div class="hint">Enter 로는 시작하지 않습니다 — [' + core.esc(T('b.start')) + '] 를 누르세요.</div></div>';
+    }).join('') + '<div class="hint">Enter 로는 시작하지 않음 — [' + core.esc(T('b.start')) + '] 누르기 필요.</div></div>';
   }
 
   function runInfo() {

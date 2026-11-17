@@ -28,7 +28,7 @@ BASE_WAIT = "base_wait"
 STARTING = "starting"
 
 RUNNING_STATES = (A.STATE_READY, A.STATE_RUN, A.STATE_PAUSE, A.STATE_STOPPING)
-NO_ADDR_TEXT = "PLC 주소가 없어 연결하지 않았습니다 — 설정 탭에서 이 장비 PLC 주소를 넣으세요"
+NO_ADDR_TEXT = "PLC 주소가 없어 연결하지 않음 — 설정 탭에서 이 장비 PLC 주소 입력 필요"
 
 
 class ProcessRunner:
@@ -142,7 +142,7 @@ class ProcessRunner:
 
         ilk = s[A.D_INTERLOCK]
         out.append({"key": "pump", "label": "Pump", "ok": A.bit(ilk, A.ILK_PUMP),
-                    "detail": "운전 중" if A.bit(ilk, A.ILK_PUMP) else "펌프 운전·알람을 확인하세요"})
+                    "detail": "운전 중" if A.bit(ilk, A.ILK_PUMP) else "펌프 운전·알람 확인 필요"})
         out.append({"key": "valve_ok", "label": "Valve Permit",
                     "ok": A.bit(ilk, A.ILK_VALVE_OK),
                     "detail": self._valve_ok_detail(s)})
@@ -158,7 +158,7 @@ class ProcessRunner:
         if DEV.HAS_O3:
             ok = A.bit(ilk, A.ILK_O3_OK)
             out.append({"key": "o3", "label": "O3 Permit", "ok": ok,
-                        "detail": "준비됨" if ok else "O3 라인을 먼저 켜세요",
+                        "detail": "준비됨" if ok else "O3 Line 먼저 켜기 필요",
                         "action": None if ok else "o3_on"})
             # ★ 래더의 공정 시작 조건은 O3 허가(바이패스 펌프·IV-B·5 s·알람 없음·O3 한계 > 0)만 보고
             #   발생기 요청은 보지 않는다 — 발생기만 꺼진 채 시작하면 O3 없이 돈다. O3 를 쓰는
@@ -166,18 +166,18 @@ class ProcessRunner:
             if _uses_o3(self.recipe):
                 gen = A.bit(s[A.D_AUX_OUT], A.AUX_O3_GEN)
                 out.append({"key": "o3_gen", "label": "O3 Generator ON", "ok": gen,
-                            "detail": "켜짐" if gen else "레시피가 O3 를 씁니다 — [O3 라인 켜기]로 발생기를 켜세요",
+                            "detail": "켜짐" if gen else "레시피가 O3 를 씀 — [O3 Line 켜기]로 발생기 켜기 필요",
                             "action": None if gen else "o3_on"})
 
         from .leakcheck import leak
         if leak.running:
             # ★ v0.7.1(L7): 점검 중에는 시작 조건에 넣어 Start 단추를 막는다(시작 창을 다 채운 뒤 거절되지 않게)
             out.append({"key": "leakcheck", "label": "Leak Check 진행 중", "ok": False,
-                        "detail": "누설률 점검이 끝나거나 취소한 뒤에 시작하세요"})
+                        "detail": "누설률 점검이 끝나거나 취소한 뒤에 시작 필요"})
         res = st.recipe_check or {}
         out.append({"key": "recipe", "label": "Recipe Check",
                     "ok": bool(self.recipe) and not res.get("errors"),
-                    "detail": (self.recipe_name or "레시피를 고르세요") +
+                    "detail": (self.recipe_name or "레시피 선택 필요") +
                               (f" — 오류 {len(res.get('errors') or [])}건"
                                if res.get("errors") else "")})
 
@@ -269,7 +269,7 @@ class ProcessRunner:
             self.recipe = None
             self.recipe_name = ""
             self.state.recipe_check = {}
-            return False, f"레시피를 열 수 없습니다: {name}"
+            return False, f"레시피를 열 수 없음: {name}"
         self.recipe = data
         self.recipe_name = name
         self.state.recipe_check = R.validate(self.state.cfg, data)
@@ -313,9 +313,9 @@ class ProcessRunner:
         ★ 명령 통로를 붙잡지 않는다 — 베이스 압력 대기(최대 30 분) 동안에도 대기 취소·알람 확인·
           벤트·펌핑 정지·전체 닫기가 바로 처리돼야 한다. (성공, 메시지)"""
         if self.busy:
-            return False, "이미 시작 절차가 진행 중입니다"
+            return False, "이미 시작 절차가 진행 중"
         if not self.recipe:
-            return False, "레시피를 고르세요"
+            return False, "레시피 선택 필요"
         if info is not None:
             self.set_run_info(info)
 
@@ -328,7 +328,7 @@ class ProcessRunner:
                     pass
 
         self._task = asyncio.create_task(run())
-        return True, "시작 절차를 시작합니다 — 레시피 올리기 → 베이스 압력 대기 → 공정 시작"
+        return True, "시작 절차를 시작함 — 레시피 올리기 → 베이스 압력 대기 → 공정 시작"
 
     async def stop_task(self):
         """프로그램을 끌 때 시작 흐름 태스크를 정리한다."""
@@ -346,7 +346,7 @@ class ProcessRunner:
         ★ 어떤 예외가 나도 phase 를 idle 로 돌린다 — 'uploading' 에 멈추면 다음 시작이
           프로그램을 다시 켜기 전까지 '이미 진행 중'으로 거절된다."""
         if self.phase != IDLE:
-            return False, "이미 시작 절차가 진행 중입니다"
+            return False, "이미 시작 절차가 진행 중"
         try:
             return await self._start_flow(push_log, push_notice)
         except asyncio.CancelledError:
@@ -366,10 +366,10 @@ class ProcessRunner:
     async def _start_flow(self, push_log, push_notice):
         st = self.state
         if not self.recipe:
-            return False, "레시피를 고르세요"
+            return False, "레시피 선택 필요"
         check = R.validate(st.cfg, self.recipe)
         if check["errors"]:
-            return False, f"레시피 검증 오류 {len(check['errors'])}건 — 먼저 고치세요"
+            return False, f"레시피 검증 오류 {len(check['errors'])}건 — 먼저 고치기 필요"
         blocked = st.link.id_block_text() if (st.link and hasattr(st.link, "id_block_text")) else ""
         if blocked:
             return False, blocked
@@ -384,12 +384,12 @@ class ProcessRunner:
         if getattr(st, "o3_off_task", None) is not None:
             from .commands import _cancel_o3_timer
             _cancel_o3_timer()
-            await push_log("O3 바이패스 라인 닫기 예약을 취소했습니다 — 공정 시작 절차", "warn")
+            await push_log("O3 바이패스 라인 닫기 예약을 취소함 — 공정 시작 절차", "warn")
         if getattr(st, "o3_on_task", None) is not None:
             # ★ v0.8.5: O3 라인 켜기가 O3 허가를 기다리는 중 — 시작 절차 중에 발생기 명령이 끼어들지 않게 취소한다
             from .commands import cancel_o3_on
             if cancel_o3_on():
-                await push_log("O3 라인 켜기 취소 — 공정 시작 절차 (발생기를 보내지 않았습니다)", "warn")
+                await push_log("O3 Line 켜기 취소 — 공정 시작 절차 (발생기를 보내지 않음)", "warn")
         # ★ v0.4.14: 앞 공정이 아직 이 PC 의 공정 구간(active_run)인데 PLC 는 이미 공정 중이 아니면 — 중단 직후
         #   (0~0.1 s) 새 시작 — 끝 판정(tick)을 먼저 한다. 아래에서 _abort_sent · _last_pos 를 지우면 앞 공정이
         #   '중단 (PLC 중단)' · '(공정 중 위치를 보지 못함)' 으로 적혔다
@@ -450,7 +450,7 @@ class ProcessRunner:
             await asyncio.sleep(0.2)
             if self._cancel:
                 await push_log(f"베이스 압력 대기 취소 — {self._cancel_why}", "warn")
-                return False, f"베이스 압력 대기를 취소했습니다 ({self._cancel_why})"
+                return False, f"베이스 압력 대기를 취소함 ({self._cancel_why})"
             stop_why = self._wait_broken()
             if stop_why:
                 await push_log(f"베이스 압력 대기 중단 — {stop_why}", "err")
@@ -466,7 +466,7 @@ class ProcessRunner:
             self.message = f"베이스 압력 대기 {now - self.base_wait_started:.0f} s"
             if now - self.base_wait_started > timeout:
                 await push_log(f"베이스 압력 대기 시간 초과 ({timeout:g} s)", "err")
-                return False, f"베이스 압력에 도달하지 못했습니다 ({timeout:g} s 초과)"
+                return False, f"베이스 압력에 도달하지 못함 ({timeout:g} s 초과)"
 
         # --- 시작 명령 ---
         self.phase = STARTING
@@ -503,12 +503,12 @@ class ProcessRunner:
             #   읽힌다. 그 한 번을 종료로 오해해 '정상 종료' 로그가 먼저 찍힌다.
             await push_log(f"공정 시작 — {snap['name']} (번호 {tbl['number']}, "
                            f"예상 {_hms(R.total_ms(st.cfg, rec))}){run_info_text(self.run_info)}", "ok")
-            return True, "공정을 시작했습니다"
+            return True, "공정을 시작함"
         if result is None:
             if "응답 없음" in text or "받았을 수" in text:
                 # ★ v0.4.14: 보냈지만 응답을 못 받았다 — 거절이 아니다. PLC 가 시작했으면 이어받기 루프가 몇 초 안에
                 #   이어 간다(즉시 중단 명령과 같은 판단 — commands.py)
-                why = f"시작 결과 모름 — PLC 상태로 확인합니다 ({text})"
+                why = f"시작 결과 모름 — PLC 상태로 확인함 ({text})"
                 await push_log(why, "warn")
             else:
                 # ★ v0.4.15: 보내지도 못했다(막힌 이유 · 코드 쓰기 전 오류) — '결과 모름' 이 아니다
@@ -532,10 +532,10 @@ class ProcessRunner:
             head = await link.client.read_holding(A.D_RECIPE_SUM_PLC, 2)
             no = (await link.client.read_holding(A.D_RCP_NO, 1))[0]
         except Exception as e:  # noqa: BLE001
-            return f"PLC 표를 확인하지 못했습니다 ({logger.clean(e, 120)})"
+            return f"PLC 표를 확인하지 못함 ({logger.clean(e, 120)})"
         if head[0] != (tbl["checksum"] & 0xFFFF) or head[1] != 1 or no != (tbl["number"] & 0xFFFF):
-            return (f"PLC 레시피 표가 올린 것과 다릅니다 (합계 {head[0]:#06x}/{tbl['checksum']:#06x}, "
-                    f"통과 {head[1]}, 번호 {no}/{tbl['number']}) — 시작하지 않았습니다")
+            return (f"PLC 레시피 표가 올린 것과 다름 (합계 {head[0]:#06x}/{tbl['checksum']:#06x}, "
+                    f"통과 {head[1]}, 번호 {no}/{tbl['number']}) — 시작하지 않음")
         return ""
 
     async def _recipe_refusal(self, tbl) -> str:
@@ -553,32 +553,32 @@ class ProcessRunner:
                 await asyncio.sleep(0.1)
                 a0 = (await link.client.read_holding(A.D_ALARM0, 1))[0]
         except Exception as e:  # noqa: BLE001
-            return f"PLC 표 검사 불합격 (원인을 읽지 못했습니다: {logger.clean(e, 80)})"
+            return f"PLC 표 검사 불합격 (원인을 읽지 못함: {logger.clean(e, 80)})"
         alarm = " · 알람 'Recipe Table Check Failed'" if A.bit(a0, A.ALM0_RECIPE) else ""
         if head[1] != 1 or head[0] != (tbl["checksum"] & 0xFFFF):
             return (f"PLC 표 머리(개수 · 합계) 검사 불합격 — 합계 PLC {head[0]:#06x} / "
                     f"올린 것 {tbl['checksum']:#06x}, 통과 {head[1]}{alarm}")
-        return (f"PLC 가 첫 블록 · 그룹 · 스텝 항목을 받지 않았습니다(표 머리는 통과){alarm} — "
-                f"블록 첫/끝 스텝 · 그룹 범위 · 반복 값을 확인하세요")
+        return (f"PLC 가 첫 블록 · 그룹 · 스텝 항목을 받지 않음(표 머리는 통과){alarm} — "
+                f"블록 첫/끝 스텝 · 그룹 범위 · 반복 값 확인 필요")
 
     def _wait_broken(self):
         """대기 중 그만둬야 하는 사유. 없으면 빈 문자열.
         ★ 입력으로도 본다 — 원격 · 판넬에서 벤트 · 펌핑 정지를 해도 대기가 살아 남지 않게."""
         link = self.state.link
         if not (link and link.connected):
-            return "PLC 연결이 끊겼습니다"
+            return "PLC 연결이 끊김"
         s = link.status
         if A.bit(s[A.D_INTERLOCK], A.ILK_SAFE_STOP_REQ):
-            return "안전 정지 요구가 생겼습니다"
+            return "안전 정지 요구가 생김"
         i0 = s[A.D_INPUT0]
         if not A.bit(i0, A.IN0_PUMP_RUN):
-            return "펌프 운전 입력이 꺼졌습니다"
+            return "펌프 운전 입력이 꺼짐"
         if not A.bit(i0, A.IN0_IVE_OPEN):
-            return "IV-E 열림 입력이 꺼졌습니다(배기 격리 닫힘 · 벤트)"
+            return "IV-E 열림 입력이 꺼짐(배기 격리 닫힘 · Vent)"
         if A.bit(i0, A.IN0_ATM):
-            return "챔버 대기압 입력이 켜졌습니다"
+            return "챔버 대기압 입력이 켜짐"
         if s[A.D_STATE] != A.STATE_IDLE:
-            return f"장비 상태가 대기가 아닙니다({A.STATE_NAMES.get(s[A.D_STATE], s[A.D_STATE])})"
+            return f"장비 상태가 대기가 아님({A.STATE_NAMES.get(s[A.D_STATE], s[A.D_STATE])})"
         crit = [a["name"] for a in self.state.alarms.list() if a["crit"]]
         if crit:
             return "중대 알람: " + " · ".join(crit)
@@ -635,7 +635,7 @@ class ProcessRunner:
             if self._abort_unknown and time.monotonic() - self._abort_unknown_at > ABORT_GRACE_S:
                 # 결과를 못 받은 즉시 중단 뒤에도 공정이 계속 돈다 — 중단은 PLC 에 닿지 않았다
                 self._abort_unknown = False
-                push_log_sync("warn", "중단 명령이 PLC 에 닿지 않았습니다 — 공정 계속")
+                push_log_sync("warn", "중단 명령이 PLC 에 닿지 않음 — 공정 계속")
             self._watch_rf(s, push_log_sync)
             if self.active_run:
                 self._watch_limits(s, push_log_sync)
@@ -717,8 +717,8 @@ class ProcessRunner:
             link = self.state.link
             wdt = link._wdt_s() if hasattr(link, "_wdt_s") else A.PRM_DEFAULTS["pc_wdt_ms"] / 1000.0
             if lost_s >= wdt or A.bit(s[A.D_ALARM0], A.ALM0_PC_LINK):
-                self.pending_toasts.append(("warn", f"PC 연결이 돌아왔습니다 — 끊긴 {lost_s:.0f} s 동안 공정은 "
-                                                    "계속되었습니다"))
+                self.pending_toasts.append(("warn", f"PC 연결이 돌아옴 — 끊긴 {lost_s:.0f} s 동안 공정은 "
+                                                    "계속됨"))
 
     # ---- v0.7.0(A5): 공정 중 압력 상한 · 히터 이탈 경고(PC 감시) ----
     def _reset_watch(self):
@@ -760,7 +760,7 @@ class ProcessRunner:
                     self.pending_toasts.append(("warn", msg))
                     if pr.get("press_high_abort") and not self._press_abort_sent:
                         self._press_abort_sent = True
-                        push_log_sync("warn", "압력 상한 — PC 가 즉시 중단을 보냅니다(process.press_high_abort)")
+                        push_log_sync("warn", "압력 상한 — PC 가 즉시 중단을 보냄(process.press_high_abort)")
                         self._press_task = self._spawn(self._press_abort(push_log_sync))
         else:
             if self._press_warned:
@@ -813,7 +813,7 @@ class ProcessRunner:
         log_sync = log_sync or (lambda lv, m: logger.write(lv, m))
         link = self.state.link
         if not (link and link.connected) or link.status[A.D_STATE] not in RUNNING_STATES:
-            log_sync("warn", "압력 상한 즉시 중단을 보내지 않았습니다 — PLC 연결 없음 또는 공정이 이미 끝남")
+            log_sync("warn", "압력 상한 즉시 중단을 보내지 않음 — PLC 연결 없음 또는 공정이 이미 끝남")
             return
         self._abort_why = "압력 상한 — PC 가 즉시 중단"
         self.abort_begin()
@@ -824,7 +824,7 @@ class ProcessRunner:
             unknown = result is None and ("응답 없음" in text or "받았을 수" in text)
             logger.command("즉시 중단(압력 상한)", link._cmd_no, text, "local")
             if not done and not unknown:
-                log_sync("warn", f"압력 상한 즉시 중단이 처리되지 않았습니다 — {text}")
+                log_sync("warn", f"압력 상한 즉시 중단이 처리되지 않음 — {text}")
         except Exception as e:  # noqa: BLE001
             log_sync("warn", f"압력 상한 즉시 중단 실패: {type(e).__name__}: {e}")
         finally:
@@ -940,8 +940,8 @@ class ProcessRunner:
                               or A.dword(s[A.D_SEQ_BLOCK_PASS], s[A.D_SEQ_BLOCK_PASS + 1]) != w["cycle"]):
             if not w["on"] and w["key"] not in self._rf_warned:
                 self._rf_warned.add(w["key"])
-                push_log_sync("warn", f"RF 스텝에서 RF 가 한 번도 켜지지 않았습니다 — 블록 {w['key'][0]} · "
-                                      f"스텝 {w['key'][1]} · RF 허가(인터락 b8) {w['ilk']} · CVG {w['cvg']} Torr")
+                push_log_sync("warn", f"RF 스텝에서 RF 가 한 번도 켜지지 않음 — 블록 {w['key'][0]} · "
+                                      f"스텝 {w['key'][1]} · RF Permit(인터락 b8) {w['ilk']} · CVG {w['cvg']} Torr")
             w = self._rf_watch = None
         if cur is not None:
             cyc = A.dword(s[A.D_SEQ_BLOCK_PASS], s[A.D_SEQ_BLOCK_PASS + 1])
@@ -1216,8 +1216,8 @@ class ProcessRunner:
             if words:
                 break
         if not link.connected:
-            await push_log("PLC 가 공정 중인데 레시피 표를 되읽는 중 연결이 끊겼습니다 — 다시 붙으면 이어받기를 "
-                           "다시 시도합니다", "warn")
+            await push_log("PLC 가 공정 중인데 레시피 표를 되읽는 중 연결이 끊김 — 다시 붙으면 이어받기를 "
+                           "다시 시도함", "warn")
             return False
         # ★ 되읽는 동안 공정이 끝났거나 이 PC 가 공정을 맡았으면 이어받지 않는다
         if not self.adopt_wanted():
@@ -1232,23 +1232,23 @@ class ProcessRunner:
             if name and self.select(name)[0]:
                 self.run = {"name": name, "recipe": self.recipe,
                             "table": dict(self.table or {}, words=list(words))}
-                msg = f"PLC 가 이미 공정 중입니다 — 레시피 [{name}] (번호 {info['number']})로 이어 갑니다"
+                msg = f"PLC 가 이미 공정 중 — 레시피 [{name}] (번호 {info['number']})로 이어 감"
             else:
                 self.recipe = None
                 self.recipe_name = f"(PLC 번호 {info['number']})"
                 self.table = {"number": info["number"], "checksum": info["checksum"]}
                 self.state.recipe_check = {}
                 self.run = {"name": self.recipe_name, "recipe": None, "table": dict(self.table, words=list(words))}
-                msg = (f"PLC 가 이미 공정 중입니다 — 번호 {info['number']} 에 맞는 로컬 레시피가 없어 "
-                       f"이름 없이 표시합니다")
+                msg = (f"PLC 가 이미 공정 중 — 번호 {info['number']} 에 맞는 로컬 레시피가 없어 "
+                       f"이름 없이 표시함")
         else:
             self.recipe = None
             self.recipe_name = ADOPT_NO_TABLE_NAME
             self.table = None
             self.state.recipe_check = {}
             self.run = {"name": self.recipe_name, "recipe": None, "table": None}
-            msg = (f"PLC 가 이미 공정 중인데 레시피 표를 {ADOPT_READ_TRIES}번 읽지 못했습니다 — 표 없이 "
-                   "이어 갑니다(데이터 로그 · 끝 판정은 하고, 표가 필요한 이유는 '표 모름')")
+            msg = (f"PLC 가 이미 공정 중인데 레시피 표를 {ADOPT_READ_TRIES}번 읽지 못함 — 표 없이 "
+                   "이어 감(데이터 로그 · 끝 판정은 하고, 표가 필요한 이유는 '표 모름')")
         self._was_running = True
         self.started_at = time.time()
         self.active_run = True                  # 이어받은 공정도 데이터 로그 구간
@@ -1491,7 +1491,7 @@ def o3_permit_missing(s, prm=None) -> list:
     if not A.bit(s[A.D_AUX_OUT], A.AUX_IVB):
         miss.append("IV-B 열림")
     if A.bit(i1, A.IN1_O3_ALM):
-        miss.append("O3 발생기 알람 입력 꺼짐")
+        miss.append("O3 Generator 알람 입력 꺼짐")
     if A.bit(i1, A.IN1_O3_ROOM):
         miss.append("실내 O3 감지 꺼짐")
     o3_max = (prm or {}).get(A.D_PRM_O3_MAX)
@@ -1520,7 +1520,7 @@ def rf_permit_missing(s, prm=None, conv=None) -> list:
     if A.bit(i1, A.IN1_RF_ALM):
         miss.append("RF 알람 입력 꺼짐")
     if A.bit(s[A.D_ALARM1], A.ALM1_RF_REF):
-        miss.append("반사 전력 알람 리셋")
+        miss.append("반사 전력 Alarm Reset")
     prm = prm or {}
     rf_max = prm.get(A.D_PRM_RF_MAX)
     if rf_max is not None and A.to_signed16(rf_max) <= 0:
@@ -1612,7 +1612,7 @@ ADOPT_RETRY_S = 3.0      # PLC 가 공정 중인데 맡은 공정이 없으면 �
 ADOPT_NO_TABLE_NAME = "(PLC 레시피 — 표 모름)"
 ADOPTING_NAME = "(이어받는 중)"
 FOREIGN_NAME = "(다른 장비 공정)"     # v0.4.16 줄임 — 빨간 띠가 이미 조작을 막았다고 말한다
-START_NOT_SENT = "공정 시작 명령을 보내지 못했습니다"
+START_NOT_SENT = "공정 시작 명령을 보내지 못함"
 B13_WAIT_S = 1.0        # 시퀀서 8 로 끝났을 때 레시피 표 오류(b13)가 공개되기를 기다리는 시간
 ABORT_GRACE_S = 1.0     # 결과를 못 받은 즉시 중단 뒤 이만큼 지나도 공정 중이면 중단이 닿지 않은 것
 

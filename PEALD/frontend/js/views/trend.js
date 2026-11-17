@@ -83,7 +83,7 @@
       items[i].hidden = true;
       hid.unshift(items[i].textContent);
       more.textContent = '+' + hid.length;
-      more.title = hid.join('\n');
+      core.tip(more, hid.join('\n'));
     }
     if (!hid.length) more.remove();
   }
@@ -255,8 +255,8 @@
       var b = d.querySelector('[data-hact="' + a + '"]');
       if (!b) return;
       b.disabled = !!why;
-      var tip = why ? why + ' — 쓸 수 없습니다' : '';
-      if (b.title !== tip) b.title = tip;
+      var tip = why ? why + ' — 쓸 수 없음' : '';
+      core.tip(b, tip);
     });
   }
 
@@ -343,7 +343,7 @@
           (bs >= 60 ? (bs / 60).toFixed(1) + ' min' : bs.toFixed(1) + ' s') + '/bin');
         drawAll();
       })
-      .catch(function () { if (my === loadNo) core.setText('trendInfo', '이력을 읽지 못했습니다'); });
+      .catch(function () { if (my === loadNo) core.setText('trendInfo', '이력을 읽지 못함'); });
   }
 
   function xLabel(ms, span, full) {
@@ -393,13 +393,13 @@
     var act = a.dataset.hact;
     if (act === 'load') {
       var x0 = fromInput('hT0'), x1 = fromInput('hT1');
-      if (!(x1 > x0)) { core.toast('끝 시각이 시작 시각보다 뒤여야 합니다', 'warn'); return; }
+      if (!(x1 > x0)) { core.toast('끝 시각이 시작 시각보다 뒤여야 함', 'warn'); return; }
       stack = []; t0 = x0; t1 = x1; load();
     } else if (act === 'undo') {
       var prev = stack.pop();
       if (prev) { t0 = prev[0]; t1 = prev[1]; load(); }
     } else if (act === 'export') {
-      if (!core.canOperate()) { core.toast(core.lockReason() + ' — CSV 로 저장할 수 없습니다', 'warn'); return; }
+      if (!core.canOperate()) { core.toast(core.lockReason() + ' — CSV 로 저장할 수 없음', 'warn'); return; }
       w.app.send('trend_export', { t0: t0, t1: t1 });
     } else if (act === 'folder') {
       if (!core.canOperate()) return;

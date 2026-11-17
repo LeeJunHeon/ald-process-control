@@ -171,7 +171,7 @@ class TrendLog:
                 con.executemany(q, [[r.get(n) for n in names] for r in rs])
                 con.commit()
             if self.error:
-                logger.write("ok", "트렌드 이력 기록을 다시 시작했습니다")
+                logger.write("ok", "트렌드 이력 기록을 다시 시작함")
             self.error = ""
         except Exception as e:  # noqa: BLE001
             # ★ 기록 실패가 화면·공정을 막지 않는다 — 로그로만(같은 오류는 한 번만).
@@ -323,11 +323,11 @@ def clamp_range(t0, t1, keep_days, max_s, what):
     try:
         t0, t1 = float(t0), float(t1)
     except (TypeError, ValueError):
-        return 0.0, 0.0, "구간이 올바르지 않습니다"
+        return 0.0, 0.0, "구간이 올바르지 않음"
     if t0 != t0 or t1 != t1:
         # ★ v0.8.4: NaN 은 아래 max · min · 비교를 모두 지나가 '오류 없음' 으로 나갔다(원격 GET ?t0=nan 의 응답이
         #   JSON 이 아닌 NaN 을 담았다) — 올바르지 않은 구간으로 거절한다
-        return 0.0, 0.0, "구간이 올바르지 않습니다"
+        return 0.0, 0.0, "구간이 올바르지 않음"
     now = time.time()
     try:
         keep = max(1, int(keep_days))
@@ -336,9 +336,9 @@ def clamp_range(t0, t1, keep_days, max_s, what):
     t0 = max(t0, now - keep * 86400)
     t1 = min(t1, now + FUTURE_S)
     if t1 <= t0:
-        return t0, t1, "구간이 비어 있습니다 (보존 기간 밖이거나 끝이 시작보다 앞)"
+        return t0, t1, "구간이 비어 있음 (보존 기간 밖이거나 끝이 시작보다 앞)"
     if t1 - t0 > max_s + 1:
-        return t0, t1, (f"{what} 구간은 최대 {int(max_s // 86400)}일입니다 — 구간을 줄이세요 "
+        return t0, t1, (f"{what} 구간은 최대 {int(max_s // 86400)}일 — 구간 줄이기 필요 "
                         f"(요청 {(t1 - t0) / 86400:.1f}일)")
     return t0, t1, ""
 
@@ -403,7 +403,7 @@ def disk_warning() -> str:
     except Exception:  # noqa: BLE001
         return ""
     if free < LOW_DISK_BYTES:
-        return f"데이터 폴더 디스크 여유가 {free / (1 << 20):.0f} MB 입니다 (1 GB 미만) — 오래된 파일을 정리하세요"
+        return f"데이터 폴더 디스크 여유가 {free / (1 << 20):.0f} MB (1 GB 미만) — 오래된 파일 정리 필요"
     return ""
 
 

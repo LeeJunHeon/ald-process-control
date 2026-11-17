@@ -87,7 +87,7 @@ class Admin:
             return False
         if time.monotonic() - s["last"] > IDLE_S:
             self.sessions.pop(ws, None)
-            logger.write("info", "관리자 잠금 — 10 분 동안 조작이 없었습니다")
+            logger.write("info", "관리자 잠금 — 10 분 동안 조작이 없음")
             return False
         if token is not None and not hmac.compare_digest(str(token), s["token"]):
             return False
@@ -119,68 +119,68 @@ class Admin:
     def setup(self, ws, pin: str, pin2: str, local: bool):
         """PIN 이 없을 때 처음 정한다. (성공, 이유)"""
         if not local:
-            return False, "PIN 은 이 PC 에서만 정할 수 있습니다"
+            return False, "PIN 은 이 PC 에서만 정할 수 있음"
         if self.has_pin():
-            return False, "PIN 이 이미 있습니다 — 바꾸려면 현재 PIN 을 확인하세요"
+            return False, "PIN 이 이미 있음 — 바꾸려면 현재 PIN 확인 필요"
         if not valid_pin(pin):
-            return False, f"PIN 은 숫자 {PIN_MIN}~{PIN_MAX}자리여야 합니다"
+            return False, f"PIN 은 숫자 {PIN_MIN}~{PIN_MAX}자리여야 함"
         if pin != pin2:
-            return False, "두 번 입력한 PIN 이 다릅니다"
+            return False, "두 번 입력한 PIN 이 다름"
         try:
             self._write_pin(pin)
         except Exception as e:  # noqa: BLE001
             logger.write("err", f"관리자 PIN 저장 실패: {type(e).__name__}")
-            return False, "PIN 을 저장하지 못했습니다 — 데이터 폴더 쓰기 권한을 확인하세요"
-        logger.write("warn", "관리자 PIN 을 새로 정했습니다")
+            return False, "PIN 을 저장하지 못함 — 데이터 폴더 쓰기 권한 확인 필요"
+        logger.write("warn", "관리자 PIN 을 새로 정함")
         self._unlock(ws)
-        return True, "PIN 을 정했습니다 — 잠금 해제됨"
+        return True, "PIN 을 정함 — 잠금 해제됨"
 
     def unlock(self, ws, pin: str, local: bool):
         if not local:
             logger.write("warn", "관리자 잠금 해제 거절 — 원격 연결")
-            return False, "잠금 해제는 이 PC 에서만 됩니다"
+            return False, "잠금 해제는 이 PC 에서만 됨"
         if not self.has_pin():
-            return False, "PIN 이 아직 없습니다 — 먼저 정하세요"
+            return False, "PIN 이 아직 없음 — 먼저 지정 필요"
         left = self.blocked_s()
         if left:
-            return False, f"PIN 을 {MAX_FAILS}번 틀려 입력이 막혀 있습니다 — {left} s 뒤 다시 하세요"
+            return False, f"PIN 을 {MAX_FAILS}번 틀려 입력이 막혀 있음 — {left} s 뒤 다시 시도"
         if self._check_pin(str(pin or "")):
             self.fails = 0
             self._unlock(ws)
             logger.write("ok", "관리자 잠금 해제")
-            return True, "잠금 해제됨 (10 분 동안 조작이 없으면 다시 잠깁니다)"
+            return True, "잠금 해제됨 (10 분 동안 조작이 없으면 다시 잠김)"
         self.fails += 1
         logger.write("warn", f"관리자 PIN 틀림 ({self.fails}/{MAX_FAILS})")
         if self.fails >= MAX_FAILS:
             self.fails = 0
             self.blocked_until = time.monotonic() + BLOCK_S
-            logger.write("err", f"관리자 PIN {MAX_FAILS}번 틀림 — {int(BLOCK_S // 60)} 분 동안 입력을 막습니다")
-            return False, f"PIN 을 {MAX_FAILS}번 틀렸습니다 — {int(BLOCK_S // 60)} 분 동안 입력을 막습니다"
-        return False, f"PIN 이 틀렸습니다 ({MAX_FAILS - self.fails}번 남음)"
+            logger.write("err", f"관리자 PIN {MAX_FAILS}번 틀림 — {int(BLOCK_S // 60)} 분 동안 입력을 막음")
+            return False, f"PIN 을 {MAX_FAILS}번 틀림 — {int(BLOCK_S // 60)} 분 동안 입력을 막음"
+        return False, f"PIN 이 틀림 ({MAX_FAILS - self.fails}번 남음)"
 
     def change(self, ws, old: str, new: str, new2: str, local: bool):
         if not local:
-            return False, "PIN 은 이 PC 에서만 바꿀 수 있습니다"
+            return False, "PIN 은 이 PC 에서만 바꿀 수 있음"
         left = self.blocked_s()
         if left:
-            return False, f"입력이 막혀 있습니다 — {left} s 뒤 다시 하세요"
+            return False, f"입력이 막혀 있음 — {left} s 뒤 다시 시도"
         if not self._check_pin(str(old or "")):
             self.fails += 1
             logger.write("warn", f"관리자 PIN 바꾸기 — 현재 PIN 틀림 ({self.fails}/{MAX_FAILS})")
             if self.fails >= MAX_FAILS:
                 self.fails = 0
                 self.blocked_until = time.monotonic() + BLOCK_S
-                logger.write("err", f"관리자 PIN {MAX_FAILS}번 틀림 — 입력을 막습니다")
-            return False, "현재 PIN 이 틀렸습니다"
+                logger.write("err", f"관리자 PIN {MAX_FAILS}번 틀림 — 입력을 막음")
+            return False, "현재 PIN 이 틀림"
         if not valid_pin(new):
-            return False, f"새 PIN 은 숫자 {PIN_MIN}~{PIN_MAX}자리여야 합니다"
+            return False, f"새 PIN 은 숫자 {PIN_MIN}~{PIN_MAX}자리여야 함"
         if new != new2:
-            return False, "두 번 입력한 새 PIN 이 다릅니다"
+            return False, "두 번 입력한 새 PIN 이 다름"
         self.fails = 0
         self._write_pin(new)
-        logger.write("warn", "관리자 PIN 을 바꿨습니다")
+        logger.write("warn", "관리자 PIN 을 바꿈")
         self._unlock(ws)
-        return True, "PIN 을 바꿨습니다"
+        return True, "PIN 을 바꿈"
 
     def lock(self, ws, why: str = "잠금 누름"):
         if self.sessions.pop(ws, None):

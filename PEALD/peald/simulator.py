@@ -73,9 +73,9 @@ FAULTS = [
     {"key": "rf_notready", "name": "RF 준비 끔", "dev": "peald"},
     {"key": "rf_alm",    "name": "RF 알람", "dev": "peald"},
     {"key": "rf_ref",    "name": "반사 전력 증가", "dev": "peald"},
-    {"key": "o3_alm",    "name": "O3 발생기 알람", "dev": "powderald"},
+    {"key": "o3_alm",    "name": "O3 Generator 알람", "dev": "powderald"},
     {"key": "o3_room",   "name": "실내 O3 감지", "dev": "powderald"},
-    {"key": "bp_alm",    "name": "바이패스 펌프 알람", "dev": "powderald"},
+    {"key": "bp_alm",    "name": "Bypass Pump 알람", "dev": "powderald"},
     {"key": "mfc1_stuck", "name": "MFC1 막힘 (현재값 0)"},
     {"key": "tc1_comm",  "name": "온도조절기 국번1 통신 끊김"},
     {"key": "tc2_comm",  "name": "온도조절기 국번2 통신 끊김"},
@@ -86,7 +86,7 @@ FAULTS = [
     {"key": "ive_stuck", "name": "IV-E 리미트 입력 안 따라옴 (5 s 뒤 알람1 b0 · 공정 중이면 0.5 s 뒤 알람1 b8)"},
     {"key": "pump_nofb", "name": "펌프 운전 피드백 없음 (10 s 뒤 알람0 b5 · 공정 중이면 0.5 s 뒤 알람1 b8)"},
     {"key": "atm_sw",    "name": "챔버 대기압 입력 켜짐 (압력은 그대로 — 공정 중이면 0.5 s 뒤 알람1 b8)"},
-    {"key": "bp_nofb",   "name": "바이패스 펌프 운전 피드백 없음 (10 s 뒤 알람1 b5)", "dev": "powderald"},
+    {"key": "bp_nofb",   "name": "Bypass Pump 운전 피드백 없음 (10 s 뒤 알람1 b5)", "dev": "powderald"},
     {"key": "old_p50",   "name": "고치기 전 래더 P50 (시험 — 허가가 꺼져도 수동 요청을 지우지 않음)"},
 ]
 
@@ -107,9 +107,9 @@ class _Regs(list):
         if isinstance(i, slice):
             lo, hi, _ = i.indices(len(self))
             if lo <= PC_AREA_LAST and hi > PC_AREA_FIRST:
-                raise PcAreaWrite(f"PC 영역 D{lo:05d}~ 을 내부에서 쓰려 했습니다")
+                raise PcAreaWrite(f"PC 영역 D{lo:05d}~ 을 내부에서 쓰려 함")
         elif PC_AREA_FIRST <= int(i) <= PC_AREA_LAST:
-            raise PcAreaWrite(f"PC 영역 D{int(i):05d} 을 내부에서 쓰려 했습니다")
+            raise PcAreaWrite(f"PC 영역 D{int(i):05d} 을 내부에서 쓰려 함")
         super().__setitem__(i, v)
 
     def pc_set(self, i, v):
@@ -671,7 +671,7 @@ class PlcSim:
         start, end, rep = g
         nb = self._w(A.D_RCP_BLOCK_COUNT)
         if start < 1 or end < start or end > nb or rep < 1:
-            return f"그룹 {idx} 항목이 올바르지 않습니다"
+            return f"그룹 {idx} 항목이 올바르지 않음"
         return ""
 
     def _block_error(self, n: int) -> str:
@@ -681,7 +681,7 @@ class PlcSim:
         repeat = self._wd(base + A.RCP_BLOCK_REPEAT_LO)
         ns = self._w(A.D_RCP_STEP_COUNT)
         if first < 1 or last < first or last > ns or repeat < 1:
-            return f"블록 {n} 항목이 올바르지 않습니다"
+            return f"블록 {n} 항목이 올바르지 않음"
         return ""
 
     def _load_block(self, n: int):
@@ -755,7 +755,7 @@ class PlcSim:
         base = A.D_RCP_STEP_BASE + (self.step_no - 1) * A.RCP_STEP_STRIDE
         t = self._wd(base + A.RCP_STEP_TIME_LO)
         if t < 20 or t > 3_276_700:
-            self._recipe_error(f"스텝 {self.step_no} 시간이 범위를 벗어납니다 ({t} ms)")
+            self._recipe_error(f"스텝 {self.step_no} 시간이 범위를 벗어남 ({t} ms)")
             return
         valves = self._w(base + A.RCP_STEP_VALVE_LO)
         flags = self._w(base + A.RCP_STEP_FLAGS)
@@ -1510,7 +1510,7 @@ class SimServer:
         try:
             self._server = await asyncio.start_server(self._client, self.host, self.port)
         except OSError as e:
-            self.error = f"시뮬레이터 포트를 열지 못했습니다 ({self.host}:{self.port}) — {e}"
+            self.error = f"시뮬레이터 포트를 열지 못함 ({self.host}:{self.port}) — {e}"
             log.error("%s", self.error)
             return False
         self._task = asyncio.create_task(self._loop())

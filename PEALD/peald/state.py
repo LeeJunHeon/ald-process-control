@@ -314,11 +314,13 @@ class State:
             "state_names": A.STATE_NAMES,
             "seq_names": A.SEQ_NAMES,
             # v0.7.0(A1): 알람 코드 → 이름 · 등급 · 원인 · 확인(알람 탭 펼침 · 이력 툴팁 · 알람 창)
-            "alarm_defs": {f"{tag}-{d['bit']:02d}": {"name": d["name"], "crit": d["crit"],
+            "alarm_defs": {f"{tag}-{d['bit']:02d}": {"name": d["name"], "crit": d["crit"], "ko": d.get("ko", ""),
                                                      "cause": d.get("cause", ""), "check": d.get("check", "")}
                            for tag, defs in (("A0", DEV.ALARMS0), ("A1", DEV.ALARMS1)) for d in defs},
             # v0.8.0: 운전 화면 배치 — 램프판 · 밸브 띠 · 시작 조건 자리(칸 크기는 이것으로만 정해진다)
             "annunciator": DEV.ANNUNCIATOR,
+            # v0.8.6: 히터 · MFC 기본 이름의 한국어 이름 · 설명(설명창 — 설정에서 이름을 바꾸면 없음)
+            "names_ko": {"heater": DEV.HEATER_KO, "mfc": DEV.MFC_KO},
             "valve_strip": DEV.VALVE_STRIP,
             "start_slots": DEV.START_SLOTS,
             "aux_cmd_mask": DEV.AUX_CMD_MASK,
@@ -436,7 +438,7 @@ class State:
                 "comm_ok": station_ok,
                 # 전원 켜기를 막는 이유(화면 히터 표·수동 창이 그대로 보인다). 끄기는 언제나 된다.
                 "power_block": "" if station_ok else
-                "온도조절기 통신이 없어 PLC 과온 감시가 동작하지 않습니다 — 전원을 켤 수 없습니다",
+                "온도조절기 통신이 없어 PLC 과온 감시가 동작하지 않음 — 전원을 켤 수 없음",
             })
         out["heaters"] = heaters
         out["tc_comm"] = tc
@@ -493,7 +495,7 @@ class State:
                     else:
                         cause = crit_names_of(s)
                         out.append(["err", "PC 끊김 트립도 남아 있지만 PLC 안전 정지 원인은 "
-                                           + (" · ".join(cause) or "중대 알람") + " 입니다 — 원인을 없앤 뒤 [Alarm Reset]",
+                                           + (" · ".join(cause) or "중대 알람") + " — 원인을 없앤 뒤 [Alarm Reset]",
                                     "plc"])
             if conn and link.status[A.D_STATE] not in (A.STATE_READY, A.STATE_RUN, A.STATE_PAUSE, A.STATE_STOPPING):
                 # ★ v0.8.2: 래더 P50 은 허가가 꺼지면 수동 요청을 지운다 — 그런데도 1 s 넘게 남은 밸브 · RF 요청은 PLC 가
@@ -512,7 +514,7 @@ class State:
                     pend = []
                 if pend:
                     out.append(["warn", "PLC 가 지우지 않은 수동 요청: " + " · ".join(pend) +
-                                " — 허가가 없는데 요청이 남아 있습니다(래더 P50 확인). 허가가 다시 생기면 열리거나 켜집니다"
+                                " — 허가가 없는데 요청이 남아 있음(래더 P50 확인). 허가가 다시 생기면 열리거나 켜짐"
                                 " — 필요 없으면 그 밸브 [Close]" + ("(RF 는 OFF)" if "RF" in pend else "") +
                                 ("(O3 는 Line OFF)" if "O3GEN" in pend else "") +
                                 " 또는 [Close All Valves]", "plc"])
@@ -586,14 +588,20 @@ class State:
         # v0.8.5: O3 라인 켜기가 O3 허가를 기다리는 남은 시간(s, 올림 — 기다리는 동안은 1 이상)
         o3_wait = max(1, int(math.ceil(self.o3_on_until - _t.monotonic()))) if self.o3_on_until else 0
         permit = bool(conn and A.bit(link.status[A.D_INTERLOCK], A.ILK_VALVE_OK))
-        missing = []
+        missing, rf_miss, o3_miss = [], [], []
         if conn:
-            from .process import valve_permit_missing
+            from .process import valve_permit_missing, rf_permit_missing, o3_permit_missing
             missing = valve_permit_missing(link.status)
+            # v0.8.6: 램프 설명창 — RF · O3 허가가 꺼졌을 때 빠진 조건(같은 서버 계산)
+            prm = getattr(link, "prm_readback", None)
+            rf_miss = rf_permit_missing(link.status, prm, self.conv) if DEV.HAS_RF else []
+            o3_miss = o3_permit_missing(link.status, prm) if DEV.HAS_O3 else []
         return {
             # v0.8.0: 공정 밸브 허가(D00004 b4)와 빠진 조건 — 조작 창 · 수동 창이 열기를 막고 이유를 보인다
             "valve_permit": permit,
             "valve_permit_missing": missing,
+            "rf_permit_missing": rf_miss,
+            "o3_permit_missing": o3_miss,
             "unlocked": _t.monotonic() < self.manual_unlock_until,
             "unlock_left_s": max(0, int(self.manual_unlock_until - _t.monotonic())),
             "valve_request": req,
@@ -711,9 +719,9 @@ class State:
                 for f in visible_faults()]
 
 
-TRIP_RUN_TEXT = ("PC 연결이 끊겼던 기록(PC Link Lost)이 남아 있습니다 — 공정은 계속됩니다. 그대로 두면 공정이 끝날 때 "
-                 "PLC 가 안전 정지합니다(밸브 · 수동 요청 끔, 펌프 · 히터 유지). [Alarm Reset] 으로 풀립니다.")
-TRIP_STOP_TEXT = "PC 끊김 트립이 남아 PLC 가 안전 정지 상태입니다 — [Alarm Reset] 으로 풀립니다."
+TRIP_RUN_TEXT = ("PC 연결이 끊겼던 기록(PC Link Lost)이 남아 있음 — 공정은 계속됨. 그대로 두면 공정이 끝날 때 "
+                 "PLC 가 안전 정지함(밸브 · 수동 요청 끔, 펌프 · 히터 유지). [Alarm Reset] 으로 풀림.")
+TRIP_STOP_TEXT = "PC 끊김 트립이 남아 PLC 가 안전 정지 상태 — [Alarm Reset] 으로 풀림."
 
 
 def _last_operator():

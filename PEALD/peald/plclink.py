@@ -49,15 +49,15 @@ APPLY_SETTLE_S = 0.1            # 명령 12 결과 뒤 반영 영역을 다시 �
 PLC_HB_STALL_S = 2.0            # PLC 하트비트가 이만큼 안 바뀌면 멈춘 것으로 본다
 FAST_RETRY_S = 0.25             # 와치독 안에서 연결이 바로 거절되면 이만큼 쉬고 다시 붙는다
 FAST_CONNECT_S = 0.3            # 와치독 안의 연결 시간 초과(시간 초과로 실패하면 쉬지 않고 바로 다시)
-HB_STALL_TEXT = "PLC 하트비트 멈춤 — PLC 가 STOP 이거나 멈췄습니다 · 명령을 보내지 않습니다"
+HB_STALL_TEXT = "PLC 하트비트 멈춤 — PLC 가 STOP 이거나 멈춤 · 명령을 보내지 않음"
 RECONNECT_DELAYS = (1.0, 2.0, 5.0)
 GIL_SWITCH_S = 0.001            # 작업 스레드가 돌 때도 루프가 자주 돌게
 
-BLOCKED_TEXT = "다른 장비의 PLC 입니다 — 주소를 확인하세요 (쓰기 차단)"
+BLOCKED_TEXT = "다른 장비의 PLC — 주소 확인 필요 (쓰기 차단)"
 # 화면·사전 판정·공정 시작 거절에 쓰는 문구 (막힌 상태별)
 ID_BLOCK_TEXT = {
-    "wrong": "다른 장비의 PLC 입니다 — 주소를 확인하세요 (모든 조작을 막았습니다)",
-    "missing": "PLC 장비 ID 가 없습니다(0) — 이 장비 PLC 인지 확인할 수 없어 모든 조작을 막았습니다",
+    "wrong": "다른 장비의 PLC — 주소 확인 필요 (모든 조작을 막음)",
+    "missing": "PLC 장비 ID 가 없음(0) — 이 장비 PLC 인지 확인할 수 없어 모든 조작을 막음",
 }
 BLOCKED_STATES = ("wrong", "missing")
 
@@ -100,7 +100,7 @@ class PlcLink:
         host = "127.0.0.1" if self.simulate else str(plc.get("host") or "").strip()
         self._host = host
         self.config_error = "" if host else \
-            "plc.host 가 비어 있습니다 — PLC 에 연결하지 않습니다 (설정에서 이 장비 PLC 주소를 넣으세요)"
+            "plc.host 가 비어 있음 — PLC 에 연결하지 않음 (설정에서 이 장비 PLC 주소 입력 필요)"
         port = int(plc.get("sim_port") or DEV.DEFAULT_SIM_PORT) if self.simulate \
             else int(plc.get("port") or 502)
         self.client = ModbusClient(host, port, int(plc.get("unit_id") or 1),
@@ -213,16 +213,16 @@ class PlcLink:
                 self._connected_at = time.monotonic()
                 # ★ 막힌 상태(다른 장비·ID 없음)면 '괜찮아진 것'처럼 읽히지 않게 경고로 남긴다
                 if self.id_state == "wrong":
-                    self.on_event("warn", f"PLC 연결됨 ({self.addr_text}) — 장비 ID 가 맞지 않아 읽기만 합니다")
+                    self.on_event("warn", f"PLC 연결됨 ({self.addr_text}) — 장비 ID 가 맞지 않아 읽기만 함")
                 elif self.id_state == "missing":
-                    self.on_event("warn", f"PLC 연결됨 ({self.addr_text}) — 장비 ID 가 없어 읽기만 합니다")
+                    self.on_event("warn", f"PLC 연결됨 ({self.addr_text}) — 장비 ID 가 없어 읽기만 함")
                 else:
                     self.on_event("ok", f"PLC 연결됨 ({self.addr_text})")
                 await self._serve()
             except IdRecovered:
                 self.connected = False
                 self.write_ok = False
-                self.on_event("ok", "장비 ID 가 허용되는 값으로 바뀌었습니다 — 다시 연결해 파라미터를 씁니다")
+                self.on_event("ok", "장비 ID 가 허용되는 값으로 바뀜 — 다시 연결해 파라미터를 씀")
             except (ModbusTimeout, ModbusError, OSError) as e:
                 self._drop(f"PLC 통신 끊김: {e}")
             except asyncio.CancelledError:
@@ -307,7 +307,7 @@ class PlcLink:
         while not self._stop:
             if hb.done():                   # 하트비트 쓰기가 통신 오류로 끝났으면 연결을 버린다
                 hb.result()
-                raise ModbusError("하트비트 태스크가 끝났습니다")
+                raise ModbusError("하트비트 태스크가 끝남")
             now = time.monotonic()
             if now >= next_poll:
                 next_poll = now + self.poll_s
@@ -346,7 +346,7 @@ class PlcLink:
         if self.write_ok and self._ot_prev and self.cmd_reg(A.D_HEATER_POWER):
             await self.client.write_single(A.D_HEATER_POWER, 0)
             self._set_cmd_reg(A.D_HEATER_POWER, 0)
-            self.on_event("warn", "과온 알람이 래치돼 있어 히터 전원 요청을 모두 껐습니다")
+            self.on_event("warn", "과온 알람이 래치돼 있어 히터 전원 요청을 모두 끔")
 
     def _check_id(self, regs, first: bool = False):
         """장비 ID 판정. 다른 장비면 쓰기를 모두 막는다(연결은 유지 — 상태는 보여 준다)."""
@@ -372,26 +372,26 @@ class PlcLink:
                 self.on_event("ok", f"PLC 장비 ID 확인됨 ({id_text(DEV.DEVICE_ID)})")
         elif new == "unset":
             if first:
-                self.on_event("warn", f"PLC 장비 ID 가 0 입니다 (래더에 ID 가 아직 없음) — "
-                                      f"이 장비 ID {id_text(DEV.DEVICE_ID)} 를 확인하지 못했습니다")
+                self.on_event("warn", f"PLC 장비 ID 가 0 (래더에 ID 가 아직 없음) — "
+                                      f"이 장비 ID {id_text(DEV.DEVICE_ID)} 를 확인하지 못함")
             elif prev == "ok":
-                self.on_event("warn", "PLC 장비 ID 가 0 으로 바뀌었습니다 — PLC 프로그램이 바뀌었는지 확인하세요")
+                self.on_event("warn", "PLC 장비 ID 가 0 으로 바뀜 — PLC 프로그램이 바뀌었는지 확인 필요")
         elif new == "missing":
             if first or prev != "missing":
-                self.on_event("err", f"PLC 장비 ID 가 없습니다(0) — 장비 ID 필수(plc.require_device_id)라 "
-                                     f"이 장비 PLC({id_text(DEV.DEVICE_ID)})인지 확인할 수 없습니다 "
-                                     f"({self.addr_text}) — 쓰기를 모두 막았습니다")
+                self.on_event("err", f"PLC 장비 ID 가 없음(0) — 장비 ID 필수(plc.require_device_id)라 "
+                                     f"이 장비 PLC({id_text(DEV.DEVICE_ID)})인지 확인할 수 없음 "
+                                     f"({self.addr_text}) — 쓰기를 모두 막음")
         elif first or prev != "wrong":
-            self.on_event("err", f"다른 장비의 PLC 입니다 — 주소를 확인하세요 "
+            self.on_event("err", f"다른 장비의 PLC — 주소 확인 필요 "
                                  f"(읽은 ID {id_text(did)} / 이 장비 {id_text(DEV.DEVICE_ID)}, "
-                                 f"{self.addr_text}) — 쓰기를 모두 막았습니다")
+                                 f"{self.addr_text}) — 쓰기를 모두 막음")
 
     def blocked_reason(self) -> str:
         """쓰기를 못 하는 이유(없으면 '')."""
         if not self.connected:
-            return "PLC 에 연결되어 있지 않습니다"
+            return "PLC 에 연결되어 있지 않음"
         if not self.write_ok:
-            return ID_BLOCK_TEXT.get(self.id_state, "장비 ID 확인 전입니다")
+            return ID_BLOCK_TEXT.get(self.id_state, "장비 ID 확인 전")
         if self.plc_hb_stalled:
             # ★ STOP 중에 보낸 명령은 RUN 이 되는 순간 P00 첫 스캔이 지운 영역 때문에 실행 없이
             #   '처리됨(0)'으로 읽힌다 — 보내지 않는다(PC 하트비트 쓰기는 계속)
@@ -424,7 +424,7 @@ class PlcLink:
         bad = prm_problems(self.cfg)
         if bad:
             self.prm_mismatch = [f"설정 오류 — {m}" for m in bad]
-            self._warn_once("bad:" + bad[0], "err", "설정의 PLC 파라미터가 올바르지 않아 PLC 에 쓰지 않았습니다 — "
+            self._warn_once("bad:" + bad[0], "err", "설정의 PLC 파라미터가 올바르지 않아 PLC 에 쓰지 않음 — "
                             + " · ".join(bad[:2]))
             return 0
         diff = [(addr, name, val) for addr, (name, val) in sorted(want.items())
@@ -438,9 +438,9 @@ class PlcLink:
             self.prm_mismatch = [f"{n}: 설정 {v} / PLC {self.prm_readback.get(a)} (공정 중 — 끝나면 맞춤)"
                                  for a, n, v in diff]
             self._warn_once("run:" + ",".join(str(a) for a, _n, _v in diff), "warn",
-                            f"공정 중이라 PLC 파라미터를 쓰지 않았습니다 ({why}) — 다른 항목 "
+                            f"공정 중이라 PLC 파라미터를 쓰지 않음 ({why}) — 다른 항목 "
                             + " · ".join(n for _a, n, _v in diff[:4])
-                            + (" 외" if len(diff) > 4 else "") + " — 공정이 끝나면 맞춥니다")
+                            + (" 외" if len(diff) > 4 else "") + " — 공정이 끝나면 맞춤")
             return 0
         problems = []
         for addr, name, val in diff:
@@ -490,10 +490,10 @@ class PlcLink:
             if n:
                 self._prm_deferred = False
                 if deferred:
-                    self.on_event("info", f"공정 중 미뤄 둔 PLC 파라미터를 썼습니다 ({n}개)")
+                    self.on_event("info", f"공정 중 미뤄 둔 PLC 파라미터를 씀 ({n}개)")
                 else:
-                    self.on_event("warn", f"PLC 파라미터가 설정과 달라 다시 썼습니다 ({n}개) — "
-                                  "PLC 가 다시 시작됐거나 다른 곳에서 바뀌었을 수 있습니다")
+                    self.on_event("warn", f"PLC 파라미터가 설정과 달라 다시 씀 ({n}개) — "
+                                  "PLC 가 다시 시작됐거나 다른 곳에서 바뀌었을 수 있음")
         except (ModbusTimeout, ModbusError, OSError) as e:
             log.debug("PRM 복구 실패: %s", e)
 
@@ -545,9 +545,9 @@ class PlcLink:
                 await self.client.write_single(A.D_HEATER_POWER, 0)
                 self._set_cmd_reg(A.D_HEATER_POWER, 0)
         except (ModbusTimeout, ModbusError, OSError) as e:
-            self.on_event("err", f"과온 차단 — 히터 전원 요청을 0 으로 쓰지 못했습니다: {e}")
+            self.on_event("err", f"과온 차단 — 히터 전원 요청을 0 으로 쓰지 못함: {e}")
             return
-        self.on_event("err", "과온 차단 — PLC 가 히터 전원을 모두 껐습니다")
+        self.on_event("err", "과온 차단 — PLC 가 히터 전원을 모두 끔")
 
     async def _read_display(self):
         """PLC 반영 영역(수동 반영 + 출력 중인 설정값)을 한 번에 읽는다.
@@ -562,9 +562,9 @@ class PlcLink:
                 # ★ 사유는 그 자리에서 상태 영역을 한 번 더 읽어 판단한다. 마지막 주기 읽기(최대
                 #   100 ms 전)는 PLC 가 반영을 지운 것과 같은 스캔의 안전 정지 요구를 아직 못 봤을 수 있다.
                 await self._read_status()
-                msg = ("PLC 가 수동 요청을 지웠습니다 — " + describe_bits(lost_v, lost_a)
+                msg = ("PLC가 수동 요청 해제 — " + describe_bits(lost_v, lost_a)
                        + f" ({self.clear_reason(bool(lost_v), lost_a)})"
-                       + " — 저절로 다시 열리거나 켜지지 않습니다(필요하면 다시 조작)")
+                       + ". 필요하면 다시 조작")
                 self.on_event("warn", msg)
                 self.pending_toasts.append(("warn", msg))
         self._seen = (v, a, seq)
@@ -591,11 +591,11 @@ class PlcLink:
         if valve_lost and not safe and not atm and not A.bit(ilk, A.ILK_VALVE_OK):
             why.append("Valve Permit 없음 — 필요: " + " · ".join(valve_permit_missing(s)))
         if aux_lost and DEV.HAS_RF and not safe and not A.bit(ilk, A.ILK_RF_OK):
-            why.append("RF 허가 없음 — 필요: " + " · ".join(rf_permit_missing(s, self.prm_readback, self.conv)))
+            why.append("RF Permit 없음 — 필요: " + " · ".join(rf_permit_missing(s, self.prm_readback, self.conv)))
         if (aux_lost and DEV.HAS_O3 and not safe and not A.bit(ilk, A.ILK_O3_OK)
                 and (aux_lost is True or int(aux_lost) & (1 << A.AUX_O3_GEN))):
             # ★ 래더 P50(Powder): O3 허가가 없는 동안 수동 보조 반영에서 발생기(b9)만 지운다
-            why.append("O3 허가 없음 — 필요: " + " · ".join(o3_permit_missing(s, self.prm_readback)))
+            why.append("O3 Permit 없음 — 필요: " + " · ".join(o3_permit_missing(s, self.prm_readback)))
         if s[A.D_STATE] in (A.STATE_READY, A.STATE_RUN, A.STATE_PAUSE, A.STATE_STOPPING):
             why.append("공정 시작")
         return " · ".join(why) if why else "사유 확인 필요"
@@ -660,7 +660,7 @@ class PlcLink:
                 if list(back) != [int(w) & 0xFFFF for w in words]:
                     bad = next((i for i, (a, b) in enumerate(zip(back, words))
                                 if a != (int(b) & 0xFFFF)), -1)
-                    return False, f"되읽기가 다릅니다 (D{A.RCP_SUM_BASE + bad:05d})"
+                    return False, f"되읽기가 다름 (D{A.RCP_SUM_BASE + bad:05d})"
 
             # PLC 는 대기 중 1 s 마다 검사한다 — 쓰기 직후 값은 이전 레시피 것일 수 있다.
             deadline = time.monotonic() + 3.0
@@ -670,7 +670,7 @@ class PlcLink:
                     return True, "PLC 검사 통과"
                 await asyncio.sleep(0.1)
             regs = await self.client.read_holding(A.D_RECIPE_SUM_PLC, 2)
-            return False, (f"PLC 표 검사에 실패했습니다 "
+            return False, (f"PLC 표 검사에 실패함 "
                            f"(PLC 합계 {regs[0]:#06x} / 보낸 합계 {checksum:#06x}, 통과 {regs[1]})")
         except (ModbusTimeout, ModbusError, OSError) as e:
             return False, f"PLC 통신 오류: {e}"
@@ -726,7 +726,7 @@ class PlcLink:
             new["valve"] = int(new.get("valve", 0)) & DEV.MANUAL_VALVE_MASK
             new["aux"] = int(new.get("aux", 0)) & DEV.AUX_CMD_MASK
             if same_manual(new, cur):
-                return {"result": None, "text": "바뀌는 것이 없어 다시 보내지 않았습니다", "refused": True, "noop": True,
+                return {"result": None, "text": "바뀌는 것이 없어 다시 보내지 않음", "refused": True, "noop": True,
                         "before": cur}
             lo, hi = A.split_dword(new["valve"])
             args = {A.D_MANUAL_VALVE: [lo, hi, 0, 0], A.D_MANUAL_AUX: new["aux"]}
@@ -855,11 +855,11 @@ class PlcLink:
                     return result, A.RESULT_NAMES.get(result, f"알 수 없는 결과 {result}")
                 await asyncio.sleep(0.02)
             # ★ 다시 보내지 않는다 — PLC 가 이미 받았을 수 있다.
-            return None, "PLC 응답 없음 (명령이 처리됐는지 확인하세요)"
+            return None, "PLC 응답 없음 (명령이 처리됐는지 확인 필요)"
         except (ModbusTimeout, ModbusError, OSError) as e:
             if sent:
                 # ★ 다시 보내지 않는다 — 응답 없음과 같다
-                return None, f"PLC 통신 오류: {e} — PLC 가 명령을 받았을 수 있습니다 — 상태를 확인하세요"
+                return None, f"PLC 통신 오류: {e} — PLC 가 명령을 받았을 수 있음 — 상태 확인 필요"
             return None, f"PLC 통신 오류: {e}"
         finally:
             if bump:

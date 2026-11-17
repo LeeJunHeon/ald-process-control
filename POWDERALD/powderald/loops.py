@@ -67,7 +67,7 @@ async def lag_loop():
             lag.update(max_ms=ms, max_at=time.strftime("%H:%M:%S"), max_work=work)
         if late > LAG_WARN_S:
             logger.write("warn", f"이벤트 루프 지연 {ms} ms" + (f" — {work}" if work else "")
-                         + " (PC 하트비트가 그만큼 늦었습니다)")
+                         + " (PC 하트비트가 그만큼 늦음)")
         expect = now + LAG_PERIOD_S
 
 
@@ -187,7 +187,7 @@ async def event_loop():
                 if ws in manager.active:
                     await manager.send_to(ws, admin.status(ws))
                     await manager.send_to(ws, {"type": "notice", "level": "info",
-                                               "msg": "관리자 잠금 — 설정 편집이 다시 잠겼습니다"})
+                                               "msg": "관리자 잠금 — 설정 편집이 다시 잠김"})
         except Exception as e:  # noqa: BLE001
             loop_error("이벤트 루프", e)
         await asyncio.sleep(0.2)
@@ -262,7 +262,7 @@ async def housekeeping_loop():
         await asyncio.sleep(HOUSEKEEP_S)
         try:
             await asyncio.to_thread(housekeeping)
-            logger.write("info", "하루 정리 — 보존 기간이 지난 로그 · 데이터 로그 · 트렌드 · 내보내기를 지웠습니다")
+            logger.write("info", "하루 정리 — 보존 기간이 지난 로그 · 데이터 로그 · 트렌드 · 내보내기를 지움")
         except Exception as e:  # noqa: BLE001
             logger.write("warn", f"하루 정리 실패(계속 진행): {type(e).__name__}: {e}")
 

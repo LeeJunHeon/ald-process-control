@@ -78,12 +78,12 @@ class Maintenance:
         bad = os.path.join(os.path.dirname(p), f"maintenance.bad-{time.strftime('%Y%m%d_%H%M%S')}.json")
         try:
             os.replace(p, bad)
-            self.problem = (f"정비 카운터 파일을 읽지 못했습니다({why}) — {os.path.basename(bad)} 로 옮기고 0 부터 "
-                            "새로 셉니다")
+            self.problem = (f"정비 카운터 파일을 읽지 못함({why}) — {os.path.basename(bad)} 로 옮기고 0 부터 "
+                            "새로 셈")
         except OSError as e:
             self._no_save = True
-            self.problem = (f"정비 카운터 파일을 읽지 못했고 옮기지도 못했습니다({why} · {e}) — 덮어쓰지 않게 이번 실행에서는 "
-                            "저장하지 않습니다")
+            self.problem = (f"정비 카운터 파일을 읽지 못했고 옮기지도 못함({why} · {e}) — 덮어쓰지 않게 이번 실행에서는 "
+                            "저장하지 않음")
         logger.write("err", self.problem)
         return {}
 
@@ -141,7 +141,7 @@ class Maintenance:
         if not (isinstance(recipe, dict) and recipe.get("blocks")) and words:
             recipe = R.recipe_from_words(words)
         if not (isinstance(recipe, dict) and recipe.get("blocks")):
-            return "정비 카운터: 레시피(표) 없이 이어받은 공정이라 밸브 열림을 세지 않았습니다"
+            return "정비 카운터: 레시피(표) 없이 이어받은 공정이라 밸브 열림을 세지 않음"
         before = not normal and (last_seq in (None, 3) or "레시피 표 오류" in (result or ""))
         if normal:
             upto, where = None, "레시피 전체"
@@ -158,7 +158,7 @@ class Maintenance:
             where = (f"마지막으로 본 위치 블록 {last_pos[0]} · 스텝 {last_pos[1]} · 사이클 {last_pos[2]}"
                      f" · 그룹 회차 {gp or 1}")
         else:
-            return "정비 카운터: 공정 위치를 몰라 밸브 열림을 세지 않았습니다"
+            return "정비 카운터: 공정 위치를 몰라 밸브 열림을 세지 않음"
         where += "(그 블록은 준비 중이라 빼고)" if (upto and before) else ("까지" if upto else "")
         usage = R.valve_usage(cfg, recipe, upto)
         self.add_valves(usage)

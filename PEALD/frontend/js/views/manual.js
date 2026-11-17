@@ -60,7 +60,7 @@
 
     var h = '<div class="mn-lock">' +
       '<span class="sw" data-bind="mnUnlock" data-mn="unlock" role="switch" tabindex="0"></span>' +
-      '<span>Valve Unlock<span class="hint"> 5분 뒤 · 공정이 시작되면 자동으로 잠깁니다</span></span>' +
+      '<span>Valve Unlock<span class="hint"> 5분 뒤 · 공정이 시작되면 자동으로 잠김</span></span>' +
       '<span class="right mono" data-bind="mnLeft"></span></div>' +
       '<div class="mn-sec">Valve</div><div class="mn-valves">';
     (str.valves || []).forEach(function (v) {
@@ -83,7 +83,7 @@
     });
     h += '<button class="btn sm" data-mn="mfc">' + T('b.mfcApply') + '</button></div>';
 
-    h += '<div class="mn-sec">Heater<span class="hint"> 설정 온도와 전원. 공정 중에는 바꿀 수 없습니다.</span></div>' +
+    h += '<div class="mn-sec">Heater<span class="hint"> 설정 온도와 전원. 공정 중에는 바꿀 수 없음.</span></div>' +
       '<div class="mn-grid">';
     (str.heaters || []).forEach(function (x) {
       if (!x.enabled) return;
@@ -112,7 +112,7 @@
           '<span class="unit">W</span>' +
           '<button class="btn sm" data-mn="rf_on">' + T('b.rfOn') + '</button>' +
           '<button class="btn sm" data-mn="rf_off">' + T('b.rfOff') + '</button></span></label>' +
-          '<div class="hint">대기 중에만 됩니다. 전력이 0 이면 PLC 가 RF 요청을 지웁니다.</div>';
+          '<div class="hint">대기 중에만 됨. 전력이 0 이면 PLC 가 RF 요청을 지움.</div>';
       }
       h += '</div>';
     }
@@ -124,7 +124,7 @@
         '<label>Line<span class="inrow">' +
         '<button class="btn sm" data-mn="o3_on">ON (Bypass → IV-B → Generator)</button>' +
         '<button class="btn sm" data-mn="o3_off">OFF</button></span></label>' +
-        '<div class="hint" data-bind="mnO3Note">끄기는 발생기를 먼저 끄고, 배관에 남은 O3 를 뺀 뒤 바이패스 라인을 닫습니다.</div>' +
+        '<div class="hint" data-bind="mnO3Note">끄기는 발생기를 먼저 끄고, 배관에 남은 O3 를 뺀 뒤 바이패스 라인을 닫음.</div>' +
         '</div>';
     }
 
@@ -163,7 +163,7 @@
     });
 
     var miss = mn.valve_permit_missing || [];
-    var noPermitTip = 'Valve Permit 이 없어 열 수 없습니다 — 필요: ' + (miss.length ? miss.join(' · ') : 'Pump 운전 · IV-E 열림');
+    var noPermitTip = 'Valve Permit 이 없어 열 수 없음 — 필요: ' + (miss.length ? miss.join(' · ') : 'Pump 운전 · IV-E 열림');
     Array.prototype.forEach.call(d.querySelectorAll('[data-mnv]'), function (e) {
       var tag = e.dataset.mnv;
       var vd = ((s.structure || {}).valves || []).filter(function (v) { return v.tag === tag; })[0];
@@ -181,12 +181,12 @@
       e.classList.toggle('dis', off);
       e.tabIndex = off ? -1 : 0;
       var tip = wait ? BUSY_TIP : (can && mn.unlocked && noPermit) ? noPermitTip : '';
-      if (e.title !== tip) e.title = tip;
+      core.tip(e, tip);
       var st = d.querySelector('[data-mnvst="' + tag + '"]');
       if (st) {
         core.html(st, !conn ? fmt.DASH
           : app ? core.chip('● ' + T('s.open'), 'ok')
-            : pend ? core.chip('◐ ' + T('s.pending'), 'warn', 'PLC 가 지우지 않은 요청이 남아 있습니다(출력 꺼짐 1 s 넘음 · 래더 P50 확인) — 허가가 생기면 열릴 수 있으니 필요 없으면 Close')
+            : pend ? core.chip('◐ ' + T('s.pending'), 'warn', 'PLC 가 지우지 않은 요청이 남아 있음(출력 꺼짐 1 s 넘음 · 래더 P50 확인) — 허가가 생기면 열릴 수 있으니 필요 없으면 Close')
               : core.chip('○ ' + T('s.closed'), 'off'));
       }
     });
@@ -211,9 +211,9 @@
         p.classList.toggle('dis', !can);
         p.tabIndex = can ? 0 : -1;
         p.setAttribute('aria-checked', String(!!(conn && v.power)));
-        var tt = hb ? BUSY_TIP : !can ? '지금은 바꿀 수 없습니다(공정 중 · 원격 · 연결 끊김)'
+        var tt = hb ? BUSY_TIP : !can ? '지금은 바꿀 수 없음(공정 중 · 원격 · 연결 끊김)'
           : (conn && v.comm_ok === false ? (v.power_block || '') : '');
-        if (p.title !== tt) p.title = tt;
+        core.tip(p, tt);
       }
     });
 
@@ -224,10 +224,10 @@
       var left = mn.o3_off_left_s || 0;
       var wait = mn.o3_on_wait_s || 0;         // v0.8.5: 켜기가 O3 Permit 을 기다리는 남은 시간(서버 타이머)
       core.setText('mnO3Note', conn && wait > 0
-        ? 'O3 Permit 을 기다리는 중 — 허가가 서면 발생기를 켭니다 (남은 ' + wait + ' s · 화면을 닫아도 진행)'
+        ? 'O3 Permit 을 기다리는 중 — 허가가 서면 발생기를 켬 (남은 ' + wait + ' s · 화면을 닫아도 진행)'
         : left > 0
-        ? '발생기를 껐습니다 — ' + left + ' s 뒤 바이패스 라인을 닫습니다 (화면을 닫아도 진행)'
-        : '끄기는 발생기를 먼저 끄고, 배관에 남은 O3 를 뺀 뒤 바이패스 라인을 닫습니다.');
+        ? '발생기를 끔 — ' + left + ' s 뒤 바이패스 라인을 닫음 (화면을 닫아도 진행)'
+        : '끄기는 발생기를 먼저 끄고, 배관에 남은 O3 를 뺀 뒤 바이패스 라인을 닫음.');
     }
 
     var BKEY = { mfc: ['mfc'], pcv: ['pcv'], rf_on: ['rf'], rf_off: ['rf'], o3_set: ['o3'], o3_on: ['o3'], o3_off: ['o3'] };
@@ -238,7 +238,7 @@
       var wait = keys.some(busy);
       b.disabled = !can || wait;
       var tip = wait ? BUSY_TIP : '';
-      if (b.title !== tip) b.title = tip;
+      core.tip(b, tip);
     });
     if (sw && busy('unlock')) sw.classList.add('dis');
   }
@@ -266,7 +266,7 @@
       if (busy('heater:' + ch)) return;
       // ★ 화면 칠이 아니라 서버가 가진 현재 값(D01010 되읽기) 기준으로 목표를 정한다.
       var cur = (((core.state || {}).live || {}).heaters || [])[ch - 1] || {};
-      if (cur.power == null) { core.toast('히터 전원 상태를 아직 읽지 못했습니다', 'warn'); return; }
+      if (cur.power == null) { core.toast('히터 전원 상태를 아직 읽지 못함', 'warn'); return; }
       sendBusy('heater:' + ch, Ops.heaterPower(ch, !cur.power));
       return;
     }
@@ -288,7 +288,7 @@
       Array.prototype.forEach.call(d.querySelectorAll('[data-mnmfc]'), function (e) {
         if (e.value !== '' && !e.disabled) sc[e.dataset.mnmfc] = Number(e.value);
       });
-      if (!Object.keys(sc).length) { core.toast('바꿀 MFC 값을 넣으세요', 'warn'); return; }
+      if (!Object.keys(sc).length) { core.toast('바꿀 MFC 값 입력 필요', 'warn'); return; }
       sendBusy('mfc', Ops.mfcMany(sc));
       return;
     }
@@ -297,10 +297,10 @@
       Array.prototype.forEach.call(d.querySelectorAll('[data-mnhsv]'), function (e) {
         if (e.value !== '' && !e.disabled) sv[e.dataset.mnhsv] = Number(e.value);
       });
-      if (!Object.keys(sv).length) { core.toast('바꿀 설정 온도를 넣으세요', 'warn'); return; }
-      core.confirmAsk('히터 설정을 바꿀까요?',
-        '설정 온도를 바꿉니다. 과온 한계를 넘는 값은 PLC 가 거절합니다.<br>' +
-        '전원이 꺼져 있으면 온도가 오르지 않습니다.',
+      if (!Object.keys(sv).length) { core.toast('바꿀 설정 온도 입력 필요', 'warn'); return; }
+      core.confirmAsk('Heater 설정 변경?',
+        '설정 온도를 바꿈. 과온 한계를 넘는 값은 PLC 가 거절함.<br>' +
+        '전원이 꺼져 있으면 온도가 오르지 않음.',
         T('b.apply'), function () {
           sendBusy(Object.keys(sv).map(function (c) { return 'heater:' + c; }), Ops.heaterSvMany(sv));
         });
@@ -308,18 +308,18 @@
     }
     if (what === 'pcv') {
       var e1 = d.querySelector('[data-mnpcv]');
-      if (!e1 || e1.value === '') { core.toast('PCV 목표를 넣으세요', 'warn'); return; }
+      if (!e1 || e1.value === '') { core.toast('PCV 목표 입력 필요', 'warn'); return; }
       sendBusy('pcv', Ops.pcv(Number(e1.value)));
       return;
     }
     if (what === 'rf_on') {
       var e2 = d.querySelector('[data-mnrf]');
       var watt = e2 ? Number(e2.value) : 0;
-      if (!watt) { core.toast('RF 전력을 넣으세요 — 0 이면 PLC 가 요청을 지웁니다', 'warn'); return; }
+      if (!watt) { core.toast('RF 전력 입력 필요 — 0 이면 PLC 가 요청을 지움', 'warn'); return; }
       // ★ RF 는 사람이 옆에 있는 상태에서만 켜야 한다 — 확인 창을 반드시 거친다.
-      core.confirmAsk('RF 를 켤까요?',
-        '<b>' + watt + ' W</b> 로 RF 를 켭니다. 시험 목적이며 대기 중에만 됩니다.<br>' +
-        '압력·반사 전력 조건을 PLC 가 확인하고, 조건이 어긋나면 즉시 끕니다.',
+      core.confirmAsk('RF ON?',
+        '<b>' + watt + ' W</b> 로 RF 를 켬. 시험 목적이며 대기 중에만 됨.<br>' +
+        '압력·반사 전력 조건을 PLC 가 확인하고, 조건이 어긋나면 즉시 끔.',
         T('b.rfOn'), function () { sendBusy('rf', Ops.rfOn(watt)); });
       return;
     }
@@ -327,12 +327,12 @@
     if (what === 'o3_set' || what === 'o3_on') {
       var e3 = d.querySelector('[data-mno3]');
       var val = e3 ? Number(e3.value) : 0;
-      if (!val) { core.toast('O3 설정 값을 넣으세요', 'warn'); return; }
+      if (!val) { core.toast('O3 설정 값 입력 필요', 'warn'); return; }
       if (what === 'o3_set') { sendBusy('o3', Ops.o3('set', val)); return; }
-      core.confirmAsk('O3 라인을 켤까요?',
-        '바이패스 펌프 → IV-B 를 켜고, O3 Permit 이 선 뒤 발생기를 켭니다(허가가 제한 시간 안에 서지 않으면 ' +
-        '발생기를 켜지 않고 바이패스 라인을 닫습니다).<br>' +
-        '실내 O3 감지·발생기 알람이 있으면 PLC 가 막습니다.',
+      core.confirmAsk('O3 Line ON?',
+        'Bypass Pump → IV-B 를 켜고, O3 Permit 이 선 뒤 발생기를 켬(허가가 제한 시간 안에 서지 않으면 ' +
+        '발생기를 켜지 않고 바이패스 라인을 닫음).<br>' +
+        '실내 O3 감지·발생기 알람이 있으면 PLC 가 막음.',
         T('b.o3On'), function () { sendBusy('o3', Ops.o3('on', val)); });
       return;
     }

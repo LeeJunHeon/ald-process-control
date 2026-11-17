@@ -132,53 +132,53 @@ def shape_errors(recipe) -> list:
         errs.append({"msg": msg, "block": block, "step": step, "field": field})
 
     if not isinstance(recipe, dict):
-        bad("레시피 형식이 올바르지 않습니다 (사전이 아님)")
+        bad("레시피 형식이 올바르지 않음 (사전이 아님)")
         return errs
 
     def num(obj, key, label, block=None, step=None, field=None, integer=False, required=False):
         if key not in obj:
             if required:
-                bad(f"{label} 값이 없습니다", block, step, field)
+                bad(f"{label} 값이 없음", block, step, field)
             return
         v = obj[key]
         if v is None:
-            bad(f"{label} 값이 비어 있습니다", block, step, field)
+            bad(f"{label} 값이 비어 있음", block, step, field)
         elif isinstance(v, (int, float)) and not isinstance(v, bool) and not _is_num(v):
-            bad(f"{label} 값이 너무 크거나 올바르지 않습니다 (현재 {_show(v)})", block, step, field)
+            bad(f"{label} 값이 너무 크거나 올바르지 않음 (현재 {_show(v)})", block, step, field)
         elif integer and not _is_int(v):
-            bad(f"{label}은(는) 정수여야 합니다 (현재 {_show(v)})", block, step, field)
+            bad(f"{label}은(는) 정수여야 함 (현재 {_show(v)})", block, step, field)
         elif not integer and not _is_num(v):
-            bad(f"{label}은(는) 숫자여야 합니다 (현재 {_show(v)})", block, step, field)
+            bad(f"{label}은(는) 숫자여야 함 (현재 {_show(v)})", block, step, field)
 
     def flag(obj, key, label, block=None, step=None, field=None):
         if key in obj and not isinstance(obj[key], bool):
-            bad(f"{label}은(는) 참/거짓이어야 합니다 (현재 {_show(obj[key])})", block, step, field)
+            bad(f"{label}은(는) 참/거짓이어야 함 (현재 {_show(obj[key])})", block, step, field)
 
     def text(obj, key, label, block=None, step=None, field=None, limit=None):
         if key in obj and not isinstance(obj[key], str):
-            bad(f"{label}은(는) 문자열이어야 합니다 (현재 {_show(obj[key])})", block, step, field)
+            bad(f"{label}은(는) 문자열이어야 함 (현재 {_show(obj[key])})", block, step, field)
         elif limit is not None and key in obj and len(obj[key]) > limit:
-            bad(f"{label}이(가) 너무 깁니다 (최대 {limit}자, 현재 {len(obj[key])}자)", block, step, field)
+            bad(f"{label}이(가) 너무 김 (최대 {limit}자, 현재 {len(obj[key])}자)", block, step, field)
 
     for key, lim in (("format", 40), ("name", NAME_MAX), ("memo", MEMO_MAX), ("created", 40), ("modified", 40)):
         text(recipe, key, {"name": "레시피 이름", "memo": "메모"}.get(key, f"'{key}'"), field=key, limit=lim)
 
     blocks = recipe.get("blocks")
     if not isinstance(blocks, list):
-        bad("'blocks'는 목록이어야 합니다", field="blocks")
+        bad("'blocks'는 목록이어야 함", field="blocks")
         blocks = []
     for bi, b in enumerate(blocks, start=1):
         if not isinstance(b, dict):
-            bad("블록 형식이 올바르지 않습니다 (사전이 아님)", block=bi)
+            bad("블록 형식이 올바르지 않음 (사전이 아님)", block=bi)
             continue
         text(b, "name", "블록 이름", bi, field="name", limit=LABEL_MAX)
         num(b, "repeat", "블록 반복", bi, field="repeat", integer=True, required=True)
         mfc = b.get("mfc_sccm", [])
         if not isinstance(mfc, list):
-            bad("'mfc_sccm'은 목록이어야 합니다", bi, field="mfc1")
+            bad("'mfc_sccm'은 목록이어야 함", bi, field="mfc1")
         else:
             if len(mfc) > DEV.MFC_COUNT:
-                bad(f"MFC 설정이 이 장비의 MFC 개수({DEV.MFC_COUNT})보다 많습니다 ({len(mfc)}개)",
+                bad(f"MFC 설정이 이 장비의 MFC 개수({DEV.MFC_COUNT})보다 많음 ({len(mfc)}개)",
                     bi, field="mfc1")
             for mi, v in enumerate(mfc[:DEV.MFC_COUNT]):
                 num({"v": v}, "v", f"MFC{mi + 1} 설정", bi, field=f"mfc{mi + 1}")
@@ -190,17 +190,17 @@ def shape_errors(recipe) -> list:
             num(b, "o3", "O3 설정", bi, field="o3")
         steps = b.get("steps", [])
         if not isinstance(steps, list):
-            bad("'steps'는 목록이어야 합니다", bi, field="steps")
+            bad("'steps'는 목록이어야 함", bi, field="steps")
             continue
         for si, st in enumerate(steps, start=1):
             if not isinstance(st, dict):
-                bad("스텝 형식이 올바르지 않습니다 (사전이 아님)", bi, si)
+                bad("스텝 형식이 올바르지 않음 (사전이 아님)", bi, si)
                 continue
             text(st, "name", "스텝 이름", bi, si, "name", limit=LABEL_MAX)
             num(st, "time_ms", "스텝 시간", bi, si, "time", integer=True, required=True)
             vs = st.get("valves", [])
             if not isinstance(vs, list) or not all(isinstance(x, str) for x in vs):
-                bad("밸브는 이름(문자열) 목록이어야 합니다", bi, si, "valves")
+                bad("밸브는 이름(문자열) 목록이어야 함", bi, si, "valves")
             flag(st, "pause_ok", "정지 허용", bi, si, "pause_ok")
             if DEV.HAS_RF:
                 flag(st, "rf", "RF", bi, si, "rf")
@@ -209,12 +209,12 @@ def shape_errors(recipe) -> list:
     if groups is None:
         groups = []
     if not isinstance(groups, list):
-        bad("'groups'는 목록이어야 합니다", field="groups")
+        bad("'groups'는 목록이어야 함", field="groups")
         groups = []
     for gi, g in enumerate(groups, start=1):
         where = f"group{gi}"
         if not isinstance(g, dict):
-            bad(f"반복 그룹 {gi}: 형식이 올바르지 않습니다 (사전이 아님)", field=where)
+            bad(f"반복 그룹 {gi}: 형식이 올바르지 않음 (사전이 아님)", field=where)
             continue
         num(g, "from_block", f"반복 그룹 {gi} 시작 블록", field=where, integer=True, required=True)
         num(g, "to_block", f"반복 그룹 {gi} 끝 블록", field=where, integer=True, required=True)
@@ -627,7 +627,7 @@ def validate(cfg: dict, recipe: dict) -> dict:
     위치(블록·스텝)를 담아 화면이 그 칸으로 이동할 수 있게 한다."""
     out = {"errors": [], "warnings": []}
     if not isinstance(recipe, dict):
-        _err(out, "레시피 형식이 올바르지 않습니다")
+        _err(out, "레시피 형식이 올바르지 않음")
         return out
     recipe = upgrade(recipe)
     # ★ 형식(정수·실수·불·문자열·목록)부터 — 틀리면 계산하지 않고 그 목록을 오류로 돌려준다
@@ -638,30 +638,30 @@ def validate(cfg: dict, recipe: dict) -> dict:
 
     fmt = recipe.get("format")
     if fmt != DEV.RECIPE_FORMAT:
-        _err(out, f"이 장비의 레시피가 아닙니다 (형식 {fmt!r}, 필요 {DEV.RECIPE_FORMAT!r})")
+        _err(out, f"이 장비의 레시피가 아님 (형식 {fmt!r}, 필요 {DEV.RECIPE_FORMAT!r})")
         return out
     if not (recipe.get("name") or "").strip():
-        _err(out, "레시피 이름이 비어 있습니다", field="name")
+        _err(out, "레시피 이름이 비어 있음", field="name")
 
     conv_limits = _limits(cfg)
     blocks = recipe.get("blocks") or []
 
     if not (1 <= len(blocks) <= BLOCK_MAX):
-        _err(out, f"블록 개수는 1~{BLOCK_MAX} 이어야 합니다 (현재 {len(blocks)})")
+        _err(out, f"블록 개수는 1~{BLOCK_MAX} 이어야 함 (현재 {len(blocks)})")
 
     total_steps = sum(len(b.get("steps") or []) for b in blocks)
     if not (1 <= total_steps <= STEP_MAX):
-        _err(out, f"전체 스텝 개수는 1~{STEP_MAX} 이어야 합니다 (현재 {total_steps})")
+        _err(out, f"전체 스텝 개수는 1~{STEP_MAX} 이어야 함 (현재 {total_steps})")
 
     vmin = prm_value(cfg, "valve_min_ms")
 
     for bi, b in enumerate(blocks, start=1):
         steps = b.get("steps") or []
         if not steps:
-            _err(out, "스텝이 하나도 없습니다", block=bi)
+            _err(out, "스텝이 하나도 없음", block=bi)
         rep = int(b.get("repeat") or 0)
         if not (1 <= rep <= BLOCK_REPEAT_MAX):
-            _err(out, f"블록 반복은 1~{BLOCK_REPEAT_MAX} 이어야 합니다 (현재 {rep})",
+            _err(out, f"블록 반복은 1~{BLOCK_REPEAT_MAX} 이어야 함 (현재 {rep})",
                  block=bi, field="repeat")
 
         # MFC
@@ -672,48 +672,48 @@ def validate(cfg: dict, recipe: dict) -> dict:
             if fs is None and v > 0:
                 # ★ 풀스케일이 없으면 PLC 표에 0 으로 들어간다 — 그 가스 없이 돈다(블록 준비는
                 #   MFC1 만 본다). 조용히 0 으로 바꾸지 않고 막는다.
-                _err(out, f"MFC{mi + 1} 풀스케일이 설정되지 않아 {v:g} sccm 을 보낼 수 없습니다 — "
-                          f"설정에서 풀스케일을 넣거나 0 으로 두세요",
+                _err(out, f"MFC{mi + 1} 풀스케일이 설정되지 않아 {v:g} sccm 을 보낼 수 없음 — "
+                          f"설정에서 풀스케일을 넣거나 0 으로 두기 필요",
                      block=bi, field=f"mfc{mi + 1}")
             elif v < 0 or (fs is not None and v > fs):
-                _err(out, f"MFC{mi + 1} 설정이 범위를 벗어납니다 "
+                _err(out, f"MFC{mi + 1} 설정이 범위를 벗어남 "
                           f"(0~{_g(fs)} sccm, 현재 {v:g})",
                      block=bi, field=f"mfc{mi + 1}")
         if DEV.MFC_COUNT and float((mfc or [0])[0] or 0) == 0:
-            _warn(out, "전구체 캐리어(MFC1) 설정이 0 입니다 — 전구체가 챔버로 밀려가지 않습니다",
+            _warn(out, "전구체 캐리어(MFC1) 설정이 0 — 전구체가 챔버로 밀려가지 않음",
                   block=bi, field="mfc1")
 
         # 장비 전용 아날로그
         if DEV.HAS_PCV:
             pcv = float(b.get("pcv_pct") or 0)
             if not (0 <= pcv <= 100):
-                _err(out, f"PCV 목표는 0~100 % 이어야 합니다 (현재 {pcv:g})", block=bi, field="pcv")
+                _err(out, f"PCV 목표는 0~100 % 이어야 함 (현재 {pcv:g})", block=bi, field="pcv")
         if DEV.HAS_RF:
             rf = float(b.get("rf_w") or 0)
             lim = conv_limits["rf_max"]
             if rf < 0 or (lim is not None and rf > lim):
-                _err(out, f"RF 전력이 상한을 넘습니다 (0~{_g(lim, '미설정')} W, "
+                _err(out, f"RF 전력이 상한을 넘음 (0~{_g(lim, '미설정')} W, "
                           f"현재 {rf:g})", block=bi, field="rf")
             if lim in (None, 0) and rf > 0:
-                _err(out, "RF 상한(params.rf_max_w)이 설정되지 않아 RF 를 쓸 수 없습니다",
+                _err(out, "RF 상한(params.rf_max_w)이 설정되지 않아 RF 를 쓸 수 없음",
                      block=bi, field="rf")
             # ★ RF 풀스케일(rf.max_w)이 비면 PLC 의 RF 상한이 0 으로 써져 RF 허가가 나지 않는다 —
             #   래더의 공정 허가에는 RF 조건이 없어 RF 스텝이 RF 없이 끝까지 돈다(알람 없음)
             if rf > 0 and not (cfg.get("rf") or {}).get("max_w"):
-                _err(out, "RF 풀스케일(rf.max_w)이 설정되지 않아 RF 를 보낼 수 없습니다 — "
-                          "PLC 의 RF 상한이 0 이 되어 RF 없이 돕니다", block=bi, field="rf")
+                _err(out, "RF 풀스케일(rf.max_w)이 설정되지 않아 RF 를 보낼 수 없음 — "
+                          "PLC 의 RF 상한이 0 이 되어 RF 없이 돔", block=bi, field="rf")
         if DEV.HAS_O3:
             o3 = float(b.get("o3") or 0)
             lim = conv_limits["o3_max"]
             if o3 < 0 or (lim is not None and o3 > lim):
-                _err(out, f"O3 설정이 상한을 넘습니다 (0~{_g(lim, '미설정')}, "
+                _err(out, f"O3 설정이 상한을 넘음 (0~{_g(lim, '미설정')}, "
                           f"현재 {o3:g})", block=bi, field="o3")
             if lim in (None, 0) and o3 > 0:
-                _err(out, "O3 상한(params.o3_max)이 설정되지 않아 O3 를 쓸 수 없습니다",
+                _err(out, "O3 상한(params.o3_max)이 설정되지 않아 O3 를 쓸 수 없음",
                      block=bi, field="o3")
             if o3 > 0 and not (cfg.get("o3") or {}).get("full"):
-                _err(out, "O3 풀스케일(o3.full)이 설정되지 않아 O3 를 보낼 수 없습니다 — "
-                          "PLC 의 O3 상한이 0 이 되어 O3 허가가 나지 않습니다", block=bi, field="o3")
+                _err(out, "O3 풀스케일(o3.full)이 설정되지 않아 O3 를 보낼 수 없음 — "
+                          "PLC 의 O3 상한이 0 이 되어 O3 Permit 나지 않음", block=bi, field="o3")
 
         sets = [_valve_set(s) for s in steps]
         block_has_reactant = any(set(v) & set(DEV.REACTANT_TAGS) for v in sets)
@@ -722,13 +722,13 @@ def validate(cfg: dict, recipe: dict) -> dict:
         for si, s in enumerate(steps, start=1):
             t = int(s.get("time_ms") or 0)
             if not (STEP_MS_MIN <= t <= STEP_MS_MAX):
-                _err(out, f"스텝 시간은 {STEP_MS_MIN}~{STEP_MS_MAX:,} ms 이어야 합니다 (현재 {t:,})",
+                _err(out, f"스텝 시간은 {STEP_MS_MIN}~{STEP_MS_MAX:,} ms 이어야 함 (현재 {t:,})",
                      block=bi, step=si, field="time")
 
             vs = sets[si - 1]
             unknown = [v for v in vs if v not in DEV.RECIPE_VALVES]
             if unknown:
-                _err(out, f"이 장비에 없는 밸브입니다: {', '.join(unknown)}",
+                _err(out, f"이 장비에 없는 밸브: {', '.join(unknown)}",
                      block=bi, step=si, field="valves")
 
             pre = vs & set(DEV.PRECURSOR_TAGS)
@@ -736,60 +736,60 @@ def validate(cfg: dict, recipe: dict) -> dict:
             if pre and rea:
                 # ★ ALD 의 전제가 무너진다. PLC 가 둘 다 막고 중대 알람을 낸다.
                 _err(out, f"전구체({', '.join(sorted(pre))})와 {', '.join(sorted(rea))} 를 "
-                          f"같이 열 수 없습니다 — PLC 가 둘 다 막고 중대 알람을 냅니다",
+                          f"같이 열 수 없음 — PLC 가 둘 다 막고 중대 알람을 냄",
                      block=bi, step=si, field="valves")
 
             for assist, need in DEV.ASSIST_PAIR.items():
                 if assist in vs and need not in vs:
-                    _err(out, f"{assist} 는 {need} 가 열리는 스텝에서만 쓸 수 있습니다 "
-                              f"(캐니스터만 가압됩니다)", block=bi, step=si, field="valves")
+                    _err(out, f"{assist} 는 {need} 가 열리는 스텝에서만 쓸 수 있음 "
+                              f"(캐니스터만 가압됨)", block=bi, step=si, field="valves")
 
             # --- 경고 ---
             prev = frozenset() if si == 1 else sets[si - 2]
             if (vs - prev) and t < vmin:
-                _warn(out, f"새로 열리는 밸브가 있어 PLC 가 {vmin} ms 로 늘립니다 (적은 값 {t} ms)",
+                _warn(out, f"새로 열리는 밸브가 있어 PLC 가 {vmin} ms 로 늘림 (적은 값 {t} ms)",
                       block=bi, step=si, field="time")
             if t > LONG_STEP_MS and t % 100:
-                _warn(out, f"60 s 를 넘는 스텝은 100 ms 단위입니다 — 나머지를 버려 실제 "
-                           f"{(t // 100) * 100:,} ms 로 동작합니다", block=bi, step=si, field="time")
+                _warn(out, f"60 s 를 넘는 스텝은 100 ms 단위 — 나머지를 버려 실제 "
+                           f"{(t // 100) * 100:,} ms 로 동작함", block=bi, step=si, field="time")
 
             if DEV.HAS_RF and s.get("rf"):
                 if not ({"PV-R3", "PV-R"} <= vs):
-                    _warn(out, "RF 스텝에 O2 공급(PV-R3 + PV-R)이 없습니다",
+                    _warn(out, "RF 스텝에 O2 공급(PV-R3 + PV-R)이 없음",
                           block=bi, step=si, field="rf")
                 if float(b.get("rf_w") or 0) == 0:
-                    _warn(out, "RF 스텝이 있는데 블록 RF 전력이 0 입니다", block=bi, step=si, field="rf")
+                    _warn(out, "RF 스텝이 있는데 블록 RF 전력이 0", block=bi, step=si, field="rf")
             if DEV.HAS_RF and ({"PV-R2", "PV-R3"} & vs) and "PV-R" not in vs:
-                _warn(out, "PV-R 없이 매니폴드로 보내면 매니폴드만 가압됩니다",
+                _warn(out, "PV-R 없이 매니폴드로 보내면 매니폴드만 가압됨",
                       block=bi, step=si, field="valves")
 
         if DEV.HAS_O3 and block_has_reactant and float(b.get("o3") or 0) == 0:
-            _warn(out, "PV-R 스텝이 있는데 블록 O3 설정이 0 입니다", block=bi, field="o3")
+            _warn(out, "PV-R 스텝이 있는데 블록 O3 설정이 0", block=bi, field="o3")
         if DEV.HAS_RF and block_has_rf and float(b.get("rf_w") or 0) == 0:
             pass    # 위 스텝 경고로 충분
 
     # --- 그룹 ---
     groups = recipe.get("groups") or []
     if len(groups) > GROUP_MAX:
-        _err(out, f"반복 그룹은 최대 {GROUP_MAX} 개입니다 (현재 {len(groups)})")
+        _err(out, f"반복 그룹은 최대 {GROUP_MAX} 개 (현재 {len(groups)})")
     last_to = 0
     for gi, g in enumerate(groups, start=1):
         a, b = int(g.get("from_block") or 0), int(g.get("to_block") or 0)
         r = int(g.get("repeat") or 0)
         where = {"field": f"group{gi}"}
         if not (1 <= a <= len(blocks)) or not (1 <= b <= len(blocks)):
-            _err(out, f"반복 그룹 {gi}: 블록 범위를 벗어납니다 ({a}~{b}, 블록 {len(blocks)}개)", **where)
+            _err(out, f"반복 그룹 {gi}: 블록 범위를 벗어남 ({a}~{b}, 블록 {len(blocks)}개)", **where)
         elif a > b:
-            _err(out, f"반복 그룹 {gi}: 시작 블록이 끝 블록보다 뒤입니다 ({a} > {b})", **where)
+            _err(out, f"반복 그룹 {gi}: 시작 블록이 끝 블록보다 뒤 ({a} > {b})", **where)
         elif a <= last_to:
             # ★ PLC 는 그룹을 번호 순서로 하나씩만 불러온다 — 겹치거나 순서가 어긋나면
             #   래더가 되돌아갈 곳을 잘못 잡는다.
-            _err(out, f"반복 그룹 {gi}: 앞 그룹과 겹치거나 순서가 어긋났습니다 "
-                      f"(블록 순서대로 정렬되고 서로 겹치지 않아야 합니다)", **where)
+            _err(out, f"반복 그룹 {gi}: 앞 그룹과 겹치거나 순서가 어긋남 "
+                      f"(블록 순서대로 정렬되고 서로 겹치지 않아야 함)", **where)
         else:
             last_to = b
         if not (1 <= r <= GROUP_REPEAT_MAX):
-            _err(out, f"반복 그룹 {gi}: 반복은 1~{GROUP_REPEAT_MAX} 이어야 합니다 (현재 {r})", **where)
+            _err(out, f"반복 그룹 {gi}: 반복은 1~{GROUP_REPEAT_MAX} 이어야 함 (현재 {r})", **where)
 
     return out
 

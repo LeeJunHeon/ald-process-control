@@ -103,7 +103,7 @@ class DataLog:
             logger.write("info", f"데이터 로그 시작: {os.path.basename(self.path)}")
         except Exception as e:  # noqa: BLE001
             # ★ 기록을 못 해도 공정은 돌아야 한다.
-            self.error = f"데이터 로그를 시작하지 못했습니다: {e}"
+            self.error = f"데이터 로그를 시작하지 못함: {e}"
             logger.write("err", self.error)
             self.fp = None
             self.writer = None
@@ -120,7 +120,7 @@ class DataLog:
             return False
         if not resume_window_ok(meta):
             logger.write("info", f"이어받기 — 데이터 로그 {name} 은(는) 시작 시각 · 예상 시간으로 보아 이 공정이 아니어서 "
-                                 "새 파일로 씁니다")
+                                 "새 파일로 씀")
             return False
         path = os.path.join(paths.DATALOG_DIR, name + ".csv")
         try:
@@ -130,13 +130,13 @@ class DataLog:
         except (OSError, csv.Error, UnicodeDecodeError):
             return False
         if head != logger.csv_row(self._header()):
-            logger.write("info", f"이어받기 — 데이터 로그 {name} 의 머리줄이 지금과 달라 새 파일로 씁니다")
+            logger.write("info", f"이어받기 — 데이터 로그 {name} 의 머리줄이 지금과 달라 새 파일로 씀")
             return False
         try:
             self.fp = open(path, "a", encoding="utf-8", newline="")
             self.writer = csv.writer(self.fp)
         except OSError as e:
-            logger.write("warn", f"이어받기 — 데이터 로그 {name} 을(를) 다시 열지 못해 새 파일로 씁니다: {e}")
+            logger.write("warn", f"이어받기 — 데이터 로그 {name} 을(를) 다시 열지 못해 새 파일로 씀: {e}")
             self.fp = self.writer = None
             return False
         self.name, self.path = name, path
@@ -254,8 +254,8 @@ class DataLog:
                 runner = self.state.runner
                 if not (runner and runner.active_run):
                     self.end_result = "기록 중단(PLC 끊김)" if not (link and link.connected) else "기록 중단(PLC 멈춤)"
-                    logger.write("warn", f"데이터 로그를 닫습니다 — PLC 끊김 · 멈춤이 {DOWN_CLOSE_S / 60:.0f} 분을 "
-                                         "넘었습니다")
+                    logger.write("warn", f"데이터 로그를 닫음 — PLC 끊김 · 멈춤이 {DOWN_CLOSE_S / 60:.0f} 분을 "
+                                         "넘음")
                     self.close()
                     return
                 thin = True

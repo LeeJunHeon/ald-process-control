@@ -16,7 +16,7 @@ from collections import OrderedDict
 
 TOTAL = 2               # 서버 전체 동시 무거운 조회
 REMOTE = 1              # 그중 원격(합쳐서)
-BUSY_TEXT = "다른 조회가 끝난 뒤 다시 시도하세요"
+BUSY_TEXT = "다른 조회가 끝난 뒤 다시 시도 필요"
 
 
 class Busy(Exception):

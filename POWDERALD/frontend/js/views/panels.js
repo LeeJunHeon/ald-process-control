@@ -18,7 +18,7 @@
   var UI = w.UI;
   function esc(s) { return core.esc(s); }
   function setCls(el, cls) { if (el && el.className !== cls) el.className = cls; }
-  function setTitle(el, t) { if (el && el.title !== t) el.title = t || ''; }
+  function setTitle(el, t) { core.tip(el, t || ''); }        // v0.8.6: title 대신 설명창 상태 줄(data-tip)
   function setTxt(el, t) { if (el && el.textContent !== t) el.textContent = t; }
   function conn(t) { return !t.offline && !!(t.plc && t.plc.connected) && !(t.plc || {}).stalled; }
 
@@ -33,19 +33,17 @@
     unknown: '<svg viewBox="0 0 16 16"><circle cx="8" cy="8" r="6" fill="none" stroke-width="1.2" stroke-dasharray="2 2"/>' +
              '<path d="M6.3 6.3 A1.8 1.8 0 1 1 8 8.4 V9.3" fill="none" stroke-width="1.3"/><circle cx="8" cy="11.3" r="0.8"/></svg>'
   };
-  var ICON_TIP = { ok: 'OK — 조건 충족', no: 'Not ready — 이 조건이 시작을 막음', wait: '시작 뒤 베이스 압력까지 기다림(시작은 막지 않음)',
-                   na: '이 장비 · 레시피에는 해당 없음', unknown: '연결 · 장비 ID 를 확인하기 전이라 모름' };
 
   var start = {
     build: function (root, s) {
       var slots = ((s.structure || {}).start_slots || []);
       root.innerHTML =
-        '<div class="panel-head"><span>' + T('panel.start') + '</span>' +
+        '<div class="panel-head"><span data-tk="panel.start">' + T('panel.start') + '</span>' +
         '<span class="note"><span class="chip" data-bind="scSum">—</span></span></div>' +
         '<div class="panel-body sc-body"><div class="scgrid">' + slots.map(function (sl, i) {
           var o3 = (sl.keys || []).indexOf('o3') >= 0;
           // v0.8.1: 'O3 Line ON' 단추는 설명 줄 자리에(단추가 보이면 설명 글은 숨기고 title 로) — 자리 이름이 줄지 않는다
-          return '<div class="sc" data-sc="' + i + '"><span class="sci unknown" data-bind="sci' + i + '"></span>' +
+          return '<div class="sc" data-sc="' + i + '"' + core.tipKo(sl.ko || sl.label, sl.desc) + '><span class="sci unknown" data-bind="sci' + i + '"></span>' +
             '<span class="sct"><b>' + esc(sl.label) + '</b><span class="scd" data-bind="scd' + i + '">—</span>' +
             (o3 ? '<button class="btn xs sc-o3" data-fp="o3:O3" data-bind="sco3_' + i + '" hidden>' + T('b.o3On') + '</button>' : '') +
             '</span></div>';
@@ -61,17 +59,17 @@
         if (ic) {
           setCls(ic, 'sci ' + it.icon);
           core.html(ic, ICON[it.icon]);
-          setTitle(ic, ICON_TIP[it.icon]);
         }
         var dd = core.bind('scd' + i, root);
         setTxt(dd, it.text || '—');
         var cell = dd && dd.closest('.sc');
-        setTitle(cell, it.title || (it.label + ' — ' + (it.text || '')));
+        setTitle(cell, it.title || (it.text || ''));
         var b = core.bind('sco3_' + i, root);
         if (b) {
           b.hidden = !it.o3btn;
           if (dd) dd.hidden = !!it.o3btn;
           setTitle(b, it.o3btn ? (it.text || '') + ' — 누르면 O3 조작 창' : '');
+          if (b.getAttribute('data-tk') !== 'b.o3On') b.setAttribute('data-tk', 'b.o3On');
         }
       });
       var sum = core.bind('scSum', root);
@@ -94,17 +92,17 @@
       var r0 = 1, cells = '';
       rows.forEach(function (row) {
         var n = Math.max(1, Math.ceil(row.items.length / cols));
-        cells += '<span class="ann-g" style="grid-row:' + r0 + ' / span ' + n + '" title="' + esc(row.title) + '">' +
+        cells += '<span class="ann-g" style="grid-row:' + r0 + ' / span ' + n + '" data-tk="ann.' + esc(row.group) + '"' + core.tipAttr(row.title) + '>' +
           esc(T('ann.' + row.group, String(row.group).toUpperCase())) + '</span>';
         row.items.forEach(function (it, i) {
           cells += '<span class="lamp unknown" data-lamp="' + esc(it.key) + '" style="grid-row:' + (r0 + Math.floor(i / cols)) +
-            ';grid-column:' + (2 + i % cols) + '" title="' + esc(it.title) + '"><i></i>' + esc(it.name) + '</span>';
+            ';grid-column:' + (2 + i % cols) + '"' + core.tipKo(it.ko, it.desc) + core.tipAttr(it.title) + '><i></i>' + esc(it.name) + '</span>';
         });
         r0 += n;
       });
       root.innerHTML =
-        '<div class="panel-head"><span>' + T('panel.ann') + '</span><span class="note ann-legend">' +
-        LEGEND.map(function (l) { return '<span title="' + esc(l[2]) + '"><i class="lamp-dot ' + l[0] + '"></i>' + T(l[1]) + '</span>'; }).join('') +
+        '<div class="panel-head"><span data-tk="panel.ann">' + T('panel.ann') + '</span><span class="note ann-legend">' +
+        LEGEND.map(function (l) { return '<span data-tk="' + l[1] + '"' + core.tipAttr(l[2]) + '><i class="lamp-dot ' + l[0] + '"></i>' + T(l[1]) + '</span>'; }).join('') +
         '</span></div><div class="panel-body ann-body"><div class="anngrid" style="grid-template-columns:56px repeat(' + cols +
         ', minmax(max-content, 1fr))">' + cells + '</div></div>';
       root._lamps = Array.prototype.slice.call(root.querySelectorAll('[data-lamp]'));
@@ -116,7 +114,7 @@
       rows.forEach(function (row) {
         row.items.forEach(function (it) {
           var el = lamps[k++];
-          if (el) setCls(el, 'lamp ' + it.lvl);
+          if (el) { setCls(el, 'lamp ' + it.lvl); setTitle(el, it.title); }
         });
       });
     }
@@ -131,19 +129,19 @@
     build: function (root, s) {
       var rv = (s.recipe_limits || {}).recipe_valves || [];
       var m = UI.valveStrip(s.structure, {}, false, { recipeValves: rv });
-      root.innerHTML = '<div class="vs-name"><b title="밸브 띠 — 누르면 그 옆에 조작 창">' + T('panel.valves') + '</b>' +
+      root.innerHTML = '<div class="vs-name"><b data-tk="panel.valves">' + T('panel.valves') + '</b>' +
         '<span class="vs-pend" data-bind="vsPend" hidden></span></div><div class="vs-groups">' +
         m.groups.map(function (g) {
           return '<div class="vs-grp">' + g.map(function (it) {
             if (it.kind === 'value') {
-              return '<button class="vt val unknown" data-vt="' + esc(it.key) + '"' + (it.fp ? ' data-fp="' + esc(it.fp) + '"' : '') +
+              return '<button class="vt val unknown" data-vt="' + esc(it.key) + '"' + (it.fp ? ' data-fp="' + esc(it.fp) + '"' : '') + core.tipKo(it.ko, it.desc) +
                 '><span class="vval mono">—</span><span class="vtag">' + esc(it.label) + '</span></button>';
             }
             if (it.auto) {
-              return '<div class="vt auto unknown" data-vt="' + esc(it.key) + '">' + VICON + '<span class="vtag">' + esc(it.label) +
+              return '<div class="vt auto unknown" data-vt="' + esc(it.key) + '"' + core.tipKo(it.ko, it.desc) + '>' + VICON + '<span class="vtag">' + esc(it.label) +
                 '</span><span class="vauto">' + T('s.auto') + '</span></div>';
             }
-            return '<button class="vt unknown" data-vt="' + esc(it.key) + '"' + (it.fp ? ' data-fp="' + esc(it.fp) + '"' : '') + '>' +
+            return '<button class="vt unknown" data-vt="' + esc(it.key) + '"' + (it.fp ? ' data-fp="' + esc(it.fp) + '"' : '') + core.tipKo(it.ko, it.desc) + '>' +
               VICON + '<span class="vtag">' + esc(it.label) + '</span></button>';
           }).join('') + '</div>';
         }).join('') + '</div>';
@@ -166,7 +164,8 @@
       if (pe) {
         pe.hidden = !m.pending.length;
         setTxt(pe, T('s.pending') + ' ' + m.pending.length);
-        setTitle(pe, 'Pending — 출력이 꺼진 채 1 s 넘게 남은 요청: ' + m.pending.join(' · '));
+        setTitle(pe, '출력이 꺼진 채 1 s 넘게 남은 요청: ' + m.pending.join(' · '));
+        if (pe.getAttribute('data-tk') !== 's.pending') pe.setAttribute('data-tk', 's.pending');
       }
     }
   };

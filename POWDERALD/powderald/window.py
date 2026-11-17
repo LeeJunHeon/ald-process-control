@@ -90,7 +90,7 @@ def bind_sockets(host: str, port: int) -> list:
     ★ v0.4.13: 만들 수 없는 family(EAFNOSUPPORT — ::1 은 풀리는데 IPv6 소켓이 없는 PC 의 'localhost')는 asyncio 처럼
       건너뛴다. 하나도 못 묶을 때만 실패(이유는 실제 오류)."""
     if not host_valid(host):
-        raise OSError(f"server.host 형식이 올바르지 않습니다: {host!r} (빈 값 · localhost · IP 주소)")
+        raise OSError(f"server.host 형식이 올바르지 않음: {host!r} (빈 값 · localhost · IP 주소)")
     infos = socket.getaddrinfo(host or None, port, socket.AF_UNSPEC, socket.SOCK_STREAM, 0, socket.AI_PASSIVE)
     socks, seen, skipped = [], set(), None
     try:
@@ -118,7 +118,7 @@ def bind_sockets(host: str, port: int) -> list:
     if not socks:
         if skipped is not None:
             raise skipped
-        raise OSError(f"{host!r} 의 주소를 찾지 못했습니다")
+        raise OSError(f"{host!r} 의 주소를 찾지 못함")
     return socks
 
 
@@ -204,18 +204,18 @@ def port_busy_text(host: str, port: int, why: str) -> str:
     ★ v0.4.16: 권한 · 예약 포트(13 · 10013)를 먼저 본다 — POSIX 의 13 은 '사용 중'이 아니라 '이 PC 에 없는 주소'로 나왔다."""
     if host_valid(host) and "gaierror" not in why and _denied(why):
         why = why[len(BUSY_MARK):] if why.startswith(BUSY_MARK) else why
-        return (f"설정 포트 {host}:{port} 를 열 수 없습니다 — 다른 프로그램이 쓰고 있거나, 또는 쓸 권한이 없거나 예약된 "
-                f"포트입니다(Windows: netsh int ipv4 show excludedportrange protocol=tcp). 쓰는 프로그램을 끄거나 "
-                f"설정 server.port 를 바꾸세요. ({why})")
+        return (f"설정 포트 {host}:{port} 를 열 수 없음 — 다른 프로그램이 쓰고 있거나, 또는 쓸 권한이 없거나 예약된 "
+                f"포트(Windows: netsh int ipv4 show excludedportrange protocol=tcp). 쓰는 프로그램을 끄거나 "
+                f"설정 server.port 바꾸기 필요. ({why})")
     if host_valid(host) and "gaierror" not in why and not why.startswith(BUSY_MARK):
-        return (f"설정 주소 {host}:{port} 로 서버를 열 수 없습니다 — {why}. 이 PC 에 없는 주소이거나(IPv6 가 없는 PC 의 ::1 등) "
-                f"쓸 수 없는 주소입니다. 설정 server.host 를 고치세요.")
+        return (f"설정 주소 {host}:{port} 로 서버를 열 수 없음 — {why}. 이 PC 에 없는 주소이거나(IPv6 가 없는 PC 의 ::1 등) "
+                f"쓸 수 없는 주소. 설정 server.host 고치기 필요.")
     why = why[len(BUSY_MARK):] if why.startswith(BUSY_MARK) else why
     if not host_valid(host) or "gaierror" in why:
-        return (f"설정 server.host {host!r} 로 서버를 열 수 없습니다 — 빈 값(= 127.0.0.1) · localhost · IP 주소만 "
-                f"씁니다(모든 주소는 0.0.0.0 또는 ::). 설정을 고치세요. ({why})")
-    return (f"설정 포트 {host}:{port} 를 열 수 없습니다 — 다른 프로그램(또는 이미 떠 있는 이 프로그램)이 쓰고 "
-            f"있습니다. {PORT_WAIT_S:g} s 다시 시도했습니다. 쓰는 프로그램을 끄거나 설정 server.port 를 바꾸세요. ({why})")
+        return (f"설정 server.host {host!r} 로 서버를 열 수 없음 — 빈 값(= 127.0.0.1) · localhost · IP 주소만 "
+                f"씀(모든 주소는 0.0.0.0 또는 ::). 설정 고치기 필요. ({why})")
+    return (f"설정 포트 {host}:{port} 를 열 수 없음 — 다른 프로그램(또는 이미 떠 있는 이 프로그램)이 쓰고 "
+            f"있음. {PORT_WAIT_S:g} s 다시 시도함. 쓰는 프로그램을 끄거나 설정 server.port 바꾸기 필요. ({why})")
 
 
 def find_free_port(host: str, start: int, tries: int = 10):
@@ -402,14 +402,14 @@ def run(app, host: str, port: int, side: str = None):
         time.sleep(0.25)
         got = acquire_single_instance()
     if not got:
-        _msgbox(f"{DEV.NAME} 프로그램이 이미 실행 중입니다.\n작업 표시줄에서 기존 창을 확인하세요.")
+        _msgbox(f"{DEV.NAME} 프로그램이 이미 실행 중.\n작업 표시줄에서 기존 창 확인 필요.")
         return
 
     ok_w, _why = paths.check_writable()
     if not ok_w:
         # ★ 중단하지 않는다 — 읽기 전용이어도 장비 상태를 보는 것은 가능해야 한다.
-        _msgbox("데이터 폴더에 쓸 수 없습니다.\n"
-                f"{paths.DATA_DIR}\n\n로그와 알람 이력이 저장되지 않습니다.")
+        _msgbox("데이터 폴더에 쓸 수 없음.\n"
+                f"{paths.DATA_DIR}\n\n로그와 알람 이력이 저장되지 않음.")
 
     # ★ v0.4.12: 포트를 먼저 묶는다(확인이 곧 실제 bind). 못 묶으면 서버 · PLC 링크 · 시뮬레이터(lifespan)를
     #   띄우기 전에 이유를 알리고 멈춘다 — uvicorn 이 스스로 bind 하면 lifespan(PLC 링크)이 먼저 돌고, bind 실패는
@@ -434,12 +434,12 @@ def run(app, host: str, port: int, side: str = None):
                 # ★ v0.4.14: uvicorn 0.46 은 lifespan 시작이 실패하면 예외 없이 돌아온다 — started 로 안다(원인은
                 #   server.lifespan 이 로그에 썼다). 창은 20 s 를 기다리지 않고 바로 이유를 띄운다
                 from . import server as server_mod
-                _SERVER_ERROR = ("내부 서버가 시작 중 실패했습니다 — "
+                _SERVER_ERROR = ("내부 서버가 시작 중 실패함 — "
                                  + (server_mod.START_ERROR or "원인은 프로그램 로그"))
                 logger.write("err", _SERVER_ERROR)
         except BaseException as e:  # noqa: BLE001 — uvicorn 은 시작 실패를 SystemExit 로 낸다
             _SERVER_ERROR = f"{type(e).__name__}: {e}"
-            print(f"[error] 내부 서버가 중단되었습니다: {traceback.format_exc()}")
+            print(f"[error] 내부 서버가 중단됨: {traceback.format_exc()}")
             logger.write("err", f"내부 서버 중단: {_SERVER_ERROR}")
         finally:
             close_sockets(socks)
@@ -450,16 +450,16 @@ def run(app, host: str, port: int, side: str = None):
     try:
         import webview
     except Exception as e:  # noqa: BLE001
-        print(f"[info] pywebview 를 불러올 수 없습니다 ({e}). 브라우저에서 {url} 를 여세요.")
-        _msgbox("화면을 표시할 수 없습니다.\nMicrosoft Edge WebView2 런타임이 없을 수 있습니다.\n"
-                f"설치 후 다시 실행하거나, 브라우저에서 {url} 로 접속하세요.")
+        print(f"[info] pywebview 를 불러올 수 없음 ({e}). 브라우저에서 {url} 열기 필요.")
+        _msgbox("화면을 표시할 수 없음.\nMicrosoft Edge WebView2 런타임이 없을 수 있음.\n"
+                f"설치 후 다시 실행하거나, 브라우저에서 {url} 로 접속 필요.")
         return
 
     if not _wait_server_ready(host, port):
-        reason = ("내부 서버가 시작되지 못했습니다.\n\n" + _SERVER_ERROR) if _SERVER_ERROR \
-            else "내부 서버가 시간 안에 시작되지 않았습니다."
+        reason = ("내부 서버가 시작되지 못함.\n\n" + _SERVER_ERROR) if _SERVER_ERROR \
+            else "내부 서버가 시간 안에 시작되지 않음."
         logger.write("err", reason.replace("\n", " "))
-        _msgbox(reason + "\n\n로그 폴더를 확인하세요.\n" + logger.current_dir())
+        _msgbox(reason + "\n\n로그 폴더 확인 필요.\n" + logger.current_dir())
         return
 
     enable_dpi_awareness()
@@ -474,7 +474,7 @@ def run(app, host: str, port: int, side: str = None):
             y = 0
         except Exception:  # noqa: BLE001
             x, y, w, h = 0, 0, 960, 1000
-        logger.early("warn", "작업 영역을 읽지 못해 화면 크기 기준으로 배치합니다")
+        logger.early("warn", "작업 영역을 읽지 못해 화면 크기 기준으로 배치함")
 
     global WINDOW
     WINDOW = webview.create_window(TITLE, url, x=x, y=y, width=w, height=h,
@@ -488,6 +488,6 @@ def run(app, host: str, port: int, side: str = None):
     try:
         webview.start()
     except Exception as e:  # noqa: BLE001
-        print(f"[error] 창을 띄우지 못했습니다: {e}")
-        _msgbox("화면을 표시할 수 없습니다.\nMicrosoft Edge WebView2 런타임이 없을 수 있습니다.\n"
-                f"설치 후 다시 실행하거나, 브라우저에서 {url} 로 접속하세요.")
+        print(f"[error] 창을 띄우지 못함: {e}")
+        _msgbox("화면을 표시할 수 없음.\nMicrosoft Edge WebView2 런타임이 없을 수 있음.\n"
+                f"설치 후 다시 실행하거나, 브라우저에서 {url} 로 접속 필요.")

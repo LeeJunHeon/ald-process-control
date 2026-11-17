@@ -92,14 +92,14 @@ def load(path: str = ""):
             raw, source = ex, "example"
             if unreadable:
                 # ★ v0.6.2(C1): 있는데 못 읽은 것은 '없어' 가 아니다 — 이유(줄 · 칸)는 _read 의 문구에
-                problems.append(("err", f"{os.path.basename(target)} 을(를) 읽지 못해 예시 설정으로 실행 중입니다 — "
-                                        f"{os.path.basename(target)} 을 고친 뒤 프로그램을 다시 시작하세요"
-                                        "(그때까지 설정 저장은 막습니다)"))
+                problems.append(("err", f"{os.path.basename(target)} 을(를) 읽지 못해 예시 설정으로 실행 중 — "
+                                        f"{os.path.basename(target)} 을 고친 뒤 프로그램 다시 시작 필요"
+                                        "(그때까지 설정 저장은 막음)"))
             else:
-                problems.append(("warn", "config.json 이 없어 예시 설정으로 실행 중입니다 — "
-                                         "현장 값을 넣은 config.json 을 exe 옆에 두세요"))
+                problems.append(("warn", "config.json 이 없어 예시 설정으로 실행 중 — "
+                                         "현장 값을 넣은 config.json 을 exe 옆에 두기 필요"))
         else:
-            problems.append(("err", "설정 파일과 예시 설정을 모두 읽지 못했습니다 — 기본값으로 기동합니다"))
+            problems.append(("err", "설정 파일과 예시 설정을 모두 읽지 못함 — 기본값으로 기동함"))
             raw = {}
 
     cfg = _deep_merge(DEFAULTS, raw)
@@ -117,7 +117,7 @@ def read_reason(e: Exception) -> str:
     if isinstance(e, json.JSONDecodeError):
         return f"{e.lineno} 줄 {e.colno} 칸: {e.msg}"
     if isinstance(e, UnicodeDecodeError):
-        return f"UTF-8 이 아닙니다({e.start} 바이트째) — UTF-8 로 저장하세요"
+        return f"UTF-8 이 아님({e.start} 바이트째) — UTF-8 로 저장 필요"
     return f"{type(e).__name__}: {e}"
 
 
@@ -129,10 +129,10 @@ def _read(p: str):
         with open(p, "r", encoding="utf-8-sig") as f:
             data = json.load(f)
         if not isinstance(data, dict):
-            return None, [("err", f"{os.path.basename(p)}: 최상위가 객체가 아닙니다")]
+            return None, [("err", f"{os.path.basename(p)}: 최상위가 객체가 아님")]
         return data, []
     except Exception as e:  # noqa: BLE001
-        return None, [("err", f"{os.path.basename(p)} 을(를) 읽지 못했습니다 — {read_reason(e)}")]
+        return None, [("err", f"{os.path.basename(p)} 을(를) 읽지 못함 — {read_reason(e)}")]
 
 
 def _fill_devices(cfg: dict):
@@ -173,7 +173,7 @@ def _fill_devices(cfg: dict):
 PRM_INT_RULES = [
     ("pc_wdt_ms", 1, 65535, "0 이면 첫 하트비트 뒤 곧바로 PC 통신 끊김"),
     ("pump_timeout_s", 1, 6553, "0 이면 IV-E 가 열리자마자 펌핑 시간 초과"),
-    ("vent_timeout_s", 1, 6553, "0 이면 VV 가 열리기 전에 벤트 시간 초과"),
+    ("vent_timeout_s", 1, 6553, "0 이면 VV 가 열리기 전에 Vent 시간 초과"),
     ("mfc_timeout_s", 1, 6553, "0 이면 모든 블록 준비에서 MFC 시간 초과"),
     ("mfc_stable_s", 0, 6553, "0 = 안정 대기 없음"),
     # ★ 래더는 이 값을 부호 있는 16비트로 비교한다(P40 최소 열림) — 32768 이상은 음수가 되어 최소 열림이 사라진다
@@ -187,10 +187,10 @@ if DEV.HAS_RF:
     PRM_REQUIRED_POS += [
         ("rf_max_w", "0 이면 RF 금지"),
         ("rf_ref_max_w", "비거나 0 이면 첫 RF 스텝에서 반사 알람 → 안전 정지(래더에 0 보호 없음)"),
-        ("rf_p_max_torr", "0 이면 RF 허가(인터락 b8)가 나지 않음"),
+        ("rf_p_max_torr", "0 이면 RF Permit(인터락 b8)가 나지 않음"),
     ]
 if DEV.HAS_O3:
-    PRM_REQUIRED_POS.append(("o3_max", "0 이면 O3 허가(인터락 b9)가 나지 않음"))
+    PRM_REQUIRED_POS.append(("o3_max", "0 이면 O3 Permit(인터락 b9)가 나지 않음"))
 
 
 def prm_problems(cfg: dict) -> list:
@@ -208,10 +208,10 @@ def prm_problems(cfg: dict) -> list:
                 raise ValueError
             iv = int(f)
         except (TypeError, ValueError, OverflowError):
-            out.append(f"params.{key} 는 정수여야 합니다: {v!r}")
+            out.append(f"params.{key} 는 정수여야 함: {v!r}")
             continue
         if not (lo <= iv <= hi):
-            out.append(f"params.{key} 는 {lo}~{hi} 여야 합니다 (지금 {iv}) — {why}")
+            out.append(f"params.{key} 는 {lo}~{hi} 여야 함 (지금 {iv}) — {why}")
     for key, why in PRM_REQUIRED_POS:
         v = prm.get(key)
         try:
@@ -219,14 +219,14 @@ def prm_problems(cfg: dict) -> list:
         except (TypeError, ValueError, OverflowError):
             ok = False
         if not ok:
-            out.append(f"params.{key} 는 0 보다 커야 합니다 (지금 {v!r}) — {why}")
+            out.append(f"params.{key} 는 0 보다 커야 함 (지금 {v!r}) — {why}")
     tol = prm.get("mfc_tol_sccm")
     if tol is not None:
         try:
             if float(tol) < 0:
                 raise ValueError
         except (TypeError, ValueError, OverflowError):
-            out.append(f"params.mfc_tol_sccm 는 0 이상이어야 합니다: {tol!r}")
+            out.append(f"params.mfc_tol_sccm 는 0 이상이어야 함: {tol!r}")
     return out
 
 
@@ -264,28 +264,28 @@ def validate(cfg: dict) -> list:
         if not (1 <= port <= 65535):
             raise ValueError
     except (TypeError, ValueError):
-        p.append(("err", f"server.port 값이 올바르지 않습니다: {srv.get('port')!r}"))
+        p.append(("err", f"server.port 값이 올바르지 않음: {srv.get('port')!r}"))
     if not host_valid(srv.get("host")):
         # ★ v0.4.12: 이름 · 공백 · 잘못된 주소 — 서버를 열지 못하고 멈춘다(포트를 먼저 묶을 때 같은 이유로)
-        p.append(("err", f"server.host 형식이 올바르지 않습니다: {srv.get('host')!r} — 빈 값(= 127.0.0.1) · "
-                         "localhost · IP 주소만 씁니다(모든 주소는 0.0.0.0 또는 ::)"))
+        p.append(("err", f"server.host 형식이 올바르지 않음: {srv.get('host')!r} — 빈 값(= 127.0.0.1) · "
+                         "localhost · IP 주소만 씀(모든 주소는 0.0.0.0 또는 ::)"))
     if (cfg.get("window") or {}).get("theme", "light") not in ("light", "dark"):
-        p.append(("err", "window.theme 은 light 또는 dark 여야 합니다"))
+        p.append(("err", "window.theme 은 light 또는 dark 여야 함"))
     if (cfg.get("window") or {}).get("side") not in ("left", "right"):
-        p.append(("warn", "window.side 는 left 또는 right 여야 합니다"))
+        p.append(("warn", "window.side 는 left 또는 right 여야 함"))
 
     plc = cfg.get("plc") or {}
     if not plc.get("simulate") and not str(plc.get("host") or "").strip():
-        p.append(("err", "plc.host 가 비어 있습니다 — 시뮬레이터가 아니면 이 장비 PLC 주소가 필요합니다 "
-                         "(비어 있으면 연결하지 않습니다)"))
+        p.append(("err", "plc.host 가 비어 있음 — 시뮬레이터가 아니면 이 장비 PLC 주소가 필요 "
+                         "(비어 있으면 연결하지 않음)"))
     for key, lo, hi in (("poll_ms", 20, 5000), ("heartbeat_ms", 100, 5000),
                         ("timeout_ms", 100, 10000)):
         try:
             v = int(plc.get(key))
             if not (lo <= v <= hi):
-                p.append(("warn", f"plc.{key} 가 권장 범위({lo}~{hi})를 벗어납니다: {v}"))
+                p.append(("warn", f"plc.{key} 가 권장 범위({lo}~{hi})를 벗어남: {v}"))
         except (TypeError, ValueError):
-            p.append(("warn", f"plc.{key} 값이 올바르지 않습니다"))
+            p.append(("warn", f"plc.{key} 값이 올바르지 않음"))
     try:
         wdt = int((cfg.get("params") or {}).get("pc_wdt_ms") or A.PRM_DEFAULTS["pc_wdt_ms"])
         # ★ 응답 하나를 잃었을 때의 최악 공백 = 응답 제한 + 하트비트 주기 + 재연결 여유(500 ms).
@@ -294,17 +294,17 @@ def validate(cfg: dict) -> list:
         if worst >= wdt:
             p.append(("err", f"응답 하나를 잃었을 때의 최악 하트비트 공백({worst} ms = plc.timeout_ms "
                              f"{plc.get('timeout_ms')} + plc.heartbeat_ms {plc.get('heartbeat_ms')} + 500)이 "
-                             f"params.pc_wdt_ms({wdt}) 이상입니다 — PLC 가 PC 끊김 트립을 걸 수 있습니다"
+                             f"params.pc_wdt_ms({wdt}) 이상 — PLC 가 PC 끊김 트립을 걸 수 있음"
                              f"(공정 중이면 공정은 끝까지 가고, 트립이 남으면 끝난 뒤 안전 정지 · 대기 중이면 바로 "
                              f"안전 정지)"))
         if int(plc.get("heartbeat_ms")) > wdt / 3:
             p.append(("err", f"plc.heartbeat_ms({plc.get('heartbeat_ms')})가 "
-                             f"PC 하트비트 판정(params.pc_wdt_ms={wdt})의 1/3 보다 깁니다 — "
-                             f"PLC 가 PC 끊김 트립을 걸 수 있습니다(공정 중이면 끝난 뒤 · 대기 중이면 바로 안전 정지)"))
+                             f"PC 하트비트 판정(params.pc_wdt_ms={wdt})의 1/3 보다 김 — "
+                             f"PLC 가 PC 끊김 트립을 걸 수 있음(공정 중이면 끝난 뒤 · 대기 중이면 바로 안전 정지)"))
     except (TypeError, ValueError):
         pass
     if int(plc.get("sim_port") or 0) == int(srv.get("port") or 0):
-        p.append(("err", "plc.sim_port 와 server.port 가 같습니다 — 포트를 나눠야 합니다"))
+        p.append(("err", "plc.sim_port 와 server.port 가 같음 — 포트를 나눠야 함"))
 
     analog = cfg.get("analog") or {}
     try:
@@ -313,30 +313,30 @@ def validate(cfg: dict) -> list:
         # ★ 래더는 아날로그 원시값 · 그 비교값(베이스 압력 · MFC 허용 편차 · RF/O3 상한 등)을 부호 있는
         #   16비트로 비교한다 — 32767 을 넘으면 설정 · 비교가 깨진다
         if int(analog.get("raw_max")) > 32767:
-            p.append(("err", f"analog.raw_max 는 32767 이하여야 합니다(래더의 부호 있는 비교): "
+            p.append(("err", f"analog.raw_max 는 32767 이하여야 함(래더의 부호 있는 비교): "
                              f"{analog.get('raw_max')}"))
     except (TypeError, ValueError):
-        p.append(("err", "analog.raw_max 값이 올바르지 않습니다"))
+        p.append(("err", "analog.raw_max 값이 올바르지 않음"))
 
     # 환산이 단조 증가인지 — 역함수를 쓰기 때문에 반드시 확인한다.
     conv = Converters(cfg)
     if not conv.cvg.is_monotonic():
-        p.append(("err", "pressure.cvg 환산이 단조 증가가 아닙니다 — "
-                         "베이스 압력을 원시값으로 바꿀 수 없습니다"))
+        p.append(("err", "pressure.cvg 환산이 단조 증가가 아님 — "
+                         "베이스 압력을 원시값으로 바꿀 수 없음"))
     if conv.cm.installed and not conv.cm.is_monotonic():
-        p.append(("err", "pressure.cm 환산이 단조 증가가 아닙니다"))
+        p.append(("err", "pressure.cm 환산이 단조 증가가 아님"))
 
     for m in cfg.get("mfc") or []:
         fs = m.get("full_scale_sccm")
         if fs is None:
-            p.append(("warn", f"MFC{m['no']} ({m['name']}) 풀스케일이 정해지지 않았습니다 — "
-                              f"유량 표시가 '—' 로 나옵니다"))
+            p.append(("warn", f"MFC{m['no']} ({m['name']}) 풀스케일이 정해지지 않음 — "
+                              f"유량 표시가 '—' 로 나옴"))
         else:
             try:
                 if float(fs) <= 0:
                     raise ValueError
             except (TypeError, ValueError):
-                p.append(("err", f"MFC{m['no']} 풀스케일 값이 올바르지 않습니다: {fs!r}"))
+                p.append(("err", f"MFC{m['no']} 풀스케일 값이 올바르지 않음: {fs!r}"))
 
     for h in cfg.get("heaters") or []:
         try:
@@ -344,89 +344,89 @@ def validate(cfg: dict) -> list:
             if not (1 <= stn <= 3):
                 raise ValueError
         except (TypeError, ValueError):
-            p.append(("err", f"히터 CH{h['ch']}: station(온도조절기 국번)은 1~3 이어야 합니다: "
+            p.append(("err", f"히터 CH{h['ch']}: station(온도조절기 국번)은 1~3 이어야 함: "
                              f"{h.get('station')!r}"))
         if not h.get("enabled"):
             continue
         if h.get("max_c") is None:
             # ★ PLC 는 한계 0 인 채널의 소프트 과온 감시만 안 할 뿐 전원을 막지 않는다.
             #   감시 없는 히터가 켜지지 않도록 PC 가 목표 온도·전원 켜기를 거절한다.
-            p.append(("warn", f"히터 CH{h['ch']} ({h['name']}) 과온 한계가 정해지지 않았습니다 — "
-                              f"PLC 소프트 과온 감시가 꺼지므로 PC 가 이 채널의 설정·전원 켜기를 막습니다"))
+            p.append(("warn", f"히터 CH{h['ch']} ({h['name']}) 과온 한계가 정해지지 않음 — "
+                              f"PLC 소프트 과온 감시가 꺼지므로 PC 가 이 채널의 설정·전원 켜기를 막음"))
         sv = h.get("default_sv")
         mx = h.get("max_c")
         if sv is not None and mx is not None and float(sv) > float(mx):
-            p.append(("err", f"히터 CH{h['ch']}: 기본 설정 온도({sv})가 과온 한계({mx})보다 높습니다"))
+            p.append(("err", f"히터 CH{h['ch']}: 기본 설정 온도({sv})가 과온 한계({mx})보다 높음"))
 
     pr = cfg.get("process") or {}
     for key, lo, hi in (("base_wait_timeout_s", 10, 86400), ("base_stable_s", 0, 3600)):
         try:
             v = float(pr.get(key))
             if not (lo <= v <= hi):
-                p.append(("warn", f"process.{key} 가 권장 범위({lo}~{hi})를 벗어납니다: {v:g}"))
+                p.append(("warn", f"process.{key} 가 권장 범위({lo}~{hi})를 벗어남: {v:g}"))
         except (TypeError, ValueError):
-            p.append(("warn", f"process.{key} 값이 올바르지 않습니다"))
+            p.append(("warn", f"process.{key} 값이 올바르지 않음"))
     hr = pr.get("heater_ready") or {}
     if hr.get("enabled"):
         try:
             if float(hr.get("band_c")) <= 0:
                 raise ValueError
         except (TypeError, ValueError):
-            p.append(("err", "process.heater_ready.band_c 값이 올바르지 않습니다"))
+            p.append(("err", "process.heater_ready.band_c 값이 올바르지 않음"))
 
     # v0.7.0(A5): 공정 중 압력 상한 · 히터 이탈 경고(PC 감시) — 0 = 끔
     for key, lo, hi in (("press_high_torr", 0, 1000), ("press_high_s", 0, 3600),
                         ("heater_dev_c", 0, 1000), ("heater_dev_s", 0, 86400)):
         if not _in_range(pr.get(key), lo, hi):
             # v0.7.1(W4): 한계 값(_torr · _c)은 0 = 끔, 지속 시간(_s)은 0 = 넘는 즉시
-            p.append(("err", f"process.{key} 는 {lo}~{hi} 여야 합니다: {pr.get(key)!r} "
+            p.append(("err", f"process.{key} 는 {lo}~{hi} 여야 함: {pr.get(key)!r} "
                              + ("(0 = 넘는 즉시)" if key.endswith("_s") else "(0 = 끔)")))
     if not isinstance(pr.get("press_high_abort", False), bool):
-        p.append(("err", "process.press_high_abort 는 true 또는 false 여야 합니다"))
+        p.append(("err", "process.press_high_abort 는 true 또는 false 여야 함"))
     if DEV.HAS_O3 and not _in_range(pr.get("o3_permit_wait_s"), 6, 600):
         # v0.8.5: O3 허가는 IV-B 가 열린 뒤 5 s 가 지나야 선다 — 그보다 짧으면 O3 라인 켜기가 늘 시간 초과다
-        p.append(("err", f"process.o3_permit_wait_s 는 6~600 여야 합니다: {pr.get('o3_permit_wait_s')!r} "
-                         "(O3 허가는 IV-B 가 열린 뒤 5 s 가 지나야 섭니다)"))
+        p.append(("err", f"process.o3_permit_wait_s 는 6~600 여야 함: {pr.get('o3_permit_wait_s')!r} "
+                         "(O3 Permit IV-B 가 열린 뒤 5 s 가 지나야 섬)"))
     # v0.7.0(A3): 누설률 점검
     lc = cfg.get("leakcheck") or {}
     for key, lo, hi in (("settle_s", 0, 600), ("measure_s", 10, 3600), ("limit_mtorr_min", 0.001, 100000),
                         ("max_torr", 0.001, 760)):
         if not _in_range(lc.get(key), lo, hi):
-            p.append(("err", f"leakcheck.{key} 는 {lo:g}~{hi:g} 여야 합니다: {lc.get(key)!r}"))
+            p.append(("err", f"leakcheck.{key} 는 {lo:g}~{hi:g} 여야 함: {lc.get(key)!r}"))
     # v0.7.0(A4): 정비 카운터 한계
     for key, v in ((cfg.get("maintenance") or {}).items()):
         if not str(key).startswith("_") and not _in_range(v, 0, 1e9):
-            p.append(("err", f"maintenance.{key} 는 0 이상이어야 합니다(0 = 끔): {v!r}"))
+            p.append(("err", f"maintenance.{key} 는 0 이상이어야 함(0 = 끔): {v!r}"))
 
     lg = cfg.get("log") or {}
     try:
         if not (0.2 <= float(lg.get("datalog_interval_s", 1)) <= 60):
-            p.append(("warn", "log.datalog_interval_s 는 0.2~60 s 가 알맞습니다"))
+            p.append(("warn", "log.datalog_interval_s 는 0.2~60 s 가 알맞음"))
     except (TypeError, ValueError):
-        p.append(("warn", "log.datalog_interval_s 값이 올바르지 않습니다"))
+        p.append(("warn", "log.datalog_interval_s 값이 올바르지 않음"))
     for key in ("keep_days", "datalog_keep_days", "trend_keep_days"):
         try:
             if int(lg.get(key)) < 0:
                 raise ValueError
         except (TypeError, ValueError):
-            p.append(("err", f"log.{key} 는 0 이상의 정수여야 합니다 (0 = 지우지 않음)"))
+            p.append(("err", f"log.{key} 는 0 이상의 정수여야 함 (0 = 지우지 않음)"))
     try:
         if not (1 <= int(plc.get("port")) <= 65535) or not (0 <= int(plc.get("unit_id")) <= 255):
             raise ValueError
     except (TypeError, ValueError):
-        p.append(("err", "plc.port(1~65535) 또는 plc.unit_id(0~255) 값이 올바르지 않습니다"))
+        p.append(("err", "plc.port(1~65535) 또는 plc.unit_id(0~255) 값이 올바르지 않음"))
 
     for msg in prm_problems(cfg):
         p.append(("err", msg))
     prm = cfg.get("params") or {}
     if prm.get("base_press_torr") is None:
-        p.append(("warn", "params.base_press_torr 가 없습니다 — PLC 가 공정 시작을 막습니다"))
+        p.append(("warn", "params.base_press_torr 가 없음 — PLC 가 공정 시작을 막음"))
     elif conv.cvg.to_raw(prm.get("base_press_torr")) <= 0:
-        p.append(("warn", "params.base_press_torr 가 환산에서 원시값 0 이 됩니다 — "
-                          "PLC 가 공정 시작을 막습니다"))
+        p.append(("warn", "params.base_press_torr 가 환산에서 원시값 0 이 됨 — "
+                          "PLC 가 공정 시작을 막음"))
     if DEV.HAS_RF and not (cfg.get("rf") or {}).get("max_w"):
-        p.append(("warn", "rf.max_w 가 없습니다 — PLC 가 RF 를 막습니다"))
+        p.append(("warn", "rf.max_w 가 없음 — PLC 가 RF 를 막음"))
     if DEV.HAS_O3 and not (cfg.get("o3") or {}).get("full"):
-        p.append(("warn", "o3.full 이 없습니다 — PLC 가 O3 를 막습니다"))
+        p.append(("warn", "o3.full 이 없음 — PLC 가 O3 를 막음"))
 
     return p

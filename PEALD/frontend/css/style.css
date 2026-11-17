@@ -279,6 +279,19 @@ header {
 .toast.err  { border-color: var(--stop-line); background: var(--stop-bg); color: var(--stop); }
 .toast.info { border-color: var(--info-line); background: var(--info-bg); color: var(--info); }
 
+/* ===================== 설명창 (v0.8.6 — core.js) ===================== */
+#tipbox {
+  position: fixed; z-index: 95; pointer-events: none;
+  max-width: min(440px, calc(100vw - 8px)); padding: 6px 10px; border-radius: var(--r-2);
+  border: 1px solid var(--line-2); background: var(--panel); color: var(--ink);
+  box-shadow: var(--shadow-lg); line-height: 1.45; white-space: normal; overflow-wrap: anywhere;
+}
+#tipbox .tip-b { font-weight: 700; }
+#tipbox .tip-d { color: var(--ink-dim); }
+#tipbox .tip-x { color: var(--ink); }
+#tipbox .tip-b + .tip-x, #tipbox .tip-d + .tip-x { margin-top: 3px; padding-top: 3px; border-top: 1px solid var(--line); }
+#tipbox .tip-x + .tip-x { margin-top: 0; padding-top: 0; border-top: 0; }
+
 /* ===================== modal ===================== */
 .modal {
   position: fixed; inset: 0; z-index: 80;

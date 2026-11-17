@@ -224,12 +224,12 @@ CMD_HEATER_APPLY = 13
 CMD_MFC_APPLY = 14
 
 CMD_NAMES = {
-    CMD_PROCESS_START: "공정 시작", CMD_PAUSE: "일시정지", CMD_RESUME: "재개",
-    CMD_STOP_AFTER_CYCLE: "사이클 끝나면 정지", CMD_ABORT: "즉시 중단",
-    CMD_ALARM_ACK: "알람 확인", CMD_ALARM_RESET: "알람 리셋",
-    CMD_PUMP_START: "펌핑 시작", CMD_PUMP_STOP: "펌핑 정지", CMD_VENT: "벤트",
-    CMD_ALL_CLOSE: "전체 밸브 닫기", CMD_MANUAL_APPLY: "수동 적용",
-    CMD_HEATER_APPLY: "히터 적용", CMD_MFC_APPLY: "MFC 수동 적용",
+    CMD_PROCESS_START: "Start", CMD_PAUSE: "Pause", CMD_RESUME: "Resume",
+    CMD_STOP_AFTER_CYCLE: "Stop after Cycle", CMD_ABORT: "Abort",
+    CMD_ALARM_ACK: "Alarm Ack", CMD_ALARM_RESET: "Alarm Reset",
+    CMD_PUMP_START: "Pumping Start", CMD_PUMP_STOP: "Pumping Stop", CMD_VENT: "Vent",
+    CMD_ALL_CLOSE: "Close All Valves", CMD_MANUAL_APPLY: "Manual Apply",
+    CMD_HEATER_APPLY: "Apply Heater", CMD_MFC_APPLY: "Apply MFC",
 }
 
 # ===================== 명령 결과 (D00003) =====================
@@ -241,7 +241,7 @@ RESULT_UNKNOWN = 4                  # PLC 가 모르는 명령
 RESULT_NAMES = {
     RESULT_OK: "처리됨",
     RESULT_INTERLOCK: "인터락 조건 미달",
-    RESULT_STATE: "지금 상태에서 할 수 없습니다",
+    RESULT_STATE: "지금 상태에서 할 수 없음",
     RESULT_RECIPE: "레시피 표 오류",
     RESULT_UNKNOWN: "PLC 가 모르는 명령",
 }

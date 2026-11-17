@@ -144,7 +144,7 @@
     var what = renaming ? '이름 바꾸기' : '삭제';
     renaming = null;
     deleting = null;
-    core.setText('rcSaveMsg', '답 없음 — ' + what + ' 결과를 목록에서 확인하세요' +
+    core.setText('rcSaveMsg', '답 없음 — ' + what + ' 결과 목록에서 확인 필요' +
       (core.offline ? ' (서버 연결 끊김)' : ''));
     drawList(core.state || {});
     update((core.state || {}).live || {});
@@ -174,9 +174,9 @@
       if (k === 'rcUpload' || k === 'rcStart') block = block || !core.plcOk();
       b.disabled = block;
     });
-    core.setText('rcRunNote', !core.canOperate() ? core.lockReason() + ' — 저장 · 올리기를 할 수 없습니다'
-      : run ? '공정 중입니다 — 저장·올리기는 공정이 끝난 뒤에 하세요'
-        : (flow ? '시작 절차 진행 중 — 끝나거나 대기 취소 뒤에 바꿀 수 있습니다' : ''));
+    core.setText('rcRunNote', !core.canOperate() ? core.lockReason() + ' — 저장 · 올리기를 할 수 없음'
+      : run ? '공정 중 — 저장·올리기는 공정이 끝난 뒤에 가능'
+        : (flow ? '시작 절차 진행 중 — 끝나거나 대기 취소 뒤에 바꿀 수 있음' : ''));
     var conn = core.plcOk() + '|' + core.offline;           // PLC 끊김 ↔ 서버 끊김도 다시 그린다
     if (conn !== lastPlcConn) { lastPlcConn = conn; drawPlcRow(core.state || {}); }
     var nb = d.querySelector('[data-rcbtn="new"]');
@@ -195,7 +195,7 @@
         '<div class="m">' + core.esc(r.memo || '') + '</div>' +
         '<div class="s mono">' + T('v.block') + ' ' + core.esc(r.block_count) + ' · ' + T('v.number') + ' ' + core.esc(r.number) +
         (r.modified ? ' · ' + core.esc(r.modified) : '') + '</div></div>';
-    }).join('') : '<div class="empty">저장된 레시피가 없습니다 — [New]를 누르세요</div>');
+    }).join('') : '<div class="empty">저장된 레시피가 없음 — [New] 누르기 필요</div>');
   }
 
   /** 지금 PLC 에 올라가 있는 레시피 한 줄. */
@@ -208,17 +208,17 @@
     var row = e.closest('.plcrow');
     if (row) row.classList.toggle('stale', !conn);
     var pre = conn ? '' : core.chip(core.downText(), 'off') + ' <span class="dim">마지막으로 읽은 것:</span> ';
-    if (!('number' in p)) { core.html(e, pre + '<span class="dim">PLC 레시피 정보를 아직 읽지 않았습니다</span>'); return; }
+    if (!('number' in p)) { core.html(e, pre + '<span class="dim">PLC 레시피 정보를 아직 읽지 않음</span>'); return; }
     if (!p.number) {
       // 읽었는데 번호가 0 — PLC 에 올라간 레시피 표가 없다
-      core.html(e, pre + '<span class="dim">PLC 에 올라간 레시피 표가 없습니다(번호 0)</span>');
+      core.html(e, pre + '<span class="dim">PLC 에 올라간 레시피 표가 없음(번호 0)</span>');
       return;
     }
     core.html(e, pre + core.chip(p.plc_ok ? 'PLC Check OK' : '✕ PLC Check NG', p.plc_ok ? 'ok' : 'warn') +
       ' <b>' + core.esc(p.name || '(이름 모름)') + '</b>' +
       ' <span class="mono dim">' + T('v.number') + ' ' + core.esc(p.number) + ' · ' + T('v.step') + ' ' + core.esc(p.step_count) +
       ' · ' + T('v.block') + ' ' + core.esc(p.block_count) + ' · Sum ' + fmt.hex16(p.checksum) + '</span>' +
-      (p.name ? '' : ' <span class="warn-txt">이 번호에 맞는 로컬 레시피가 없습니다</span>'));
+      (p.name ? '' : ' <span class="warn-txt">이 번호에 맞는 로컬 레시피가 없음</span>'));
   }
 
   function drawEmpty() {
@@ -229,9 +229,9 @@
     var box = core.bind('rcEdit');
     if (box) box.innerHTML =
       '<div class="empty" style="padding:36px 20px;line-height:2">' +
-      '왼쪽에서 레시피를 고르거나 <b>[새로]</b> 를 눌러 만드세요.<br>' +
+      '왼쪽에서 레시피를 고르거나 <b>[새로]</b> 를 눌러 만들기 필요.<br>' +
       '스텝(밸브·시간) · 블록(MFC' + (lim.mfc_count ? ' ' + lim.mfc_count + '채널' : '') +
-      ') · 반복 그룹을 편집해 PLC 표로 올립니다.</div>';
+      ') · 반복 그룹을 편집해 PLC 표로 올림.</div>';
     drawStatus();
   }
 
@@ -256,11 +256,11 @@
           '" data-rcblk="' + (i + 1) + '">' + (i + 1) + '. ' +
           core.esc(b.name || T('v.block')) + '</button>';
       }).join('') +
-      '<button class="rc-btab add" data-rcadd="block" title="블록 추가">＋</button>' +
+      '<button class="rc-btab add" data-rcadd="block" data-tip="블록 추가">＋</button>' +
       '</div>';
 
     var b = blocks[sel.block - 1];
-    html += b ? blockHtml(b, sel.block) : '<div class="empty">블록을 추가하세요</div>';
+    html += b ? blockHtml(b, sel.block) : '<div class="empty">블록 추가 필요</div>';
     html += groupsHtml();
     box.innerHTML = html;
     drawStatus();
@@ -291,7 +291,7 @@
       h += '<label>O3 Setpoint<input type="number" min="0" step="0.1" data-rcb="o3" value="' +
         attr(b.o3) + '"></label>';
     }
-    h += '<button class="btn sm danger-line" data-rcdel="block" title="이 블록 삭제">' + T('b.deleteBlock') + '</button>' +
+    h += '<button class="btn sm danger-line" data-rcdel="block" data-tip="이 블록 삭제">' + T('b.deleteBlock') + '</button>' +
       '</div>';
 
     // 스텝 표
@@ -299,7 +299,7 @@
     h += '<div class="tblx"><table class="tbl rc-steps"><thead><tr><th>#</th><th class="l">' + T('v.stepName') + '</th><th>' + T('v.ms') + '</th>' +
       valves.map(function (v) { return '<th class="vh">' + core.esc(v) + '</th>'; }).join('') +
       ((core.state.device || {}).has_rf ? '<th class="vh">RF</th>' : '') +
-      '<th class="vh" title="이 스텝에서 일시정지를 받아도 안전한가">Pause<br>OK</th>' +
+      '<th class="vh" data-tip="이 스텝에서 일시정지를 받아도 안전한가">Pause<br>OK</th>' +
       '<th></th></tr></thead><tbody>';
     arr(b.steps).forEach(function (st, i) {
       st = st || {};
@@ -311,12 +311,12 @@
         core.esc(lim.step_ms_max || 3276700) + '" data-rcs="time_ms" value="' + attr(st.time_ms) + '"></td>' +
         valves.map(function (v) {
           return '<td><span class="cb' + (hasValve(st, v) ? ' on' : '') +
-            '" tabindex="0" role="checkbox" title="' + core.esc(v) + '" data-rcv="' + core.esc(v) + '"></span></td>';
+            '" tabindex="0" role="checkbox" data-tip="' + core.esc(v) + '" data-rcv="' + core.esc(v) + '"></span></td>';
         }).join('') +
         ((core.state.device || {}).has_rf
           ? '<td><span class="cb' + (st.rf ? ' on' : '') + '" tabindex="0" role="checkbox" data-rcflag="rf"></span></td>' : '') +
         '<td><span class="cb' + (st.pause_ok ? ' on' : '') + '" tabindex="0" role="checkbox" data-rcflag="pause_ok"></span></td>' +
-        '<td><button class="xbtn" data-rcdel="step" title="이 스텝 삭제">✕</button></td></tr>';
+        '<td><button class="xbtn" data-rcdel="step" data-tip="이 스텝 삭제">✕</button></td></tr>';
     });
     h += '</tbody></table></div>' +
       '<div class="rc-brow"><button class="btn sm" data-rcadd="step">' + T('b.addStep') + '</button>' +
@@ -340,12 +340,12 @@
     var n = arr(cur.blocks).length;
     var room = nextGroup();
     var full = gs.length >= (lim.group_max || 5);
-    var why = full ? '반복 그룹은 최대 ' + (lim.group_max || 5) + '개입니다'
-      : !room ? '마지막 그룹 뒤에 남은 블록이 없습니다 — 블록을 더하거나 그룹 범위를 줄이세요' : '';
+    var why = full ? '반복 그룹은 최대 ' + (lim.group_max || 5) + '개'
+      : !room ? '마지막 그룹 뒤에 남은 블록이 없음 — 블록을 더하거나 그룹 범위 줄이기 필요' : '';
     var h = '<div class="rc-groups"><div class="rc-ghead">Repeat Group' +
-      '<span class="hint">블록 여러 개를 묶어 다시 돌립니다. 겹치게 둘 수 없습니다.' +
+      '<span class="hint">블록 여러 개를 묶어 다시 돌림. 겹치게 둘 수 없음.' +
       (why ? ' <span class="warn-txt">' + core.esc(why) + '</span>' : '') + '</span>' +
-      '<button class="btn sm" data-rcadd="group"' + (why ? ' disabled title="' + core.esc(why) + '"' : '') +
+      '<button class="btn sm" data-rcadd="group"' + (why ? ' disabled data-tip="' + core.esc(why) + '"' : '') +
       '>' + T('b.addGroup') + '</button></div>';
     if (!gs.length) h += '<div class="dim">None</div>';
     gs.forEach(function (g, i) {
@@ -371,7 +371,7 @@
       var items = (check.errors || []).map(function (x) { return row(x, 'err'); })
         .concat((check.warnings || []).map(function (x) { return row(x, 'warn'); }));
       e.innerHTML = items.length ? items.join('')
-        : (cur ? '<div class="ck ok">문제 없습니다 — 올릴 수 있습니다</div>' : '');
+        : (cur ? '<div class="ck ok">문제 없음 — 올릴 수 있음</div>' : '');
     }
     var sm = core.bind('rcSum');
     if (sm) {
@@ -545,7 +545,7 @@
     if (what === 'block') {
       cur.blocks = cur.blocks || [];
       if (cur.blocks.length >= (lim.block_max || 10)) {
-        core.toast('블록은 최대 ' + (lim.block_max || 10) + '개입니다', 'warn');
+        core.toast('블록은 최대 ' + (lim.block_max || 10) + '개', 'warn');
         return;
       }
       var mfc = [];
@@ -561,11 +561,11 @@
     } else if (what === 'group') {
       cur.groups = cur.groups || [];
       if (cur.groups.length >= (lim.group_max || 5)) {
-        core.toast('반복 그룹은 최대 ' + (lim.group_max || 5) + '개입니다', 'warn');
+        core.toast('반복 그룹은 최대 ' + (lim.group_max || 5) + '개', 'warn');
         return;
       }
       var ng = nextGroup();
-      if (!ng) { core.toast('마지막 그룹 뒤에 남은 블록이 없습니다', 'warn'); return; }
+      if (!ng) { core.toast('마지막 그룹 뒤에 남은 블록이 없음', 'warn'); return; }
       cur.groups.push(ng);
     }
     draw();
@@ -575,7 +575,7 @@
   function delThing(btn) {
     var what = btn.dataset.rcdel;
     if (what === 'block') {
-      core.confirmAsk('블록을 지울까요?', '블록 ' + sel.block + ' 과 그 안의 스텝이 모두 사라집니다.',
+      core.confirmAsk('블록 삭제?', '블록 ' + sel.block + ' 과 그 안의 스텝이 모두 사라짐.',
         T('b.delete'), function () {
           cur.blocks.splice(sel.block - 1, 1);
           sel.block = Math.max(1, sel.block - 1);
@@ -598,8 +598,8 @@
   /* ===================== 단추 ===================== */
   function openRecipe(name) {
     if (dirty) {
-      core.confirmAsk('저장하지 않은 편집이 있습니다',
-        '<b>' + core.esc(name) + '</b> 를 열면 지금 편집한 내용이 사라집니다.',
+      core.confirmAsk('저장하지 않은 편집이 있음',
+        '<b>' + core.esc(name) + '</b> 를 열면 지금 편집한 내용이 사라짐.',
         '그래도 열기', function () { dirty = false; w.app.send('recipe_load', { name: name }); });
       return;
     }
@@ -612,7 +612,7 @@
     core.setText('rcSaveMsg', '저장하는 중…');
     if (!w.app.send('recipe_save', { name: nm, recipe: cur })) {
       saving = null;
-      core.setText('rcSaveMsg', '저장 안 됨 — 서버에 연결되어 있지 않습니다');
+      core.setText('rcSaveMsg', '저장 안 됨 — 서버에 연결되어 있지 않음');
     }
   }
 
@@ -622,8 +622,8 @@
 
   function doButton(which) {
     if (which === 'new' && dirty) {
-      core.confirmAsk('저장하지 않은 편집이 있습니다',
-        '새 레시피를 만들면 지금 편집한 내용이 사라집니다.',
+      core.confirmAsk('저장하지 않은 편집이 있음',
+        '새 레시피를 만들면 지금 편집한 내용이 사라짐.',
         '그래도 새로', function () { dirty = false; doButton('new'); });
       return;
     }
@@ -642,11 +642,11 @@
       validateSoon();
       return;
     }
-    if (!cur) { core.toast('레시피를 먼저 고르세요', 'warn'); return; }
+    if (!cur) { core.toast('레시피 먼저 선택 필요', 'warn'); return; }
 
     if (which === 'save') {
       var nm = (cur.name || '').trim();
-      if (!nm) { core.toast('레시피 이름을 넣으세요', 'warn'); return; }
+      if (!nm) { core.toast('레시피 이름 입력 필요', 'warn'); return; }
       if (nm !== curName && exists(nm)) { confirmOverwrite(nm); return; }
       sendSave(nm);
       return;
@@ -663,8 +663,8 @@
       return;
     }
     if (which === 'rename') {
-      if (!curName) { core.toast('먼저 저장하세요', 'warn'); return; }
-      if (renaming) { core.toast('이름 바꾸기 답을 기다리는 중입니다', 'warn'); return; }
+      if (!curName) { core.toast('먼저 저장 필요', 'warn'); return; }
+      if (renaming) { core.toast('이름 바꾸기 답을 기다리는 중', 'warn'); return; }
       askName(T('b.rename'), curName, function (nm) {
         // ★ 서버 답(recipe_renamed)이 ok 일 때만 이름을 바꾼다
         if (!w.app.send('recipe_rename', { name: curName, new_name: nm })) return;
@@ -675,9 +675,9 @@
       return;
     }
     if (which === 'delete') {
-      if (!curName) { core.toast('저장된 레시피가 아닙니다', 'warn'); return; }
-      core.confirmAsk('레시피를 삭제할까요?',
-        '<b>' + core.esc(curName) + '</b> 파일을 지웁니다. 되돌릴 수 없습니다.',
+      if (!curName) { core.toast('저장된 레시피가 아님', 'warn'); return; }
+      core.confirmAsk('레시피 삭제?',
+        '<b>' + core.esc(curName) + '</b> 파일을 지움. 되돌릴 수 없음.',
         T('b.delete'), function () {
           // ★ 서버 답(recipe_deleted)이 ok 일 때만 편집기를 비운다
           if (!w.app.send('recipe_delete', { name: curName })) return;
@@ -688,29 +688,29 @@
       return;
     }
     if ((check.errors || []).length) {
-      core.toast('검증 오류 ' + check.errors.length + '건을 먼저 고치세요', 'warn');
+      core.toast('검증 오류 ' + check.errors.length + '건 먼저 고치기 필요', 'warn');
       return;
     }
     if (which === 'upload') {
-      if (!curName || dirty) { core.toast('먼저 저장하세요 — 저장된 내용을 올립니다', 'warn'); return; }
-      core.confirmAsk('PLC 에 레시피를 올릴까요?',
+      if (!curName || dirty) { core.toast('먼저 저장 필요 — 저장된 내용을 올림', 'warn'); return; }
+      core.confirmAsk('PLC 에 레시피 Upload?',
         '<b>' + core.esc(curName) + '</b> (번호 ' + summary.number + ')<br>' +
-        'PLC 레시피 표 영역을 덮어씁니다. 공정 중에는 올릴 수 없습니다.',
+        'PLC 레시피 표 영역을 덮어씀. 공정 중에는 올릴 수 없음.',
         T('b.upload'), function () { w.app.send('recipe_upload', { name: curName }); });
       return;
     }
     if (which === 'start') {
-      if (!curName || dirty) { core.toast('먼저 저장하세요 — 저장된 내용으로 시작합니다', 'warn'); return; }
+      if (!curName || dirty) { core.toast('먼저 저장 필요 — 저장된 내용으로 시작함', 'warn'); return; }
       w.app.send('recipe_select', { name: curName });
       core.setTab('main');
-      core.toast('Operation 탭에서 시작 조건을 확인하고 [Start]를 누르세요', 'info');
+      core.toast('Operation 탭에서 시작 조건을 확인하고 [Start] 누르기 필요', 'info');
     }
   }
 
   function confirmOverwrite(nm) {
-    core.confirmAsk('같은 이름의 레시피가 있습니다',
-      '<b>' + core.esc(nm) + '</b> 파일을 지금 편집한 내용으로 덮어씁니다.<br>' +
-      'PLC 에 올라가 있는 레시피라면 다음에 올릴 때 바뀐 내용이 올라갑니다.',
+    core.confirmAsk('같은 이름의 레시피가 있음',
+      '<b>' + core.esc(nm) + '</b> 파일을 지금 편집한 내용으로 덮어씀.<br>' +
+      'PLC 에 올라가 있는 레시피라면 다음에 올릴 때 바뀐 내용이 올라감.',
       '덮어쓰기', function () {
         cur.name = nm;
         var f = d.querySelector('[data-rcf="name"]');
@@ -724,11 +724,11 @@
     core.confirmAsk(title,
       '<label class="onelabel">' + T('v.name') + '<input type="text" id="rcAskName" value="' +
       core.esc(initial) + '" maxlength="' + core.esc(lim.name_max || 80) + '"></label>' +
-      '<div class="hint">\\ / : * ? " &lt; &gt; | 는 쓸 수 없습니다.</div>',
+      '<div class="hint">\\ / : * ? " &lt; &gt; | 는 쓸 수 없음.</div>',
       T('b.ok'), function () {
         var e = d.getElementById('rcAskName');
         var nm = e ? (e.value || '').trim() : '';
-        if (!nm) { core.toast('이름을 넣으세요', 'warn'); return; }
+        if (!nm) { core.toast('이름 입력 필요', 'warn'); return; }
         cb(nm);
       });
     setTimeout(function () {

@@ -147,7 +147,7 @@ def main():
             window.close_sockets(socks)
         if not server.started:
             # ★ v0.4.14: lifespan 시작 실패 — uvicorn 은 그냥 돌아온다. 종료 코드 1 로 알린다(원인은 로그)
-            text = "서버를 시작하지 못했습니다 — 원인은 프로그램 로그"
+            text = "서버를 시작하지 못함 — 원인은 프로그램 로그"
             print(f"[error] {text}", flush=True)
             logger.write("err", text)
             sys.exit(1)

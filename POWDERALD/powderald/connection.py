@@ -153,7 +153,7 @@ class ConnectionManager:
         if not local and self.remote_count() >= REMOTE_MAX:
             await ws.accept()
             grouped_log(("remote-full", _host_of(ws)), "warn",
-                        f"원격 연결 수 한도({REMOTE_MAX}) — 연결을 받지 않았습니다 ({_host_of(ws)})")
+                        f"원격 연결 수 한도({REMOTE_MAX}) — 연결을 받지 않음 ({_host_of(ws)})")
             try:
                 await ws.close(code=1013)
             except Exception:  # noqa: BLE001
@@ -175,7 +175,7 @@ class ConnectionManager:
         else:
             grouped_log(("remote-in", meta["host"]), "info", f"원격 접속(보기 전용): {meta['host']}")
             self._enqueue(ws, meta, _dumps({"type": "notice", "level": "info",
-                                            "msg": "원격 접속입니다 — 보기 전용으로 동작합니다"}))
+                                            "msg": "원격 접속 — 보기 전용으로 동작함"}))
         return True
 
     def remote_count(self) -> int:
@@ -210,7 +210,7 @@ class ConnectionManager:
         meta["last_drop"] = now
         if now - meta["over_since"] > RATE_KICK_S:
             logger.write("warn", f"원격 메시지 속도 한도(초당 {RATE_PER_S:g}개)를 {RATE_KICK_S:g} s 넘게 넘어 "
-                                 f"연결을 끊었습니다 ({meta['host']} · 버린 메시지 {meta['dropped']}개)")
+                                 f"연결을 끊음 ({meta['host']} · 버린 메시지 {meta['dropped']}개)")
             return "kick"
         return "drop"
 
@@ -219,7 +219,7 @@ class ConnectionManager:
         if meta.get("closed"):
             return
         if len(meta["q"]) >= QUEUE_MAX:
-            logger.write("warn", f"화면 보내기 대기열이 넘쳐 연결을 끊었습니다 ({self._who(meta)})")
+            logger.write("warn", f"화면 보내기 대기열이 넘쳐 연결을 끊음 ({self._who(meta)})")
             self._drop(ws, meta, 1008)
             return
         meta["q"].append(text)
@@ -251,7 +251,7 @@ class ConnectionManager:
                     try:
                         await asyncio.wait_for(ws.send_text(text), SEND_TIMEOUT_S)
                     except asyncio.TimeoutError:
-                        logger.write("warn", f"화면 응답 없음 — 연결을 끊었습니다 ({self._who(meta)})")
+                        logger.write("warn", f"화면 응답 없음 — 연결을 끊음 ({self._who(meta)})")
                         self._drop(ws, meta, 1008)
                         return
                     except asyncio.CancelledError:

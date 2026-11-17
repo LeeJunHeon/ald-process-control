@@ -83,7 +83,7 @@ INPUTS0 = [
     {"bit": 5,  "tag": "LID",     "name": "Chamber Closed",       "ok_when": True, "short": "Lid", "lamp": "Lid",
      "desc": "챔버 닫힘 스위치"},
     {"bit": 6,  "tag": "ATM",     "name": "Chamber ATM",     "ok_when": None, "lamp": "Chamber ATM",
-     "desc": "챔버가 대기압 — 벤트가 끝났다는 표시"},
+     "desc": "챔버가 대기압 — Vent 끝났다는 표시"},
     {"bit": 7,  "tag": "PMP-RUN", "name": "Pump Running",       "ok_when": None, "lamp": "Pump Running",
      "desc": "펌프가 실제로 돌고 있다는 피드백"},
     {"bit": 8,  "tag": "PMP-ALM", "name": "Pump Alarm",       "ok_when": False, "lamp": "Pump Alarm",
@@ -101,15 +101,15 @@ INPUTS0 = [
 ]
 INPUTS1 = [
     {"bit": 2, "tag": "O3-RUN",  "name": "O3 Generator Running",   "ok_when": None, "lamp": "O3 Generator",
-     "desc": "O3 발생기 운전 피드백"},
+     "desc": "O3 Generator 운전 피드백"},
     {"bit": 3, "tag": "O3-ALM",  "name": "O3 Alarm",         "ok_when": False, "lamp": "O3 Alarm",
-     "desc": "O3 발생기 알람 — 켜지면 이상"},
+     "desc": "O3 Generator 알람 — 켜지면 이상"},
     {"bit": 4, "tag": "O3-ROOM", "name": "Room O3 Detected",     "ok_when": False, "lamp": "Room O3",
      "desc": "실내 O3 감지기 — 켜지면 출입 금지"},
     {"bit": 5, "tag": "BP-RUN",  "name": "Bypass Pump Running", "ok_when": None, "lamp": "Bypass Pump",
-     "desc": "바이패스 펌프 운전 피드백"},
+     "desc": "Bypass Pump 운전 피드백"},
     {"bit": 6, "tag": "BP-ALM",  "name": "Bypass Pump Alarm", "ok_when": False, "lamp": "Bypass Alarm",
-     "desc": "바이패스 펌프 알람 — 켜지면 이상"},
+     "desc": "Bypass Pump 알람 — 켜지면 이상"},
 ]
 
 # ===================== 인터락 (D00004) =====================
@@ -118,13 +118,13 @@ INTERLOCKS = [
     {"bit": 1, "tag": "Pump",        "lamp": "Pump", "why": "펌프 운전 중이고 펌프 알람 없음"},
     {"bit": 2, "tag": "Vacuum OK",        "short": "Vacuum", "lamp": "Vacuum",
      "why": "베이스 압력 설정이 0보다 크고, 현재 압력이 그 이하"},
-    {"bit": 3, "tag": "Start Permit", "lamp": "Start Permit", "why": "공정 밸브 허가 + 진공 + PC 링크 정상 + 레시피 표 통과 + O3 허가"},
+    {"bit": 3, "tag": "Start Permit", "lamp": "Start Permit", "why": "Valve Permit + 진공 + PC 링크 정상 + 레시피 표 통과 + O3 Permit"},
     {"bit": 4, "tag": "Valve Permit", "lamp": "Valve Permit", "why": "기본 + 펌프 + IV-E 열림 + 안전 정지 요구 없음 + 대기압 아님"},
     {"bit": 5, "tag": "Vent Permit",    "lamp": "Vent Permit", "why": "시퀀서 동작 아님(공정 준비 포함) + IV-E 닫힘 입력 + IV-E 출력 꺼짐 + 비상정지 정상"},
     {"bit": 6, "tag": "Precursor/Reactant Conflict", "lamp": "P/R Conflict", "why": "전구체 밸브와 O3 밸브가 함께 요청됨 (이상)",
      "bad": True},
     {"bit": 7, "tag": "Safe Stop Request", "lamp": "Safe Stop Req", "why": "비상정지 또는 중대 알람 또는 PC 끊김 트립 — 공정 중이면 끝난 뒤", "bad": True},
-    {"bit": 9, "tag": "O3 Permit",      "lamp": "O3 Permit", "why": "기본 + IV-B 열림 + 바이패스 펌프 운전·알람 없음 + 그 뒤 5 s + "
+    {"bit": 9, "tag": "O3 Permit",      "lamp": "O3 Permit", "why": "기본 + IV-B 열림 + Bypass Pump 운전·알람 없음 + 그 뒤 5 s + "
                                             "O3 알람·실내 O3 없음 + O3 상한 > 0 + 안전 정지 요구 없음"},
 ]
 
@@ -185,15 +185,15 @@ ALARMS0 = [
      "check": "뚜껑 닫힘 · 스위치 위치와 배선 — 공정 중에는 열지 않는다."},
     {"bit": 5, "name": "Pump Alarm / Stop", "crit": True,
      "cause": "펌프 알람 입력, 또는 운전 요청 뒤 10 s 동안 운전 피드백 없음.",
-     "check": "펌프 컨트롤러 알람 · 전원 · 피드백 배선(알람이 있는 동안 펌핑 시작은 거절된다)."},
+     "check": "펌프 컨트롤러 알람 · 전원 · 피드백 배선(알람이 있는 동안 Pumping Start 거절된다)."},
     {"bit": 6, "name": "PC Link Lost", "crit": False,
      "cause": "PC 하트비트가 PC Heartbeat Timeout 넘게 멈춤(프로그램 꺼짐 · PC 절전/재부팅 · 네트워크). 공정 중이면 공정은 끝까지 가고, 트립이 남아 있으면 끝난 뒤 안전 정지.",
      "check": "프로그램 · 네트워크를 살린 뒤 Alarm Reset(PC 가 붙어 있을 때만 풀린다)."},
     {"bit": 7, "name": "Base Pressure Timeout", "crit": False,
-     "cause": "펌핑 시작 뒤 Pump-down Timeout 안에 베이스 압력에 닿지 못함(뚜껑 오링 · 피드스루 · 피팅 누설, 벤트 밸브 샘, 펌프 성능, 베이스 압력 설정이 너무 낮음).",
+     "cause": "Pumping Start 뒤 Pump-down Timeout 안에 베이스 압력에 닿지 못함(뚜껑 오링 · 피드스루 · 피팅 누설, Vent 밸브 샘, 펌프 성능, 베이스 압력 설정이 너무 낮음).",
      "check": "오링 이물 · Leak Check · 펌프 상태 · Base Pressure 설정."},
     {"bit": 8, "name": "ATM Timeout", "crit": False,
-     "cause": "벤트 시작 뒤 Vent Timeout 안에 대기압 입력이 켜지지 않음(벤트 N2 · VV · 대기압 스위치).",
+     "cause": "Vent 시작 뒤 Vent Timeout 안에 대기압 입력이 켜지지 않음(Vent N2 · VV · 대기압 스위치).",
      "check": "N2 공급 · VV 열림 · 대기압 스위치 설정과 배선."},
     {"bit": 9, "name": "Heater Overtemp", "crit": True,
      "cause": "과온 트립 입력 또는 채널 온도가 과온 한계를 넘음(SSR 붙음 · 설정 실수 · 열전대 위치/접촉).",
@@ -222,14 +222,14 @@ ALARMS1 = [
      "cause": "IV-E 출력과 열림/닫힘 리미트 입력이 5 s 넘게 맞지 않음(공압 · 밸브 고착 · 리미트 스위치).",
      "check": "공압 · IV-E 동작 · 리미트 스위치 위치와 배선."},
     {"bit": 3, "name": "O3 Generator Alarm / O3 Permit Lost", "crit": True,
-     "cause": "O3 발생기 알람 입력, 또는 공정 중 O3 허가가 빠짐(바이패스 펌프 · IV-B · 실내 O3 · O3 상한).",
-     "check": "발생기 화면 · O2 공급 · 냉각 · 바이패스 펌프와 IV-B."},
+     "cause": "O3 Generator 알람 입력, 또는 공정 중 O3 Permit 빠짐(Bypass Pump · IV-B · 실내 O3 · O3 상한).",
+     "check": "발생기 화면 · O2 공급 · 냉각 · Bypass Pump 와 IV-B."},
     {"bit": 4, "name": "Room O3 Detected", "crit": True,
      "cause": "실내 O3 감지기 입력.",
      "check": "감지기 · 환기 · O3 배관 누설 — 출입을 막고 안전 담당자에게 알린다."},
     {"bit": 5, "name": "Bypass Pump Alarm / No Feedback", "crit": True,
-     "cause": "바이패스 펌프 알람 입력, 또는 운전 요청 뒤 10 s 동안 운전 피드백 없음.",
-     "check": "바이패스 펌프 전원 · 알람 · 피드백 배선."},
+     "cause": "Bypass Pump 알람 입력, 또는 운전 요청 뒤 10 s 동안 운전 피드백 없음.",
+     "check": "Bypass Pump 전원 · 알람 · 피드백 배선."},
     {"bit": 8, "name": "Valve Permit Lost in Process", "crit": True,
      "cause": "공정 중 Valve Permit(인터락 b4)이 0.5 s 넘게 꺼짐 — 밸브 출력이 막힌 채 스텝 시간만 흐르지 않게 PLC 가 공정을 끊음.",
      "check": "빠진 조건이 펌프 운전(피드백) · IV-E 열림 리미트 · 기본 인터락(공압 · N2 · 냉각수 · 리드 · 비상정지) · "
@@ -307,3 +307,98 @@ MAINT_HOURS = [
     {"key": "o3",          "name": "O3 Generator",       "aux": 9,  "warn": "o3_hours_warn"},
     {"key": "bypass_pump", "name": "Bypass Pump (BPMP)", "aux": 11, "warn": ""},
 ]
+
+
+# ===================== 한국어 이름 · 설명 (v0.8.6 — 화면 설명창) =====================
+# ★ 화면 라벨은 영어 그대로(tag · name · lamp). 마우스를 올리면 뜨는 설명창의 첫 줄(ko)과 둘째 줄(desc)만 여기서 정한다.
+#   서버가 구조(state.structure)로 그대로 보낸다. 입력 · 인터락은 desc · why 를 둘째 줄로 쓴다.
+_KO_INPUTS0 = {
+    "EMO": "비상정지", "RST-SW": "패널 리셋 스위치", "AIR": "공압", "N2": "N2 압력", "CW": "냉각수",
+    "LID": "챔버 닫힘", "ATM": "챔버 대기압", "PMP-RUN": "펌프 운전", "PMP-ALM": "펌프 알람",
+    "IVE-O": "IV-E 열림 리미트", "IVE-C": "IV-E 닫힘 리미트", "LEAK": "가스 누출", "SCRUB": "스크러버",
+    "OT": "히터 과온 트립",
+}
+_KO_INTERLOCKS = {
+    "Basic": ("기본 인터락", "공정 · 수동 조작의 기본 안전 조건"),
+    "Pump": ("펌프 정상", "펌프 운전 중 · 펌프 알람 없음"),
+    "Vacuum OK": ("진공 도달", "챔버 압력이 베이스 압력 이하"),
+    "Start Permit": ("시작 허가", "공정을 시작해도 되는 조건"),
+    "Valve Permit": ("밸브 허가", "공정 밸브를 열어도 되는 조건"),
+    "Vent Permit": ("벤트 허가", "VV 를 열어 Vent 해도 되는 조건"),
+    "Precursor/Reactant Conflict": ("동시 요청 이상", "전구체 · 반응물 밸브를 함께 요청함 — 모든 밸브 닫힘"),
+    "Safe Stop Request": ("안전 정지 요구", "PLC 가 장비를 세우는 중 — 원인 제거 후 Alarm Reset"),
+    "RF Permit": ("RF 허가", "RF 를 켜도 되는 조건"),
+    "O3 Permit": ("O3 허가", "O3 Generator 를 켜도 되는 조건"),
+}
+_KO_ALARMS0 = {
+    0: "비상정지", 1: "공압 저하", 2: "N2 공급 저하", 3: "냉각수 이상", 4: "공정 중 챔버 열림", 5: "펌프 알람 · 정지",
+    6: "PC 통신 끊김", 7: "베이스 압력 시간 초과", 8: "대기압 시간 초과", 9: "히터 과온", 10: "온도조절기 통신 끊김",
+    11: "온도조절기 알람", 12: "MFC 이상", 13: "레시피 표 검사 실패", 14: "가스 누출", 15: "전구체 · 반응물 동시 개방",
+}
+_KO_AUX_COMMON = {
+    "VV": ("벤트 밸브", "챔버에 N2 를 넣어 대기압으로"), "IV-E": ("배기 격리 밸브", "챔버와 펌프 사이 격리 밸브"),
+    "PMP-N2": ("펌프 N2 퍼지", "펌프 운전 중 N2 퍼지(펌프 출력을 따름)"), "PMP": ("메인 펌프 운전", "펌프 운전 출력"),
+    "LMP-R": ("경광등 적색", "알람 있음(확인 전 깜빡임)"), "LMP-Y": ("경광등 황색", "대기 · 알람 없음, 일시정지면 깜빡임"),
+    "LMP-G": ("경광등 녹색", "공정 중"), "BUZ": ("부저", "새 알람 — Alarm Ack 로 끔"),
+}
+_KO_SLOTS = {
+    "PLC Link": ("PLC 연결", "PLC 통신 · 하트비트 정상"), "Device ID": ("장비 ID", "이 장비의 PLC 인지 확인"),
+    "Device State": ("장비 상태", "Idle · 누설률 점검 중 아님"), "Critical Alarm": ("중대 알람", "중대 알람 없음"),
+    "Pump": ("펌프", "펌프 운전 · 펌프 알람 없음"), "Valve Permit": ("밸브 허가", "공정 밸브를 열어도 되는 조건"),
+    "Base Pressure": ("베이스 압력", "목표 압력 이하 도달(시작 뒤 기다림 가능)"), "Recipe": ("레시피", "레시피 선택 · 검증 통과"),
+    "Heater Stable": ("히터 안정", "사용 채널 온도가 목표 범위 안"), "RF Ready": ("RF 준비", "RF 스텝이 있으면 RF 준비 입력 필요"),
+    "O3 Line": ("O3 라인", "O3 Permit · O3 Generator 켜짐(O3 를 쓰는 레시피)"),
+}
+
+
+def _attach_ko():
+    for d in INPUTS0:
+        d.setdefault("ko", _KO_INPUTS0.get(d["tag"], d["name"]))
+    for d in INPUTS1:
+        d.setdefault("ko", _KO_INPUTS1.get(d["tag"], d["name"]))
+    for d in INTERLOCKS:
+        ko, desc = _KO_INTERLOCKS.get(d["tag"], (d["tag"], ""))
+        d.setdefault("ko", ko)
+        d.setdefault("desc", desc)
+    for d in ALARMS0:
+        d.setdefault("ko", _KO_ALARMS0.get(d["bit"], d["name"]))
+    for d in ALARMS1:
+        d.setdefault("ko", _KO_ALARMS1.get(d["bit"], d["name"]))
+    for d in VALVES:
+        ko, desc = _KO_VALVES.get(d["tag"], (d["tag"], d["name"]))
+        d.setdefault("ko", ko)
+        d.setdefault("desc", desc)
+    for d in AUX:
+        ko, desc = {**_KO_AUX_COMMON, **_KO_AUX}.get(d["tag"], (d["name"], ""))
+        d.setdefault("ko", ko)
+        d.setdefault("desc", desc)
+    for d in START_SLOTS:
+        ko, desc = _KO_SLOTS.get(d["label"], (d["label"], ""))
+        d.setdefault("ko", ko)
+        d.setdefault("desc", desc)
+
+
+_KO_INPUTS1 = {"O3-RUN": "O3 발생기 운전", "O3-ALM": "O3 알람", "O3-ROOM": "실내 O3 감지", "BP-RUN": "바이패스 펌프 운전",
+               "BP-ALM": "바이패스 펌프 알람"}
+_KO_ALARMS1 = {0: "IV-E 동작 이상", 3: "O3 발생기 알람 · O3 허가 꺼짐", 4: "실내 O3 감지", 5: "바이패스 펌프 알람 · 피드백 없음",
+               8: "공정 중 밸브 허가 꺼짐"}
+_KO_VALVES = {
+    "PV-1": ("캐니스터 1 밸브", "캐니스터 1 → 전구체 라인 (펄스)"), "PV-2": ("캐니스터 2 밸브", "캐니스터 2 → 전구체 라인 (펄스)"),
+    "PV-3": ("캐니스터 3 밸브", "캐니스터 3 → 전구체 라인 (펄스)"), "PV-A1": ("어시스트 N2 밸브 1", "어시스트 N2 → 캐니스터 2 입구"),
+    "PV-A2": ("어시스트 N2 밸브 2", "어시스트 N2 → 캐니스터 3 입구"), "PV-R": ("O3 주입 밸브", "O3 → 반응기 (펄스)"),
+    "PV-B": ("O3 바이패스 밸브", "O3 → Bypass Pump — PLC 자동(O3 Generator 운전 중 PV-R 닫힘이면 열림)"),
+}
+_KO_AUX = {"O3GEN": ("O3 발생기", "O3 Generator 운전 출력"), "IV-B": ("바이패스 격리 밸브", "O3 바이패스 라인 격리"),
+           "BPMP": ("바이패스 펌프", "O3 바이패스 라인 펌프")}
+HEATER_KO = {
+    "Powder Reactor": ("파우더 반응기 히터", "반응기 가열"), "Precursor Line": ("전구체 라인 히터", "전구체 라인 가열(응축 방지)"),
+    "Spare 3 (O3 Line, unheated)": ("예비 3 (O3 라인 — 가열 안 함)", "O3 라인 온도 표시용"),
+    "Canister 2": ("캐니스터 2 히터", "캐니스터 2 가열(증기압)"), "Canister 3": ("캐니스터 3 히터", "캐니스터 3 가열(증기압)"),
+    "Trap": ("트랩 히터", "배기 트랩 가열"),
+}
+MFC_KO = {
+    "Precursor Carrier": ("전구체 운반 가스", "전구체를 반응기로 옮기는 N2 유량"), "Assist": ("어시스트 N2", "캐니스터 어시스트 N2 유량"),
+}
+
+
+_attach_ko()

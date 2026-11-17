@@ -134,7 +134,7 @@ def create_app(config_path: str = "", single_instance: bool = True,
                              f"({version.BUILD_DATE}) 기동")
         # 이중 실행 방지는 창 경로뿐 아니라 서버 기동 공통 경로에도 둔다.
         if single_instance and not window.acquire_single_instance():
-            msg = f"{DEV.NAME} 프로그램이 이미 실행 중입니다 — 기동을 중단합니다"
+            msg = f"{DEV.NAME} 프로그램이 이미 실행 중 — 기동을 중단함"
             print(f"[error] {msg}", flush=True)     # os._exit 는 버퍼를 비우지 않는다
             logger.write("err", msg)
             os._exit(1)
@@ -146,7 +146,7 @@ def create_app(config_path: str = "", single_instance: bool = True,
         if not ok_w:
             state.startup_notices.append(
                 {"level": "warn", "kind": "config",
-                 "msg": f"데이터 폴더에 쓸 수 없습니다: {paths.DATA_DIR} ({why})"})
+                 "msg": f"데이터 폴더에 쓸 수 없음: {paths.DATA_DIR} ({why})"})
         for lv, msg in logger.drain_early():
             state.startup_notices.append({"level": lv, "msg": msg, "kind": "config"})
 
@@ -339,7 +339,7 @@ def _routes(app: FastAPI):
         except Busy:
             return _busy()
         if out is None:
-            return JSONResponse({"error": "목록에 없는 파일입니다"}, status_code=404)
+            return JSONResponse({"error": "목록에 없는 파일"}, status_code=404)
         return _json(out)
 
     @app.get("/api/datalog/rows")
@@ -350,7 +350,7 @@ def _routes(app: FastAPI):
         except Busy:
             return _busy()
         if out is None:
-            return JSONResponse({"error": "목록에 없는 파일입니다"}, status_code=404)
+            return JSONResponse({"error": "목록에 없는 파일"}, status_code=404)
         return _json(out)
 
     @app.websocket("/ws")
@@ -397,7 +397,7 @@ def _routes(app: FastAPI):
                         # ★ 명령 처리 중 예외가 나도 연결은 유지한다(화면이 말없이 끊기지 않게)
                         logger.write("err", f"명령 처리 오류({logger.clean(data.get('cmd'), 40)}): "
                                             f"{type(e).__name__}: {logger.clean(e, 300)}")
-                        await push_notice(f"명령을 처리하지 못했습니다 — {type(e).__name__}", "err", ws)
+                        await push_notice(f"명령을 처리하지 못함 — {type(e).__name__}", "err", ws)
                     finally:
                         CURRENT_RID.reset(tok)
                         if rid is not None:
@@ -424,6 +424,6 @@ def _routes(app: FastAPI):
             app.mount(url, StaticFiles(directory=d), name=sub)
         else:
             # ★ 화면이 아예 안 뜨는 치명적 상황이라 print 도 남긴다.
-            miss = f"정적 폴더 없음: {d} — 빌드 시 frontend 가 누락됐을 수 있습니다"
+            miss = f"정적 폴더 없음: {d} — 빌드 시 frontend 가 누락됐을 수 있음"
             print(f"[error] {miss}")
             logger.early("err", miss)

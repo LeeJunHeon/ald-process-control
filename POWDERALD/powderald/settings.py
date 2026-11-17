@@ -197,7 +197,7 @@ def _coerce(field, v):
             return None, ""
         if field["kind"] == "str":
             return "", ""
-        return None, f"{field['label']}: 값이 필요합니다"
+        return None, f"{field['label']}: 값이 필요"
     k = field["kind"]
     try:
         if k == "bool":
@@ -216,7 +216,7 @@ def _coerce(field, v):
             return (int(f) if f == int(f) and abs(f) < 1e15 else f), ""
         return str(v).strip(), ""
     except (TypeError, ValueError, OverflowError):
-        return None, f"{field['label']}: 숫자가 아닙니다 ({v!r})"
+        return None, f"{field['label']}: 숫자가 아님 ({v!r})"
 
 
 # ===================== 대상 파일 =====================
@@ -244,7 +244,7 @@ def save_block(cfg: dict) -> str:
     if not why:
         return ""
     name = os.path.basename(p)
-    return f"{name} 을(를) 읽지 못했습니다({why}) — 저장하지 않습니다. {name} 을 고친 뒤 프로그램을 다시 시작하세요"
+    return f"{name} 을(를) 읽지 못함({why}) — 저장하지 않음. {name} 을 고친 뒤 프로그램 다시 시작 필요"
 
 
 def _raw_base(cfg: dict) -> dict:
@@ -280,7 +280,7 @@ def prepare(cfg: dict, edits: dict) -> dict:
     for path, v in (edits or {}).items():
         f = FIELDS.get(path)
         if f is None:
-            errors.append(f"바꿀 수 없는 항목입니다: {path}")
+            errors.append(f"바꿀 수 없는 항목: {path}")
             continue
         val, err = _coerce(f, v)
         if err:

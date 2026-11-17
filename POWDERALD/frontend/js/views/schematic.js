@@ -47,14 +47,10 @@
     return t;
   }
 
-  /** 툴팁(전체 이름)을 단 묶음 */
+  /** 설명창 상태 줄(전체 이름)을 단 묶음 — v0.8.6: SVG title 대신 data-tip(core 설명창) */
   function group(parent, title, attrs) {
     var g = el('g', attrs || {});
-    if (title) {
-      var t = el('title', {});
-      t.textContent = title;
-      g.appendChild(t);
-    }
+    if (title) g.setAttribute('data-tip', title);
     parent.appendChild(g);
     return g;
   }
@@ -182,9 +178,11 @@
       .forEach(function (h) {
         var g = el('g', { 'data-fp': h.fp, 'data-grp': h.grp, tabindex: 0, role: 'button', 'aria-label': h.title,
                           'aria-haspopup': 'dialog' });
-        var t = el('title', {});
-        t.textContent = h.title + ' — click to operate';
-        g.appendChild(t);
+        // v0.8.6: 설명창 — 한국어 이름 · 설명(장비 구조) + '누르면 조작 창'
+        var ko = w.UI.fpKo((core.state || {}).structure, h.fp);
+        if (ko[0]) g.setAttribute('data-tipn', ko[0]);
+        if (ko[1]) g.setAttribute('data-tipd', ko[1]);
+        g.setAttribute('data-tip', h.title + ' — 누르면 조작 창');
         g.appendChild(el('path', { 'class': 'fp-hit', d: 'M' + h.r.x + ',' + h.r.y + ' h' + h.r.w + ' v' + h.r.h + ' h' + (-h.r.w) + ' Z' }));
         layer.appendChild(g);
       });
@@ -221,8 +219,8 @@
     var dev = (core.state || {}).device || {};
     var sw = function (cls) { return '<i class="lg ' + cls + '"></i>'; };
     box.innerHTML = LEGEND.filter(function (x) { return !x[2] || (x[2] === 'o3' && dev.has_o3); }).map(function (x) {
-      return '<span title="' + core.esc(x[3]) + '">' + sw(x[1]) + T(x[0]) + '</span>';
-    }).join('') + '<span class="dim" title="밸브 · 상자를 누르면 그 옆에 조작 창이 뜹니다">' + T('s.clickToOperate') + '</span>';
+      return '<span data-tip="' + core.esc(x[3]) + '">' + sw(x[1]) + T(x[0]) + '</span>';
+    }).join('') + '<span class="dim" data-tip="밸브 · 상자를 누르면 그 옆에 조작 창이 뜸">' + T('s.clickToOperate') + '</span>';
   }
 
   /* ===================== render / update ===================== */

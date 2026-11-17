@@ -69,11 +69,11 @@ async def handle_command(data: dict, ws=None):
     if not local and cmd not in READ_ONLY_CMDS:
         host = logger.clean(getattr(getattr(ws, "client", None), "host", "?"), 60)
         manager.log_limited(ws, "warn", f"원격 조작 명령 거절: {shown} ({host})")
-        await push_notice("원격 접속은 보기 전용입니다 — 조작은 장비 PC에서 하세요", "warn", ws)
+        await push_notice("원격 접속은 보기 전용 — 조작은 장비 PC에서만 가능", "warn", ws)
         return
     if cmd not in _HANDLERS and cmd not in SIMPLE_CMDS and cmd not in READ_ONLY_CMDS:
         manager.log_limited(ws, "warn", f"알 수 없는 명령 무시: {shown}")
-        await push_notice(f"알 수 없는 명령입니다: {shown}", "warn", ws)
+        await push_notice(f"알 수 없는 명령: {shown}", "warn", ws)
         return
     if cmd == "ping":
         return
@@ -86,7 +86,7 @@ async def handle_command(data: dict, ws=None):
         return
     code = SIMPLE_CMDS.get(cmd)
     if code is None:
-        await push_notice(f"알 수 없는 명령입니다: {cmd}", "warn", ws)
+        await push_notice(f"알 수 없는 명령: {cmd}", "warn", ws)
         return
     if code == A.CMD_ABORT and state.runner:
         await _abort(ws)
@@ -96,7 +96,7 @@ async def handle_command(data: dict, ws=None):
         # ★ v0.7.0(A3): 누설률 점검 중 운전자가 펌핑 · 벤트 · 전체 닫기를 누르면 점검을 먼저 취소하고 그 명령을 보낸다
         name = A.CMD_NAMES.get(code, cmd)
         await _leak().cancel_and_wait(f"운전자 {name}", restore=False)
-        await push_notice(f"누설률 점검을 취소했습니다 — {name} 을(를) 보냅니다", "warn", ws)
+        await push_notice(f"누설률 점검을 취소함 — {name} 을(를) 보냄", "warn", ws)
         leak_cancelled = True
     if code in (A.CMD_VENT, A.CMD_PUMP_STOP, A.CMD_ALL_CLOSE) and state.runner:
         # ★ 베이스 압력 대기 중에 벤트 · 펌핑 정지 · 전체 닫기를 보내면 대기를 먼저 취소한다 —
@@ -104,12 +104,12 @@ async def handle_command(data: dict, ws=None):
         state.runner.cancel_wait(A.CMD_NAMES.get(code, cmd))
     if code == A.CMD_ALL_CLOSE and cancel_o3_on():
         # ★ v0.8.5: O3 라인 켜기가 O3 허가를 기다리는 중이었다 — 전체 닫기 뒤에 발생기를 보내지 않게 먼저 취소한다
-        await push_log("O3 라인 켜기 취소 — 전체 닫기 (발생기를 보내지 않았습니다)", "warn")
+        await push_log("O3 Line 켜기 취소 — 전체 닫기 (발생기를 보내지 않음)", "warn")
     result = await _send_plc(code, ws)
     if leak_cancelled and result != A.RESULT_OK:
         # ★ v0.7.1(L6): 점검을 취소했는데 그 명령이 거절됐다 — IV-E 가 닫힌 채 남을 수 있다
         from .leakcheck import REOPEN_TEXT
-        await push_notice(f"누설률 점검을 취소했지만 {A.CMD_NAMES.get(code, cmd)} 이(가) 처리되지 않았습니다 — "
+        await push_notice(f"누설률 점검을 취소했지만 {A.CMD_NAMES.get(code, cmd)} 이(가) 처리되지 않음 — "
                           f"{REOPEN_TEXT}", "warn")
     if code == A.CMD_STOP_AFTER_CYCLE and result == A.RESULT_OK and state.runner:
         state.runner.note_stop_after_cycle()
@@ -127,7 +127,7 @@ async def _abort(ws):
         except Exception:  # noqa: BLE001
             cur = link.status[A.D_STATE]
         if cur not in RUNNING_STATES:
-            return {"refused": True, "text": "진행 중인 공정이 없습니다 (이미 끝났습니다)"}
+            return {"refused": True, "text": "진행 중인 공정이 없음 (이미 끝남)"}
         runner.abort_begin()
         done = unknown = False
         try:
@@ -151,7 +151,7 @@ async def _send_plc(code: int, ws, args: dict = None, what: str = "", sender=Non
     name = what or A.CMD_NAMES.get(code, str(code))
     link = state.link
     if not (link and link.connected):
-        await push_notice(f"{name}: PLC 에 연결되어 있지 않습니다", "warn", ws)
+        await push_notice(f"{name}: PLC 에 연결되어 있지 않음", "warn", ws)
         return None
 
     ok, why = precheck(code)
@@ -188,7 +188,7 @@ async def _send_plc(code: int, ws, args: dict = None, what: str = "", sender=Non
             await push_notice(got[0], got[1], ws)
             await push_log(f"명령 {name} — {got[0]}", got[1])
         else:
-            await push_notice(f"{name}: 처리되었습니다", "ok", ws)
+            await push_notice(f"{name}: 처리됨", "ok", ws)
             await push_log(f"명령 {name} — 처리됨", "ok")
     else:
         detail = text
@@ -205,7 +205,7 @@ PUMP_BLOCK_ALARMS = ((A.ALM0_PUMP, "펌프 알람"), (A.ALM0_AIR, "공압 저하
                      (A.ALM0_CW, "냉각수 이상"))
 
 
-IVE_VENT_TEXT = "IV-E Fault 알람 중에는 Vent 를 할 수 없습니다 — 원인을 없애고 Alarm Reset 뒤 다시"
+IVE_VENT_TEXT = "IV-E Fault 알람 중에는 Vent 를 할 수 없음 — 원인을 없애고 Alarm Reset 뒤 다시"
 
 
 def _pump_block_reasons(s) -> list:
@@ -223,7 +223,7 @@ def precheck(code: int):
     """PLC 규칙과 같은 기준으로 미리 거른다. (통과여부, 이유)"""
     link = state.link
     if not (link and link.connected):
-        return False, "PLC 에 연결되어 있지 않습니다"
+        return False, "PLC 에 연결되어 있지 않음"
     blocked = link.id_block_text() if hasattr(link, "id_block_text") else ""
     if blocked:
         return False, blocked
@@ -232,29 +232,29 @@ def precheck(code: int):
     ilk = s[A.D_INTERLOCK]
 
     if st in RUNNING_STATES and code in (9, 10, 11, 12, 13, 14):
-        return False, f"공정 중({A.STATE_NAMES.get(st, st)})에는 할 수 없습니다"
+        return False, f"공정 중({A.STATE_NAMES.get(st, st)})에는 할 수 없음"
     if code in (A.CMD_PAUSE, A.CMD_STOP_AFTER_CYCLE, A.CMD_ABORT) and st not in RUNNING_STATES:
-        return False, "진행 중인 공정이 없습니다"
+        return False, "진행 중인 공정이 없음"
     if code == A.CMD_PAUSE and st == A.STATE_PAUSE:
-        return False, "이미 일시정지 중입니다"
+        return False, "이미 일시정지 중"
     if code == A.CMD_RESUME and st != A.STATE_PAUSE:
-        return False, "일시정지 중이 아닙니다"
+        return False, "일시정지 중이 아님"
 
     if code == A.CMD_PUMP_START:
         blocking = _pump_block_reasons(s)
         if blocking:
-            return False, "막혀 있습니다 — " + " · ".join(blocking)
+            return False, "막혀 있음 — " + " · ".join(blocking)
     if code == A.CMD_VENT:
         blocking = _pump_block_reasons(s)
         if blocking:
-            return False, ("PLC 가 벤트 요청을 바로 지웁니다 — " + " · ".join(blocking)
-                           + " (원인을 없애고 알람 리셋 뒤에 하세요)")
+            return False, ("PLC 가 Vent 요청을 바로 지움 — " + " · ".join(blocking)
+                           + " (원인을 없애고 Alarm Reset 뒤에 가능)")
         if A.bit(s[A.D_ALARM1], A.ALM1_IVE):
             # ★ v0.8.5 (래더 P45): IV-E 동작 이상(알람1 b0) 래치 중에는 PLC 가 벤트 요청을 매 스캔 지운다 — 보내면 결과는
             #   0 인데 배기 요청만 내려가고(IV-E 닫힘) 벤트는 되지 않는다. 보내기 전에 거절하고 이유를 알린다
             return False, IVE_VENT_TEXT
     if code == A.CMD_MANUAL_APPLY and (ilk >> A.ILK_SAFE_STOP_REQ) & 1:
-        return False, "안전 정지 요구 중에는 수동 조작을 할 수 없습니다"
+        return False, "안전 정지 요구 중에는 수동 조작을 할 수 없음"
     return True, ""
 
 
@@ -262,7 +262,7 @@ def explain_interlock(code: int) -> str:
     """결과 1(인터락 조건 미달)일 때 무엇이 빠졌는지 비트를 풀어서 알려 준다."""
     link = state.link
     if not (link and link.connected):
-        return "PLC 상태를 읽을 수 없습니다"
+        return "PLC 상태를 읽을 수 없음"
     s = link.status
     i0 = s[A.D_INPUT0]
     ilk = s[A.D_INTERLOCK]
@@ -277,13 +277,13 @@ def explain_interlock(code: int) -> str:
             need(s[A.D_STATE] not in RUNNING_STATES, "공정 중이 아닐 것")
         need(A.bit(i0, A.IN0_EMO), "비상정지 입력 정상")
         for bit, label in PUMP_BLOCK_ALARMS:
-            need(not A.bit(s[A.D_ALARM0], bit), label + " 래치 해제(알람 리셋)")
+            need(not A.bit(s[A.D_ALARM0], bit), label + " 래치 해제(Alarm Reset)")
     elif code == A.CMD_PROCESS_START:
-        need(A.bit(ilk, A.ILK_VALVE_OK), "공정 밸브 허가")
+        need(A.bit(ilk, A.ILK_VALVE_OK), "Valve Permit")
         need(A.bit(ilk, A.ILK_VACUUM), "베이스 압력 도달")
         need(bool(s[A.D_RECIPE_OK]), "레시피 표 통과")
         if DEV.HAS_O3:
-            need(A.bit(ilk, A.ILK_O3_OK), "O3 허가")
+            need(A.bit(ilk, A.ILK_O3_OK), "O3 Permit")
     else:
         need(not A.bit(ilk, A.ILK_SAFE_STOP_REQ), "안전 정지 요구 해제")
         need(A.bit(ilk, A.ILK_BASIC), "기본 인터락(비상정지·공압·N2·리드·냉각수)")
@@ -293,7 +293,7 @@ def explain_interlock(code: int) -> str:
         for bit, label in ((A.IN0_EMO, "비상정지"), (A.IN0_AIR, "공압"), (A.IN0_N2, "N2"),
                            (A.IN0_LID, "리드 닫힘"), (A.IN0_CW, "냉각수")):
             need(A.bit(i0, bit), label)
-    return ("필요: " + " · ".join(miss)) if miss else "PLC 인터락 조건을 확인하세요"
+    return ("필요: " + " · ".join(miss)) if miss else "PLC 인터락 조건 확인 필요"
 
 
 def _running() -> bool:
@@ -376,7 +376,7 @@ async def _cmd_recipe_load(d, ws):
     name = d.get("name") if isinstance(d.get("name"), str) else ""
     out = await asyncio.to_thread(_load_payload, state.cfg, name)
     if out is None:
-        await push_notice(f"레시피를 열 수 없습니다: {logger.clean(name, 80)} (다른 장비의 형식일 수 있습니다)",
+        await push_notice(f"레시피를 열 수 없음: {logger.clean(name, 80)} (다른 장비의 형식일 수 있음)",
                           "warn", ws)
         return
     await manager.send_to(ws, out)
@@ -393,7 +393,7 @@ async def _cmd_recipe_save(d, ws):
         await manager.send_to(ws, {"type": "recipe_saved", "ok": False, "name": name, "why": why})
         return
     await push_log(f"레시피 저장 [{name}] 번호 {R.recipe_number(rec)}", "ok")
-    await push_notice(f"저장했습니다: {name}", "ok", ws)
+    await push_notice(f"저장함: {name}", "ok", ws)
     await manager.send_to(ws, {"type": "recipe_saved", "ok": True, "name": name,
                                "number": R.recipe_number(rec)})
     await push_state()
@@ -404,9 +404,9 @@ def _save_recipe(name: str, recipe):
     # 저장은 새 키로만 — 옛 키(반복 그룹 from / to)는 여기서 바꾼다
     rec = R.upgrade(recipe or {})
     if not isinstance(rec, dict):
-        return False, "레시피 형식이 올바르지 않습니다", "warn", None
+        return False, "레시피 형식이 올바르지 않음", "warn", None
     if not storage.valid_name(name):
-        return False, "레시피 이름에 쓸 수 없는 문자가 있습니다", "warn", None
+        return False, "레시피 이름에 쓸 수 없는 문자가 있음", "warn", None
     why = _flow_block(name)
     if why:
         return False, why, "warn", None
@@ -414,14 +414,14 @@ def _save_recipe(name: str, recipe):
     rec["name"] = name
     res = R.validate(state.cfg, rec)
     if res["errors"]:
-        return False, f"검증 오류 {len(res['errors'])}건 — 고친 뒤 저장하세요", "warn", None
+        return False, f"검증 오류 {len(res['errors'])}건 — 고친 뒤 저장 필요", "warn", None
     # ★ 실행 중인 레시피는 덮어쓸 수 없다(다른 이름으로 저장은 된다).
     if _running() and state.runner and state.runner.active_name == name:
-        return False, "실행 중인 레시피는 덮어쓸 수 없습니다 — 다른 이름으로 저장하세요", "warn", None
+        return False, "실행 중인 레시피는 덮어쓸 수 없음 — 다른 이름으로 저장 필요", "warn", None
     rec["modified"] = time.strftime("%Y-%m-%d %H:%M:%S")
     rec.setdefault("created", rec["modified"])
     if not storage.save(name, rec):
-        return False, "레시피를 저장하지 못했습니다 — 폴더 쓰기 권한을 확인하세요", "err", None
+        return False, "레시피를 저장하지 못함 — 폴더 쓰기 권한 확인 필요", "err", None
     return True, "", "ok", rec
 
 
@@ -430,7 +430,7 @@ async def _cmd_recipe_delete(d, ws):
     편집기를 비운다(거절되면 고치던 내용을 잃지 않게)."""
     name = d.get("name") if isinstance(d.get("name"), str) else ""
     ok, why, level = _delete_recipe(name)
-    await push_notice(f"삭제했습니다: {name}" if ok else why, "ok" if ok else level, ws)
+    await push_notice(f"삭제함: {name}" if ok else why, "ok" if ok else level, ws)
     await manager.send_to(ws, {"type": "recipe_deleted", "ok": ok, "name": name, "why": "" if ok else why})
     if ok:
         await push_log(f"레시피 삭제 [{name}]", "warn")
@@ -442,9 +442,9 @@ def _delete_recipe(name: str):
     if why:
         return False, why, "warn"
     if _running() and state.runner and state.runner.active_name == name:
-        return False, "실행 중인 레시피는 삭제할 수 없습니다", "warn"
+        return False, "실행 중인 레시피는 삭제할 수 없음", "warn"
     if not storage.delete(name):
-        return False, "레시피를 삭제하지 못했습니다", "warn"
+        return False, "레시피를 삭제하지 못함", "warn"
     return True, "", "ok"
 
 
@@ -469,18 +469,18 @@ def _rename_recipe(old: str, new: str):
     if why:
         return False, why, "warn"
     if not storage.valid_name(new):
-        return False, "새 이름에 쓸 수 없는 문자가 있습니다", "warn"
+        return False, "새 이름에 쓸 수 없는 문자가 있음", "warn"
     if storage.exists(new):
-        return False, f"같은 이름이 이미 있습니다: {new}", "warn"
+        return False, f"같은 이름이 이미 있음: {new}", "warn"
     data = storage.load(old)
     if data is None:
-        return False, f"레시피를 열 수 없습니다: {old}", "warn"
+        return False, f"레시피를 열 수 없음: {old}", "warn"
     if _running() and state.runner and state.runner.active_name == old:
-        return False, "실행 중인 레시피는 이름을 바꿀 수 없습니다", "warn"
+        return False, "실행 중인 레시피는 이름을 바꿀 수 없음", "warn"
     data["name"] = new
     data["modified"] = time.strftime("%Y-%m-%d %H:%M:%S")
     if not storage.save(new, data):
-        return False, "이름을 바꾸지 못했습니다", "err"
+        return False, "이름을 바꾸지 못함", "err"
     storage.delete(old)
     return True, "", "ok"
 
@@ -506,11 +506,11 @@ async def _cmd_recipe_upload(d, ws):
         return
     link = state.link
     if not (link and link.connected):
-        await push_notice("PLC 에 연결되어 있지 않습니다", "warn", ws)
+        await push_notice("PLC 에 연결되어 있지 않음", "warn", ws)
         return
     if _running():
         # ★ PLC 는 작업본으로 돌아 영향이 없지만, 화면과 실제가 어긋나 보이므로 막는다.
-        await push_notice("공정 중에는 레시피를 올릴 수 없습니다", "warn", ws)
+        await push_notice("공정 중에는 레시피를 올릴 수 없음", "warn", ws)
         return
     ok, why = state.runner.select(name)
     if not ok:
@@ -518,7 +518,7 @@ async def _cmd_recipe_upload(d, ws):
         return
     res = R.validate(state.cfg, state.runner.recipe)
     if res["errors"]:
-        await push_notice(f"검증 오류 {len(res['errors'])}건 — 올릴 수 없습니다", "warn", ws)
+        await push_notice(f"검증 오류 {len(res['errors'])}건 — 올릴 수 없음", "warn", ws)
         return
     tbl = state.runner.table
     good, detail = await link.upload_recipe(tbl["words"], tbl["checksum"])
@@ -555,10 +555,10 @@ async def _cmd_process_start(d, ws):
     바로 처리돼야 한다. 결과는 흐름이 끝날 때 알린다.
     ★ v0.7.0(A2): 작업자 · 시료 · 메모(모두 선택)를 받는다 — 서버가 길이 · 제어 문자를 정리한다(process.clean_run_info)."""
     if state.runner.busy:
-        await push_notice("이미 시작 절차가 진행 중입니다", "warn", ws)
+        await push_notice("이미 시작 절차가 진행 중", "warn", ws)
         return
     if _leak().running:
-        await push_notice("누설률 점검 중에는 공정을 시작할 수 없습니다 — 끝나거나 취소한 뒤에", "warn", ws)
+        await push_notice("누설률 점검 중에는 공정을 시작할 수 없음 — 끝나거나 취소한 뒤에", "warn", ws)
         return
     name = d.get("name")
     if name:
@@ -627,7 +627,7 @@ def _leak():
 async def _cmd_leak_check(d, ws):
     """누설률 점검 시작 — 로컬만 · PIN 없음(확인 창은 화면이). 조건이 안 되면 이유와 함께 거절."""
     if state.runner and state.runner.busy:
-        await push_notice("공정 시작 절차가 진행 중입니다 — 누설률 점검을 시작할 수 없습니다", "warn", ws)
+        await push_notice("공정 시작 절차가 진행 중 — 누설률 점검을 시작할 수 없음", "warn", ws)
         return
     ok, msg = _leak().start(state, push_log, push_notice)
     await push_notice(msg, "info" if ok else "warn", ws)
@@ -637,9 +637,9 @@ async def _cmd_leak_check(d, ws):
 
 async def _cmd_leak_cancel(d, ws):
     if _leak().cancel("운전자 취소"):
-        await push_notice("누설률 점검을 취소합니다 — IV-E 를 다시 엽니다", "info", ws)
+        await push_notice("누설률 점검을 취소함 — IV-E 를 다시 엶", "info", ws)
     else:
-        await push_notice("진행 중인 누설률 점검이 없습니다", "warn", ws)
+        await push_notice("진행 중인 누설률 점검이 없음", "warn", ws)
 
 
 async def _cmd_maint_reset(d, ws):
@@ -650,10 +650,10 @@ async def _cmd_maint_reset(d, ws):
     key = str(d.get("key") or "")
     before = maint.reset(key)
     if not before:
-        await push_notice(f"알 수 없는 정비 항목입니다: {logger.clean(key, 40)}", "warn", ws)
+        await push_notice(f"알 수 없는 정비 항목: {logger.clean(key, 40)}", "warn", ws)
         return
     await push_log(f"정비 카운터 리셋 — 이전 값: {before}", "warn")
-    await push_notice("정비 카운터를 리셋했습니다", "ok", ws)
+    await push_notice("정비 카운터를 리셋함", "ok", ws)
 
 
 def _flow_block(name: str = None) -> str:
@@ -663,7 +663,7 @@ def _flow_block(name: str = None) -> str:
         return ""
     if name is not None and name != r.recipe_name:
         return ""
-    return "공정 시작 절차가 진행 중입니다 — 끝나거나 취소한 뒤에 하세요"
+    return "공정 시작 절차가 진행 중 — 끝나거나 취소한 뒤에 가능"
 
 
 async def _cmd_alarm_history(d, ws):
@@ -674,9 +674,9 @@ async def _cmd_alarm_history(d, ws):
 
 async def _cmd_process_cancel_wait(d, ws):
     if state.runner.cancel_wait():
-        await push_notice("베이스 압력 대기를 취소합니다", "info", ws)
+        await push_notice("베이스 압력 대기를 취소함", "info", ws)
     else:
-        await push_notice("대기 중이 아닙니다", "warn", ws)
+        await push_notice("대기 중이 아님", "warn", ws)
 
 
 # ===================== 수동 조작 =====================
@@ -689,17 +689,17 @@ async def _cmd_manual_unlock(d, ws):
     state.manual_unlock_until = (time.monotonic() + MANUAL_UNLOCK_S) if on else 0.0
     await push_log(f"수동 조작 잠금 {'해제' if on else '설정'}", "info")
     # ★ v0.8.1: 그 연결에도 알린다(rid 가 붙어 조작 창 결과 줄이 '기다리는 중' 에서 바뀐다)
-    await push_notice("수동 조작 잠금 해제 — 5분 뒤 · 공정이 시작되면 다시 잠깁니다" if on else "수동 조작 잠금", "info", ws)
+    await push_notice("수동 조작 잠금 해제 — 5분 뒤 · 공정이 시작되면 다시 잠김" if on else "수동 조작 잠금", "info", ws)
     await push_state()
 
 
 def _manual_allowed():
     if _running():
-        return False, "공정 중에는 수동 조작을 할 수 없습니다"
+        return False, "공정 중에는 수동 조작을 할 수 없음"
     if _leak().running:
-        return False, "누설률 점검 중에는 수동 밸브를 조작할 수 없습니다"
+        return False, "누설률 점검 중에는 수동 밸브를 조작할 수 없음"
     if time.monotonic() >= state.manual_unlock_until:
-        return False, "수동 조작이 잠겨 있습니다 — 잠금 해제를 먼저 켜세요"
+        return False, "수동 조작이 잠겨 있음 — 잠금 해제 먼저 켜기 필요"
     return True, ""
 
 
@@ -717,7 +717,7 @@ async def _manual_send(ws, what: str, mutate, ok_text=None):
     res = await _send_plc(A.CMD_MANUAL_APPLY, ws, what=what, sender=sender, ok_text=ok_text)
     if res == A.RESULT_OK and (box.get("lost_valve") or box.get("lost_aux")):
         from .plclink import describe_bits
-        msg = (f"{what}: PLC 에 반영되지 않았습니다 — "
+        msg = (f"{what}: PLC 에 반영되지 않음 — "
                f"{describe_bits(box['lost_valve'], box['lost_aux'])} "
                f"({_lost_reason(box)})")
         await push_notice(msg, "warn", ws)
@@ -736,18 +736,18 @@ def _lost_reason(box) -> str:
     safe = A.bit(ilk, A.ILK_SAFE_STOP_REQ)
     why = []
     if box.get("lost_valve") and A.bit(s[A.D_INPUT0], A.IN0_ATM):
-        why.append("챔버 대기압 입력이면 PLC 가 밸브 요청을 바로 지웁니다")
+        why.append("챔버 대기압 입력이면 PLC 가 밸브 요청을 바로 지움")
     elif box.get("lost_valve") and not safe and not A.bit(ilk, A.ILK_VALVE_OK):
-        why.append("Valve Permit 이 없으면 PLC 가 밸브 요청을 바로 지웁니다 — 필요: "
+        why.append("Valve Permit 이 없으면 PLC 가 밸브 요청을 바로 지움 — 필요: "
                    + " · ".join(valve_permit_missing(s)))
     if box.get("lost_aux") and DEV.HAS_RF and not (box.get("sent") or {}).get("rf"):
-        why.append("RF 전력이 0 이면 PLC 가 RF 요청을 버립니다")
+        why.append("RF 전력이 0 이면 PLC 가 RF 요청을 버림")
     elif box.get("lost_aux") and DEV.HAS_RF and not safe and not A.bit(ilk, A.ILK_RF_OK):
-        why.append("RF 허가가 없으면 PLC 가 RF 요청을 바로 지웁니다 — 필요: "
+        why.append("RF Permit 없으면 PLC 가 RF 요청을 바로 지움 — 필요: "
                    + " · ".join(rf_permit_missing(s, link.prm_readback, state.conv)))
     if (DEV.HAS_O3 and (box.get("lost_aux") or 0) & (1 << A.AUX_O3_GEN) and not safe
             and not A.bit(ilk, A.ILK_O3_OK)):
-        why.append("O3 허가가 없으면 PLC 가 O3 발생기 요청을 바로 지웁니다 — 필요: "
+        why.append("O3 Permit 없으면 PLC 가 O3 Generator 요청을 바로 지움 — 필요: "
                    + " · ".join(o3_permit_missing(s, link.prm_readback)))
     if safe:
         why.append("안전 정지 요구 중")
@@ -763,7 +763,7 @@ async def _cmd_manual_valve(d, ws):
         return
     v = next((x for x in DEV.VALVES if x["tag"] == tag), None)
     if v is None or v.get("auto"):
-        await push_notice(f"수동으로 다룰 수 없는 밸브입니다: {tag}", "warn", ws)
+        await push_notice(f"수동으로 다룰 수 없는 밸브: {tag}", "warn", ws)
         return
 
     was = {}
@@ -774,21 +774,21 @@ async def _cmd_manual_valve(d, ws):
         bit = 1 << v["bit"]
         was["open"] = bool(cur["valve"] & bit)
         if want and was["open"]:
-            return None, "이미 열기 요청 상태입니다 — 다시 보내지 않았습니다", True
+            return None, "이미 열기 요청 상태 — 다시 보내지 않음", True
         if not want and not was["open"]:
-            return None, "이미 닫힘(요청 없음) — 다시 보내지 않았습니다", True
+            return None, "이미 닫힘(요청 없음) — 다시 보내지 않음", True
         if want and not A.bit(state.link.status[A.D_INTERLOCK], A.ILK_VALVE_OK):
             # ★ v0.8.2: 래더 P50 은 허가가 없으면 받은 요청을 같은 스캔에 지운다 — 보내도 반영되지 않으니 보내지 않는다
             #   (고치기 전 래더는 요청을 남겨 허가가 생길 때 저절로 열었다)
             miss = valve_permit_missing(state.link.status)
-            return None, "Valve Permit 이 없어 보내지 않았습니다 — 필요: " + " · ".join(miss)
+            return None, "Valve Permit 없음 — 보내지 않음 (필요: " + " · ".join(miss) + ")"
         new = (cur["valve"] | bit) if want else (cur["valve"] & ~bit)
         # ★ 전구체와 반응물을 함께 여는 요청은 PC 가 막는다(PLC 도 둘 다 막고 알람을 낸다).
         pre = any(new & (1 << b) for b in DEV.PRECURSOR_VALVE_BITS)
         rea = any(new & (1 << b) for b in DEV.REACTANT_VALVE_BITS)
         if pre and rea:
-            return None, ("전구체 밸브와 반응물 밸브를 함께 열 수 없습니다 — "
-                          "PLC 가 둘 다 막고 중대 알람을 냅니다")
+            return None, ("전구체 밸브와 반응물 밸브를 함께 열 수 없음 — "
+                          "PLC 가 둘 다 막고 중대 알람을 냄")
         cur["valve"] = new
         return cur, ""
 
@@ -802,11 +802,11 @@ async def _cmd_manual_valve(d, ws):
             return f"{tag} 열림 확인", "ok"
         if want:
             miss = valve_permit_missing(state.link.status)
-            why = ("Valve Permit 없음 · 필요: " + " · ".join(miss)) if miss else "잠시 뒤 다시 확인하세요"
-            return f"{tag} 열기 요청됨 — 출력이 아직 꺼져 있습니다({why})", "warn"
+            why = ("Valve Permit 없음 · 필요: " + " · ".join(miss)) if miss else "잠시 뒤 다시 확인 필요"
+            return f"{tag} 열기 요청됨 — 출력이 아직 꺼져 있음({why})", "warn"
         if not on:
             return f"{tag} 닫힘 확인", "ok"
-        return f"{tag} 닫기 요청됨 — 출력이 아직 켜져 있습니다", "warn"
+        return f"{tag} 닫기 요청됨 — 출력이 아직 켜져 있음", "warn"
 
     res, box = await _manual_send(ws, f"밸브 {tag} {'열기' if want else '닫기'}", mutate, ok_text=ok_text)
     if "sent" in box:
@@ -818,7 +818,7 @@ async def _cmd_manual_valve(d, ws):
 
 async def _cmd_manual_mfc(d, ws):
     if _running():
-        await push_notice("공정 중에는 MFC 를 바꿀 수 없습니다", "warn", ws)
+        await push_notice("공정 중에는 MFC 를 바꿀 수 없음", "warn", ws)
         return
     vals = _dict(d.get("sccm"))
     changes = {}
@@ -832,20 +832,20 @@ async def _cmd_manual_mfc(d, ws):
         fs = m.get("full_scale_sccm")
         # ★ 풀스케일을 모르면 원시값을 만들 수 없다 — 0 으로 쓰면 의도와 정반대가 된다.
         if sc is None or sc.full is None:
-            await push_notice(f"MFC{no} 풀스케일이 정해지지 않아 설정할 수 없습니다 — "
-                              f"설정에서 full_scale_sccm 을 넣으세요", "warn", ws)
+            await push_notice(f"MFC{no} 풀스케일이 정해지지 않아 설정할 수 없음 — "
+                              f"설정에서 full_scale_sccm 입력 필요", "warn", ws)
             return
         fv = _finite(v)
         if fv is None:
-            await push_notice(f"MFC{no} 설정 값이 올바르지 않습니다", "warn", ws)
+            await push_notice(f"MFC{no} 설정 값이 올바르지 않음", "warn", ws)
             return
         if fv < 0 or (fs is not None and fv > float(fs)):
-            await push_notice(f"MFC{no} 설정이 범위를 벗어납니다 (0~{fs})", "warn", ws)
+            await push_notice(f"MFC{no} 설정이 범위를 벗어남 (0~{fs})", "warn", ws)
             return
         changes[no] = sc.to_raw(fv)
         named.append(f"MFC{no}={fv:g}")
     if not changes:
-        await push_notice("바꿀 MFC 값이 없습니다", "warn", ws)
+        await push_notice("바꿀 MFC 값이 없음", "warn", ws)
         return
 
     async def sender():
@@ -865,7 +865,7 @@ def _tc_comm_ok(h) -> bool:
     return A.bit(link.status[A.D_TC_COMM], station - 1)
 
 
-TC_NO_COMM_TEXT = "온도조절기 통신이 없어 PLC 과온 감시가 동작하지 않습니다 — 전원을 켤 수 없습니다"
+TC_NO_COMM_TEXT = "온도조절기 통신이 없어 PLC 과온 감시가 동작하지 않음 — 전원을 켤 수 없음"
 
 
 def _ot_latched() -> bool:
@@ -875,7 +875,7 @@ def _ot_latched() -> bool:
 
 async def _cmd_manual_heater(d, ws):
     if _running():
-        await push_notice("공정 중에는 히터를 바꿀 수 없습니다", "warn", ws)
+        await push_notice("공정 중에는 히터를 바꿀 수 없음", "warn", ws)
         return
     from .convert import heater_raw
     sv = _dict(d.get("sv"))
@@ -891,15 +891,15 @@ async def _cmd_manual_heater(d, ws):
         if key in sv or ch in sv:
             v = sv.get(key, sv.get(ch))
             if mx is None:
-                await push_notice(f"CH{ch} 는 과온 한계가 정해지지 않아 설정할 수 없습니다",
+                await push_notice(f"CH{ch} 는 과온 한계가 정해지지 않아 설정할 수 없음",
                                   "warn", ws)
                 return
             fv = _finite(v)
             if fv is None:
-                await push_notice(f"CH{ch} 설정 온도 값이 올바르지 않습니다", "warn", ws)
+                await push_notice(f"CH{ch} 설정 온도 값이 올바르지 않음", "warn", ws)
                 return
             if not (0 <= fv <= float(mx)):
-                await push_notice(f"CH{ch} 설정 온도는 0~{mx:g} ℃ 이어야 합니다", "warn", ws)
+                await push_notice(f"CH{ch} 설정 온도는 0~{mx:g} ℃ 이어야 함", "warn", ws)
                 return
             sv_changes[ch] = heater_raw(fv)
             named.append(f"CH{ch}={fv:g}℃")
@@ -913,8 +913,8 @@ async def _cmd_manual_heater(d, ws):
             if on and mx is None:
                 # ★ PLC 는 한계 0 인 채널을 막지 않는다(소프트 과온 감시만 안 한다).
                 #   감시 없는 히터를 켜지 않도록 PC 가 막는다.
-                await push_notice(f"CH{ch} 는 과온 한계가 정해지지 않아 켤 수 없습니다 — "
-                                  f"설정에서 max_c 를 넣으세요", "warn", ws)
+                await push_notice(f"CH{ch} 는 과온 한계가 정해지지 않아 켤 수 없음 — "
+                                  f"설정에서 max_c 입력 필요", "warn", ws)
                 return
             if on and not _tc_comm_ok(h):
                 # ★ PLC 과온 감시(현재값 > 한계)는 온도조절기 통신으로 읽은 현재값이 있어야 동작한다.
@@ -922,14 +922,14 @@ async def _cmd_manual_heater(d, ws):
                 await push_notice(f"CH{ch}: {TC_NO_COMM_TEXT}", "warn", ws)
                 return
             if on and _ot_latched():
-                await push_notice("과온 알람이 래치돼 있어 히터를 켤 수 없습니다 — "
-                                  "PLC 가 매 스캔 전원을 끕니다. 원인을 없애고 알람 리셋 뒤에 켜세요",
+                await push_notice("과온 알람이 래치돼 있어 히터를 켤 수 없음 — "
+                                  "PLC 가 매 스캔 전원을 끔. 원인을 없애고 Alarm Reset 뒤에 켜기 필요",
                                   "warn", ws)
                 return
             pw_changes[bit] = on
             named.append(f"CH{ch} {'ON' if on else 'OFF'}")
     if not named:
-        await push_notice("바꿀 히터 값이 없습니다", "warn", ws)
+        await push_notice("바꿀 히터 값이 없음", "warn", ws)
         return
 
     def mutate(cur_power, cur_sv):
@@ -951,26 +951,26 @@ async def _cmd_manual_heater(d, ws):
                           sender=sender)
     if res == A.RESULT_OK and no_comm_sv:
         why = (f"{' · '.join(no_comm_sv)} 설정 온도는 PLC 에 기록했지만 온도조절기 통신이 없어 "
-               f"온도조절기에 전달되지 않았습니다")
+               f"온도조절기에 전달되지 않음")
         await push_notice(why, "warn", ws)
         await push_log(why, "warn")
     if box.get("reverted"):
-        await push_log("히터 적용이 거절돼 D01010·D01012~ 를 이전 값으로 되돌렸습니다", "warn")
+        await push_log("히터 적용이 거절돼 D01010·D01012~ 를 이전 값으로 되돌림", "warn")
 
 
 async def _cmd_manual_pcv(d, ws):
     if not DEV.HAS_PCV:
-        await push_notice("이 장비에는 PCV 가 없습니다", "warn", ws)
+        await push_notice("이 장비에는 PCV 가 없음", "warn", ws)
         return
     if _running():
-        await push_notice("공정 중에는 PCV 를 바꿀 수 없습니다", "warn", ws)
+        await push_notice("공정 중에는 PCV 를 바꿀 수 없음", "warn", ws)
         return
     pct = _finite(d.get("pct"))
     if pct is None:
-        await push_notice("PCV 목표 값이 올바르지 않습니다", "warn", ws)
+        await push_notice("PCV 목표 값이 올바르지 않음", "warn", ws)
         return
     if not (0 <= pct <= 100):
-        await push_notice("PCV 목표는 0~100 % 이어야 합니다", "warn", ws)
+        await push_notice("PCV 목표는 0~100 % 이어야 함", "warn", ws)
         return
     raw = state.conv.pcv.to_raw(pct)
 
@@ -984,25 +984,25 @@ async def _cmd_manual_pcv(d, ws):
 async def _cmd_manual_rf(d, ws):
     """RF 시험 — 대기 중에만. 전력이 0 이면 PLC 가 요청을 버리므로 PC 도 막는다."""
     if not DEV.HAS_RF:
-        await push_notice("이 장비에는 RF 가 없습니다", "warn", ws)
+        await push_notice("이 장비에는 RF 가 없음", "warn", ws)
         return
     if _running():
-        await push_notice("공정 중에는 RF 를 수동으로 켤 수 없습니다", "warn", ws)
+        await push_notice("공정 중에는 RF 를 수동으로 켤 수 없음", "warn", ws)
         return
     on = bool(d.get("on"))
     raw = None
     if on:
         watt = _finite(d.get("watt"))
         if watt is None:
-            await push_notice("RF 전력 값이 올바르지 않습니다", "warn", ws)
+            await push_notice("RF 전력 값이 올바르지 않음", "warn", ws)
             return
         lim = (state.cfg.get("params") or {}).get("rf_max_w")
         if watt <= 0:
-            await push_notice("RF 전력이 0 이면 PLC 가 RF 요청을 버립니다 — "
-                              "전력을 먼저 넣으세요", "warn", ws)
+            await push_notice("RF 전력이 0 이면 PLC 가 RF 요청을 버림 — "
+                              "전력 먼저 입력 필요", "warn", ws)
             return
         if lim is not None and watt > float(lim):
-            await push_notice(f"RF 전력이 상한을 넘습니다 (최대 {lim:g} W)", "warn", ws)
+            await push_notice(f"RF 전력이 상한을 넘음 (최대 {lim:g} W)", "warn", ws)
             return
         raw = state.conv.rf.to_raw(watt)
 
@@ -1012,7 +1012,7 @@ async def _cmd_manual_rf(d, ws):
             if not A.bit(state.link.status[A.D_INTERLOCK], A.ILK_RF_OK):
                 from .process import rf_permit_missing
                 miss = rf_permit_missing(state.link.status, state.link.prm_readback, state.conv)
-                return None, "RF Permit 이 없어 보내지 않았습니다 — 필요: " + " · ".join(miss)
+                return None, "RF Permit 없음 — 보내지 않음 (필요: " + " · ".join(miss) + ")"
             cur["aux"] |= 1 << A.AUX_RF
             cur["rf"] = raw
         else:
@@ -1048,21 +1048,21 @@ async def _cmd_manual_o3(d, ws):
     끄기는 발생기만 먼저 끈 뒤 지연을 두고 나머지를 끈다(배관에 남은 O3 를 뺀다).
     ★ 기다림 · 지연은 서버 타이머가 센다 — 화면을 닫거나 새로 고쳐도 마무리된다."""
     if not DEV.HAS_O3:
-        await push_notice("이 장비에는 O3 라인이 없습니다", "warn", ws)
+        await push_notice("이 장비에는 O3 Line 없음", "warn", ws)
         return
     if _running():
-        await push_notice("공정 중에는 O3 라인을 바꿀 수 없습니다", "warn", ws)
+        await push_notice("공정 중에는 O3 Line 바꿀 수 없음", "warn", ws)
         return
     action = d.get("action") or "on"
 
     if action == "set":
         v = _finite(d.get("value"))
         if v is None:
-            await push_notice("O3 설정 값이 올바르지 않습니다", "warn", ws)
+            await push_notice("O3 설정 값이 올바르지 않음", "warn", ws)
             return
         lim = (state.cfg.get("params") or {}).get("o3_max")
         if v < 0 or (lim is not None and v > float(lim)):
-            await push_notice(f"O3 설정이 상한을 넘습니다 (0~{lim})", "warn", ws)
+            await push_notice(f"O3 설정이 상한을 넘음 (0~{lim})", "warn", ws)
             return
         raw = state.conv.o3.to_raw(v)
 
@@ -1076,19 +1076,19 @@ async def _cmd_manual_o3(d, ws):
     if action == "on":
         v = _finite(d.get("value")) or 0.0
         if v <= 0:
-            await push_notice("O3 설정을 먼저 넣으세요 (0 이면 발생기가 켜져도 O3 가 나오지 않습니다)",
+            await push_notice("O3 설정 먼저 입력 필요 (0 이면 발생기가 켜져도 O3 가 나오지 않음)",
                               "warn", ws)
             return
         # ★ 래더: O3 한계(PRM_O3_MAX)가 0 이면 O3 허가(인터락 b9)가 나지 않아 발생기가 켜지지 않는다.
         #   설정값이 아니라 PLC 에서 되읽은 값을 본다.
         back = state.link.prm_readback.get(A.D_PRM_O3_MAX) if state.link else None
         if not back:
-            await push_notice("PLC 의 O3 한계(PRM_O3_MAX)가 0 이라 O3 허가가 나지 않습니다 — "
-                              "설정의 params.o3_max 를 넣고 PLC 파라미터가 맞춰졌는지 확인하세요",
+            await push_notice("PLC 의 O3 한계(PRM_O3_MAX)가 0 이라 O3 Permit 나지 않음 — "
+                              "설정의 params.o3_max 를 넣고 PLC 파라미터가 맞춰졌는지 확인 필요",
                               "warn", ws)
             return
         if o3_on_waiting():
-            await push_notice("O3 라인 켜기: 이미 O3 Permit 을 기다리는 중입니다 — 다시 보내지 않았습니다", "info", ws)
+            await push_notice("O3 Line 켜기: 이미 O3 Permit 을 기다리는 중 — 다시 보내지 않음", "info", ws)
             return
         _cancel_o3_timer()
         raw = state.conv.o3.to_raw(v)
@@ -1106,20 +1106,20 @@ async def _cmd_manual_o3(d, ws):
             if "after" not in r or (r.get("lost_aux") or 0) & O3_LINE_BITS:
                 return None                 # 되읽지 못함 · 반영 안 됨(아래 '반영되지 않았습니다' 경로) — 기본 글
             if aux & O3_GEN_BIT:
-                return f"O3 설정 {v:g} 반영 — O3 라인은 이미 켜져 있습니다", "ok"
+                return f"O3 설정 {v:g} 반영 — O3 Line 이미 켜져 있음", "ok"
             if A.bit(state.link.status[A.D_INTERLOCK], A.ILK_O3_OK):
-                return "O3 라인 켜기 — 바이패스 펌프 · IV-B 켜짐 · O3 Permit 있음 → 발생기를 켭니다", "info"
-            return (f"O3 라인 켜기 — 바이패스 펌프 → IV-B 를 켰습니다 · O3 Permit 을 기다립니다(최대 {wait:g} s) "
-                    "→ 허가가 서면 발생기를 켭니다"), "info"
+                return "O3 Line 켜기 — Bypass Pump · IV-B 켜짐 · O3 Permit 있음 → 발생기를 켬", "info"
+            return (f"O3 Line 켜기 — Bypass Pump → IV-B 를 켬 · O3 Permit 을 기다림(최대 {wait:g} s) "
+                    "→ 허가가 서면 발생기를 켬"), "info"
 
-        res, box = await _manual_send(ws, "O3 라인 켜기", line_mutate, ok_text=line_ok)
+        res, box = await _manual_send(ws, "O3 Line 켜기", line_mutate, ok_text=line_ok)
         if box.get("noop"):
             res = A.RESULT_OK               # 바이패스 라인 · 설정값은 이미 그 상태 — 발생기만 남았는지 아래에서 본다
         if res != A.RESULT_OK or state.o3_on_seq != token:
             return                          # 못 보냄 · 거절 — 또는 그 사이 끄기 · 전체 닫기가 왔다
         now_aux = (box.get("after") or (box.get("before") if box.get("noop") else None) or {}).get("aux")
         if now_aux is None:
-            await push_notice("O3 라인 켜기: 반영을 확인하지 못해 발생기를 보내지 않았습니다 — 다시 켜세요", "warn", ws)
+            await push_notice("O3 Line 켜기: 반영을 확인하지 못해 발생기를 보내지 않음 — 다시 켜기 필요", "warn", ws)
             return
         if now_aux & O3_GEN_BIT:
             return                          # 발생기 요청이 이미 서 있다(라인이 켜져 있었다) — 설정값만 바꿨거나 같은 요청
@@ -1132,7 +1132,7 @@ async def _cmd_manual_o3(d, ws):
         state.o3_on_task = asyncio.create_task(_o3_on_wait(token))
         if box.get("noop"):
             # ① 을 보내지 않았다(라인은 이미 켜져 있었다) — 기다린다는 것은 따로 알린다
-            msg = f"O3 라인 켜기 — O3 Permit 을 기다립니다(최대 {wait:g} s) → 허가가 서면 발생기를 켭니다"
+            msg = f"O3 Line 켜기 — O3 Permit 을 기다림(최대 {wait:g} s) → 허가가 서면 발생기를 켬"
             await push_notice(msg, "info", ws)
             await push_log(msg, "info")
         return
@@ -1140,13 +1140,13 @@ async def _cmd_manual_o3(d, ws):
     # 끄기: 발생기 먼저, 지연 뒤 나머지
     if cancel_o3_on():
         # ★ v0.8.5: O3 허가를 기다리던 중이면 발생기를 보내지 않는다. 바이패스 라인은 아래의 끄기 순서(지연 뒤 닫기)로 닫는다
-        await push_log("O3 라인 켜기 취소 — 운전자 OFF (발생기를 보내지 않았습니다)", "warn")
+        await push_log("O3 Line 켜기 취소 — 운전자 OFF (발생기를 보내지 않음)", "warn")
 
     def off_mutate(cur):
         cur["aux"] &= ~(1 << A.AUX_O3_GEN)
         return cur, ""
 
-    res, box = await _manual_send(ws, "O3 발생기 끄기", off_mutate)
+    res, box = await _manual_send(ws, "O3 Generator 끄기", off_mutate)
     if box.get("noop") and ((box.get("before") or {}).get("aux", 0) & O3_LINE_BITS) and not state.o3_off_at:
         res = A.RESULT_OK                   # ★ v0.8.0: 발생기는 이미 꺼짐(보내지 않음) — 남은 바이패스 라인은 지연 뒤 닫는다
     if res != A.RESULT_OK:
@@ -1155,7 +1155,7 @@ async def _cmd_manual_o3(d, ws):
     _cancel_o3_timer()
     state.o3_off_at = time.monotonic() + delay
     state.o3_off_task = asyncio.create_task(_o3_finish_later(delay))
-    await push_log(f"O3 발생기를 껐습니다 — {delay:g} s 뒤 바이패스 라인을 닫습니다", "info")
+    await push_log(f"O3 Generator 끔 — {delay:g} s 뒤 바이패스 라인을 닫음", "info")
 
 
 # ---- v0.8.5: O3 라인 켜기 ② — O3 허가를 기다렸다가 발생기 ----
@@ -1186,7 +1186,7 @@ def _o3_wait_broken() -> str:
     """기다리는 동안 발생기를 보내면 안 되게 된 이유(없으면 '') — 연결 끊김 · 안전 정지 · 공정 시작 · PLC 가 라인을 지움."""
     link = state.link
     if not (link and link.connected):
-        return "PLC 연결이 끊겼습니다"
+        return "PLC 연결이 끊김"
     if getattr(link, "plc_hb_stalled", False):
         return "PLC 하트비트 멈춤"
     s = link.status
@@ -1195,7 +1195,7 @@ def _o3_wait_broken() -> str:
     if A.bit(s[A.D_INTERLOCK], A.ILK_SAFE_STOP_REQ):
         return "안전 정지 요구"
     if (link.applied_aux & O3_LINE_BITS) != O3_LINE_BITS:
-        return "PLC 가 바이패스 라인 요청을 지웠습니다(전체 닫기 · 안전 정지)"
+        return "PLC 가 바이패스 라인 요청을 지움(전체 닫기 · 안전 정지)"
     return ""
 
 
@@ -1210,7 +1210,7 @@ async def _o3_on_wait(token: int):
                 return                      # 끄기 · 전체 닫기 · 공정 시작 절차가 취소했다(로그는 그쪽이 남겼다)
             why = _o3_wait_broken()
             if why:
-                msg = f"O3 라인 켜기 취소 — {why} (발생기를 보내지 않았습니다)"
+                msg = f"O3 Line 켜기 취소 — {why} (발생기를 보내지 않음)"
                 await push_notice(msg, "warn")
                 await push_log(msg, "warn")
                 return
@@ -1226,7 +1226,7 @@ async def _o3_on_wait(token: int):
     except asyncio.CancelledError:
         return
     except Exception as e:  # noqa: BLE001
-        logger.write("err", f"O3 허가 대기 오류: {type(e).__name__}: {logger.clean(e, 200)}")
+        logger.write("err", f"O3 Permit 대기 오류: {type(e).__name__}: {logger.clean(e, 200)}")
     finally:
         if getattr(state, "o3_on_task", None) is me:
             state.o3_on_task = None
@@ -1237,11 +1237,11 @@ async def _o3_gen_on(ws, token: int):
     """② 발생기 비트 — O3 허가가 서 있을 때만 보낸다(명령 잠금 안에서 새로 읽은 반영 영역 · 그 순간의 번호로 판단)."""
     def gen_mutate(cur):
         if state.o3_on_seq != token:
-            return None, "O3 라인 켜기가 취소되었습니다 — 발생기를 보내지 않았습니다"
+            return None, "O3 Line 켜기가 취소됨 — 발생기를 보내지 않음"
         if (cur["aux"] & O3_LINE_BITS) != O3_LINE_BITS:
-            return None, "PLC 가 바이패스 라인 요청을 지웠습니다 — 발생기를 보내지 않았습니다"
+            return None, "PLC 가 바이패스 라인 요청을 지움 — 발생기를 보내지 않음"
         if not A.bit(state.link.status[A.D_INTERLOCK], A.ILK_O3_OK):
-            return None, "O3 Permit 이 없어 발생기를 보내지 않았습니다 — 필요: " + _o3_missing_text()
+            return None, "O3 Permit 없음 — O3 Generator 보내지 않음 (필요: " + _o3_missing_text() + ")"
         cur["aux"] |= O3_GEN_BIT
         return cur, ""
 
@@ -1250,10 +1250,10 @@ async def _o3_gen_on(ws, token: int):
             return None                     # 반영 안 됨 — 아래 '반영되지 않았습니다' 경로
         out = r.get("aux_out")
         if out is not None and out & O3_GEN_BIT:
-            return "O3 라인 켜짐 — O3 Permit 확인 뒤 발생기를 켰습니다", "ok"
-        return "O3 발생기 켜기 요청됨 — 출력이 아직 꺼져 있습니다(잠시 뒤 다시 확인하세요)", "warn"
+            return "O3 Line 켜짐 — O3 Permit 확인 뒤 발생기를 켬", "ok"
+        return "O3 Generator 켜기 요청됨 — 출력이 아직 꺼져 있음(잠시 뒤 다시 확인 필요)", "warn"
 
-    res, _ = await _manual_send(ws, "O3 발생기 켜기", gen_mutate, ok_text=gen_ok)
+    res, _ = await _manual_send(ws, "O3 Generator 켜기", gen_mutate, ok_text=gen_ok)
     return res
 
 
@@ -1262,8 +1262,8 @@ async def _o3_on_timeout():
     ★ 이번 켜기에서는 발생기가 돈 적이 없어 지연 없이 닫는다. 다만 발생기 출력을 마지막으로 본 지 끄기 지연
       (process.o3_off_delay_s)이 안 지났으면(끄기 지연 중에 다시 켠 경우) 남은 시간만큼 기다렸다가 닫는다."""
     wait = o3_permit_wait_s()
-    msg = (f"O3 라인 켜기 실패 — O3 Permit 이 {wait:g} s 안에 서지 않았습니다 · 필요: {_o3_missing_text()} "
-           "— 발생기를 보내지 않았고 바이패스 라인을 닫습니다")
+    msg = (f"O3 Line 켜기 실패 — O3 Permit 이 {wait:g} s 안에 서지 않음 · 필요: {_o3_missing_text()} "
+           "— 발생기를 보내지 않았고 바이패스 라인을 닫음")
     await push_notice(msg, "warn")
     await push_log(msg, "warn")
     delay = float((state.cfg.get("process") or {}).get("o3_off_delay_s") or 10)
@@ -1273,7 +1273,7 @@ async def _o3_on_timeout():
         _cancel_o3_timer()
         state.o3_off_at = time.monotonic() + left
         state.o3_off_task = asyncio.create_task(_o3_finish_later(left))
-        await push_log(f"O3 발생기가 꺼진 지 얼마 안 됐습니다 — {left:.0f} s 뒤 바이패스 라인을 닫습니다", "info")
+        await push_log(f"O3 Generator 꺼진 지 얼마 안 됨 — {left:.0f} s 뒤 바이패스 라인을 닫음", "info")
         return
     await o3_finish()
 
@@ -1304,22 +1304,22 @@ async def o3_finish():
     PLC 가 라인을 지웠으면 취소하고 로그만 남긴다."""
     link = state.link
     if not (link and link.connected):
-        await push_log("O3 바이패스 라인 닫기 취소 — PLC 연결이 끊겼습니다", "warn")
+        await push_log("O3 바이패스 라인 닫기 취소 — PLC 연결이 끊김", "warn")
         return
     if _running():
-        await push_log("O3 바이패스 라인 닫기 취소 — 공정이 시작됐습니다", "warn")
+        await push_log("O3 바이패스 라인 닫기 취소 — 공정이 시작됨", "warn")
         return
     if state.runner and state.runner.busy:
         # ★ 시작 흐름(올리기 · 베이스 압력 대기 · 시작 명령) 중 — 닫으면 O3 허가가 빠져 시작이 거절되거나
         #   시작 직후 b3 로 중단된다
-        await push_log("O3 바이패스 라인 닫기 취소 — 공정 시작 절차가 진행 중입니다", "warn")
+        await push_log("O3 바이패스 라인 닫기 취소 — 공정 시작 절차가 진행 중", "warn")
         return
 
     def mutate(cur):
         if not (cur["aux"] & O3_LINE_BITS):
-            return None, "PLC 가 이미 O3 라인을 지웠습니다"
+            return None, "PLC 가 이미 O3 Line 지움"
         if cur["aux"] & (1 << A.AUX_O3_GEN):
-            return None, "O3 발생기가 다시 켜져 있습니다"
+            return None, "O3 Generator 다시 켜져 있음"
         cur["aux"] &= ~O3_LINE_BITS
         return cur, ""
 
@@ -1376,7 +1376,7 @@ async def _cmd_admin_change(d, ws):
 
 async def _need_admin(d, ws) -> bool:
     if not _local(ws) or not admin.is_admin(ws, d.get("token")):
-        await push_notice("관리자 잠금 상태입니다 — PIN 으로 잠금을 해제하세요", "warn", ws)
+        await push_notice("관리자 잠금 상태 — PIN 으로 잠금 해제 필요", "warn", ws)
         if ws is not None:
             await manager.send_to(ws, admin.status(ws))
         return False
@@ -1390,9 +1390,9 @@ def _save_blocked() -> str:
     if blk:
         return blk
     if _running():
-        return "시퀀서 동작 중(공정 준비·실행·일시정지·사이클 후 정지 예약)에는 설정을 저장할 수 없습니다"
+        return "시퀀서 동작 중(공정 준비·실행·일시정지·사이클 후 정지 예약)에는 설정을 저장할 수 없음"
     if state.runner and state.runner.busy:
-        return "공정 시작 절차가 진행 중입니다 — 끝난 뒤에 저장하세요"
+        return "공정 시작 절차가 진행 중 — 끝난 뒤에 저장 필요"
     return ""
 
 
@@ -1416,18 +1416,18 @@ async def _cmd_config_save(d, ws):
         return
     res = settings.prepare(state.cfg, _dict(d.get("edits")))
     if not res["ok"]:
-        await push_notice(f"설정 검증 오류 {len(res['errors'])}건 — 저장하지 않았습니다", "warn", ws)
+        await push_notice(f"설정 검증 오류 {len(res['errors'])}건 — 저장하지 않음", "warn", ws)
         await manager.send_to(ws, {**settings.public(res), "type": "config_preview",
                                    "blocked": ""})
         return
     if not res["diff"]:
-        await push_notice("바뀐 항목이 없습니다", "info", ws)
+        await push_notice("바뀐 항목이 없음", "info", ws)
         return
     try:
         bk = settings.write(res)
     except Exception as e:  # noqa: BLE001
         logger.write("err", f"설정 저장 실패: {type(e).__name__}: {e}")
-        await push_notice(f"설정을 저장하지 못했습니다 — {type(e).__name__}", "err", ws)
+        await push_notice(f"설정을 저장하지 못함 — {type(e).__name__}", "err", ws)
         return
     from . import config as config_mod
     cfg, problems, source = config_mod.load(res["new_cfg"]["_path"])
@@ -1435,7 +1435,7 @@ async def _cmd_config_save(d, ws):
     await push_log(f"설정 저장 — {len(res['diff'])}개 항목"
                    + (f" (백업 {bk})" if bk else " (config.json 새로 만듦)"), "ok")
     if res["restart"]:
-        await push_log("PLC 연결 설정이 바뀌었습니다 — 프로그램을 다시 시작해야 반영됩니다", "warn")
+        await push_log("PLC 연결 설정이 바뀜 — 프로그램을 다시 시작해야 반영됨", "warn")
     link = state.link
     if link and link.connected:
         try:
@@ -1444,12 +1444,12 @@ async def _cmd_config_save(d, ws):
             mism = [f"PRM 다시 쓰기 실패: {e}"]
         if mism:
             await push_log("PRM 되읽기 불일치 — " + " · ".join(mism[:3]), "err")
-            await push_notice("PLC 파라미터 되읽기 불일치 — 설정 탭 PRM 표를 확인하세요", "err", ws)
+            await push_notice("PLC 파라미터 되읽기 불일치 — 설정 탭 PRM 표 확인 필요", "err", ws)
         else:
-            await push_log("PLC 파라미터를 다시 쓰고 되읽어 확인했습니다", "ok")
+            await push_log("PLC 파라미터를 다시 쓰고 되읽어 확인함", "ok")
     else:
-        await push_log("PLC 가 연결되어 있지 않아 파라미터는 다음 연결 때 씁니다", "warn")
-    await push_notice("설정을 저장했습니다", "ok", ws)
+        await push_log("PLC 가 연결되어 있지 않아 파라미터는 다음 연결 때 씀", "warn")
+    await push_notice("설정을 저장함", "ok", ws)
     await manager.send_to(ws, {"type": "config_saved", "backup": bk,
                                "restart": res["restart"]})
     await push_state()
@@ -1460,10 +1460,10 @@ async def _cmd_trend_export(d, ws):
     from .trendlog import trendlog
     t0, t1 = _finite(d.get("t0")), _finite(d.get("t1"))
     if t0 is None or t1 is None:
-        await push_notice("내보낼 구간이 올바르지 않습니다", "warn", ws)
+        await push_notice("내보낼 구간이 올바르지 않음", "warn", ws)
         return
     if t1 <= t0:
-        await push_notice("끝 시각이 시작 시각보다 앞입니다", "warn", ws)
+        await push_notice("끝 시각이 시작 시각보다 앞", "warn", ws)
         return
     try:
         # ★ 작업 스레드에서 쓴다 — 7일치는 십수 초가 걸린다(루프에서 돌면 하트비트가 멈춘다)
@@ -1471,12 +1471,12 @@ async def _cmd_trend_export(d, ws):
         name, err = await trendlog.export_async(t0, t1, keep)
     except Exception as e:  # noqa: BLE001
         logger.write("err", f"트렌드 내보내기 실패: {e}")
-        await push_notice(f"내보내지 못했습니다 — {type(e).__name__}", "err", ws)
+        await push_notice(f"내보내지 못함 — {type(e).__name__}", "err", ws)
         return
     if err:
-        await push_notice(f"내보내지 않았습니다 — {err}", "warn", ws)
+        await push_notice(f"내보내지 않음 — {err}", "warn", ws)
         return
-    await push_notice(f"저장했습니다: data/export/{name}", "ok", ws)
+    await push_notice(f"저장함: data/export/{name}", "ok", ws)
     await manager.send_to(ws, {"type": "trend_exported", "name": name})
 
 
@@ -1491,24 +1491,24 @@ async def _cmd_open_folder(d, ws):
     which = d.get("which")
     sub = OPEN_DIRS.get(which) if isinstance(which, str) else None
     if not sub:
-        await push_notice("열 수 없는 폴더입니다", "warn", ws)
+        await push_notice("열 수 없는 폴더", "warn", ws)
         return
     path = os.path.join(paths.DATA_DIR, sub)
     os.makedirs(path, exist_ok=True)
     if sys.platform == "win32":
         os.startfile(path)      # noqa: S606 — 고정된 데이터 폴더만 연다
-    await push_notice(f"폴더를 열었습니다: data/{sub}", "info", ws)
+    await push_notice(f"폴더를 엶: data/{sub}", "info", ws)
 
 
 # ===================== 시뮬레이터 조작판 =====================
 async def _cmd_sim_fault(d, ws):
     if not state.sim:
-        await push_notice("시뮬레이터가 아닙니다", "warn", ws)
+        await push_notice("시뮬레이터가 아님", "warn", ws)
         return
     key = d.get("key")
     on = bool(d.get("on"))
     if not isinstance(key, str) or key not in state.sim.faults:
-        await push_notice(f"알 수 없는 시험 입력입니다: {logger.clean(key, 40)}", "warn", ws)
+        await push_notice(f"알 수 없는 시험 입력: {logger.clean(key, 40)}", "warn", ws)
         return
     state.sim.set_fault(key, on)
     await push_log(f"[시뮬레이터] 시험 입력 {key} {'켬' if on else '끔'}", "info")
@@ -1522,9 +1522,9 @@ async def _cmd_alarm_popup_close(d, ws):
 # ===================== 종료 =====================
 async def _cmd_exit(d, ws):
     if _running():
-        await push_notice("공정 중에는 프로그램을 종료할 수 없습니다", "warn", ws)
+        await push_notice("공정 중에는 프로그램을 종료할 수 없음", "warn", ws)
         return
-    await push_log("운전자 요청으로 프로그램을 종료합니다", "warn")
+    await push_log("운전자 요청으로 프로그램을 종료함", "warn")
     if _shutdown_handler:
         _shutdown_handler()
 

@@ -36,7 +36,7 @@
   }
 
   function onDisconnect() {
-    if (connected) core.toast('서버 연결이 끊겼습니다 — 다시 연결합니다', 'warn');
+    if (connected) core.toast('서버 연결이 끊김 — 다시 연결함', 'warn');
     connected = false;
     // ★ 마지막 값을 남기지 않는다 — '—' · '서버 끊김' · 조작 잠금(다시 붙으면 state 가 되돌린다)
     core.setOffline(true);
@@ -78,7 +78,7 @@
   /** 보내고 rid 를 돌려준다(못 보내면 0 — 'if (!w.app.send(…))' 는 그대로 동작한다) */
   function send(cmd, payload) {
     if (!ws || !connected) {
-      core.toast('서버에 연결되어 있지 않습니다', 'warn');
+      core.toast('서버에 연결되어 있지 않음', 'warn');
       return 0;
     }
     var obj = { cmd: cmd };

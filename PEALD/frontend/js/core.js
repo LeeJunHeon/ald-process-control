@@ -61,10 +61,143 @@
     el.innerHTML = markup;
   }
 
-  function chip(text, level, title) {
-    return '<span class="chip ' + (level || '') + '"' +
-      (title ? ' title="' + esc(title) + '"' : '') + '>' + esc(text) + '</span>';
+  function chip(text, level, tip) {
+    return '<span class="chip ' + (level || '') + '"' + tipAttr(tip) + '>' + esc(text) + '</span>';
   }
+
+  /* ===================== 설명창 (v0.8.6) ===================== */
+  // ★ 브라우저 title 말풍선 대신 직접 그리는 설명창 하나 — 0.4 s 머무르면(키보드 포커스도) 뜨고, 마우스를 떼거나 스크롤 ·
+  //   누르기 · Esc 면 닫힌다. 막힌(disabled) 단추에서도 뜬다(Chromium 은 막힌 단추에도 마우스 이벤트를 준다).
+  //   글: 첫 줄 한국어 이름(굵게) · 둘째 줄 설명 · 그다음 지금 상태(data-tip — 막힌 이유 · 빠진 조건 · 원인/조치).
+  //   출처: data-tk 또는 data-t(terms.js TIP — 같은 키) · data-tipn/data-tipd(서버 구조 device.py 의 ko · desc) · data-tip.
+  //   그래프(canvas · 그래프 칸 본문) 위에서는 띄우지 않는다 — 데이터 선을 가리지 않게(그래프의 값 읽기 표시는 그대로).
+  var TIP_DELAY_MS = 400;
+  var TIP_SEL = '[data-tip],[data-tk],[data-t],[data-tipn]';
+  var tipEl = null, tipTimer = 0, tipFor = null, tipXY = null, tipByFocus = false, tipTick = 0;
+
+  /** 템플릿용 ' data-tip="…"'(없으면 '') */
+  function tipAttr(text) {
+    return text ? ' data-tip="' + esc(text) + '"' : '';
+  }
+  /** 템플릿용 한국어 이름 · 설명 ' data-tipn="…" data-tipd="…"'(device.py ko · desc) */
+  function tipKo(name, desc) {
+    return (name ? ' data-tipn="' + esc(name) + '"' : '') + (desc ? ' data-tipd="' + esc(desc) + '"' : '');
+  }
+  /** 요소의 지금 상태 줄(data-tip)을 바꾼다(같으면 그대로) — 예전 title 자리 */
+  function tip(el, text) {
+    if (!el) return;
+    var v = text ? String(text) : '';
+    if ((el.getAttribute('data-tip') || '') === v) return;
+    if (v) el.setAttribute('data-tip', v); else el.removeAttribute('data-tip');
+    if (tipFor === el && tipEl && !tipEl.hidden) tipPaint();
+  }
+  // T() 로 그린 영어 라벨(단추 · 표 머리 · 상태 글자) — 글자가 사전 값과 똑같으면 같은 키의 설명창(data-t 를 따로 달지 않아도)
+  var labelKey = null;
+  function keyOfLabel(e) {
+    if (!labelKey) {
+      labelKey = {};
+      var D = (w.T && w.T.dict) || {};
+      Object.keys(D).forEach(function (k) { if (!(D[k] in labelKey)) labelKey[D[k]] = k; });
+    }
+    var s = (e.textContent || '').replace(/\s+/g, ' ').trim();
+    return s && s.length <= 40 && Object.prototype.hasOwnProperty.call(labelKey, s) ? labelKey[s] : '';
+  }
+  function tipTarget(node) {
+    var e = node && node.nodeType === 1 ? node : (node && node.parentElement);
+    if (!e || !e.closest) return null;
+    if (e.closest('canvas,[data-notip],.chartpanel .panel-body,.dl-chart,#tipbox')) return null;
+    var hit = e.closest(TIP_SEL);
+    // 가까운 라벨(세 단계 안 — 그보다 먼 칸 설명창보다 먼저)
+    for (var x = e, i = 0; x && i < 3; x = x.parentElement, i++) {
+      if (x === hit && (hit.hasAttribute('data-t') || hit.hasAttribute('data-tk') || hit.hasAttribute('data-tipn'))) break;
+      if (x.nodeType === 1 && x.children.length <= 1 && keyOfLabel(x)) {
+        x.setAttribute('data-tk', keyOfLabel(x));
+        return x;
+      }
+      if (x === hit) break;
+    }
+    return hit;
+  }
+  function tipLines(e) {
+    var out = [];
+    var k = e.getAttribute('data-tk') || e.getAttribute('data-t');
+    var t = k && w.T && w.T.tip ? w.T.tip(k) : null;
+    var n = e.getAttribute('data-tipn'), dd = e.getAttribute('data-tipd');
+    if (n) out.push(['b', n]); else if (t && t[0]) out.push(['b', t[0]]);
+    if (dd) out.push(['d', dd]); else if (!n && t && t[1]) out.push(['d', t[1]]);
+    String(e.getAttribute('data-tip') || '').split('\n').forEach(function (s) { if (s) out.push(['x', s]); });
+    return out;
+  }
+  function tipPaint() {
+    var e = tipFor;
+    if (!e || !e.isConnected) { tipHide(); return; }
+    var lines = tipLines(e);
+    if (!lines.length) { tipHide(); return; }
+    if (!tipEl) {
+      tipEl = h('div', { id: 'tipbox', role: 'tooltip' });
+      tipEl.hidden = true;
+      d.body.appendChild(tipEl);
+    }
+    var markup = lines.map(function (l) { return '<div class="tip-' + l[0] + '">' + esc(l[1]) + '</div>'; }).join('');
+    if (tipEl._html !== markup) { tipEl._html = markup; tipEl.innerHTML = markup; }
+    // 글자 크기는 본문과 같게 — 화면 배율(zoom)을 곱한다(설명창은 배율 밖 body 에 있다)
+    var fs = parseFloat(w.getComputedStyle(d.body).fontSize) || 13;
+    tipEl.style.fontSize = (fs * ((curBox && curBox.s) || 1)).toFixed(1) + 'px';
+    tipEl.hidden = false;
+    var r = tipEl.getBoundingClientRect(), vw = w.innerWidth, vh = w.innerHeight, m = 4, ax, ay;
+    if (tipByFocus || !tipXY) {
+      var er = e.getBoundingClientRect();
+      ax = er.left; ay = er.bottom + 6;
+      if (ay + r.height > vh - m) ay = er.top - r.height - 6;
+    } else {
+      ax = tipXY[0] + 14; ay = tipXY[1] + 18;
+      if (ax + r.width > vw - m) ax = tipXY[0] - r.width - 10;
+      if (ay + r.height > vh - m) ay = tipXY[1] - r.height - 10;
+    }
+    ax = Math.max(m, Math.min(ax, vw - r.width - m));
+    ay = Math.max(m, Math.min(ay, vh - r.height - m));
+    tipEl.style.left = Math.round(ax) + 'px';
+    tipEl.style.top = Math.round(ay) + 'px';
+  }
+  function tipHide() {
+    clearTimeout(tipTimer);
+    clearInterval(tipTick);
+    tipTimer = tipTick = 0;
+    tipFor = null;
+    if (tipEl) tipEl.hidden = true;
+  }
+  function tipArm(e, byFocus) {
+    clearTimeout(tipTimer);
+    clearInterval(tipTick);
+    if (tipEl) tipEl.hidden = true;
+    tipFor = e;
+    tipByFocus = !!byFocus;
+    if (!e) return;
+    tipTimer = setTimeout(function () {
+      tipPaint();
+      // 떠 있는 동안 상태 줄(data-tip)이 바뀌면 다시 그린다 · 요소가 다시 그려져 사라지면 닫는다
+      tipTick = setInterval(tipPaint, 300);
+    }, TIP_DELAY_MS);
+  }
+  d.addEventListener('mouseover', function (ev) {
+    tipXY = [ev.clientX, ev.clientY];
+    var t = tipTarget(ev.target);
+    if (t !== tipFor) tipArm(t, false);
+  }, true);
+  d.addEventListener('mousemove', function (ev) {
+    if (!tipEl || tipEl.hidden) tipXY = [ev.clientX, ev.clientY];
+  }, true);
+  d.addEventListener('mouseout', function (ev) {
+    if (tipFor && !tipByFocus && !(ev.relatedTarget && tipFor.contains(ev.relatedTarget))) tipHide();
+  }, true);
+  d.addEventListener('focusin', function (ev) {
+    var e = ev.target;
+    var t = tipTarget(e);
+    if (t && e.matches && e.matches(':focus-visible')) tipArm(t, true);
+  }, true);
+  d.addEventListener('focusout', function () { if (tipByFocus) tipHide(); }, true);
+  ['mousedown', 'wheel', 'scroll'].forEach(function (k) { d.addEventListener(k, tipHide, { capture: true, passive: true }); });
+  d.addEventListener('keydown', function (ev) { if (ev.key === 'Escape') tipHide(); }, true);
 
   /** 비트 검사 — 화면은 비트 번호를 서버에서 받은 구조 정의로만 다룬다. */
   function bit(word, n) { return !!((Number(word) >> n) & 1); }
@@ -204,10 +337,10 @@
       var plc0 = t.plc || {};
       band.hidden = !idBlocked(plc0);
       if (plc0.id_state === 'wrong') {
-        band.textContent = '다른 장비의 PLC 입니다 — 주소를 확인하세요 · 모든 조작을 막았습니다 (읽은 ID ' +
+        band.textContent = '다른 장비의 PLC — 주소 확인 필요 · 모든 조작을 막음 (읽은 ID ' +
           idText(plc0.device_id) + ' / 이 장비 ' + idText(plc0.expected_id) + ')';
       } else if (plc0.id_state === 'missing') {
-        band.textContent = 'PLC 장비 ID 가 없습니다(0) — 이 장비 PLC 인지 확인할 수 없어 모든 조작을 막았습니다';
+        band.textContent = 'PLC 장비 ID 가 없음(0) — 이 장비 PLC 인지 확인할 수 없어 모든 조작을 막음';
       }
     }
     if (t.plc && t.plc.config_error) setText('plcAddr', T('s.noAddress'));
@@ -243,13 +376,13 @@
     var plc = t.plc || {};
     var dot = bind('sbDot');
     if (dot) dot.classList.toggle('off', !plc.connected);
-    if (t.offline) { setText('sbText', '서버 연결 끊김 — 다시 연결하는 중 · 값은 표시하지 않습니다'); return; }
+    if (t.offline) { setText('sbText', '서버 연결 끊김 — 다시 연결하는 중 · 값은 표시하지 않음'); return; }
     if (plc.stalled) {
-      setText('sbText', 'PLC ' + (plc.addr || fmt.DASH) + ' 연결됨 · 하트비트 멈춤 — PLC 가 STOP 이거나 멈췄습니다 · ' +
-        '값은 표시하지 않고 명령을 보내지 않습니다');
+      setText('sbText', 'PLC ' + (plc.addr || fmt.DASH) + ' 연결됨 · 하트비트 멈춤 — PLC 가 STOP 이거나 멈춤 · ' +
+        '값은 표시하지 않고 명령을 보내지 않음');
       return;
     }
-    setText('sbText', plc.config_error ? T('s.noAddress') + ' — 연결하지 않았습니다' : [
+    setText('sbText', plc.config_error ? T('s.noAddress') + ' — 연결하지 않음' : [
       'PLC ' + (plc.addr || fmt.DASH) + (plc.connected ? ' Connected' : ' Not Connected'),
       plc.connected ? (plc.hb_ok ? 'Heartbeat OK' : 'Heartbeat Stalled') : '',
       plc.connected && plc.rtt_ms != null ? 'RTT ' + plc.rtt_ms + ' ms' : '',
@@ -257,7 +390,7 @@
     ].filter(Boolean).join(' · '));
     var sb = bind('sbText');
     var tip = t.scan_max_ms === 0 ? '최대 스캔: PLC 가 아직 쓰지 않음(D00080 = 0)' : '';
-    if (sb && sb.title !== tip) sb.title = tip;
+    core.tip(sb, tip);
   }
 
   /** D00080(스캔 최대)은 래더가 아직 쓰지 않아 실장비에서 늘 0 — 0 이면 '—'. */
@@ -316,7 +449,7 @@
     if (!m.hidden) {
       // ★ 떠 있는 동안 온 요청은 새로 띄우지 않는다 — 두 번째 클릭이 확인 콜백을 바꾸면
       //   운전자가 본 문구와 실제로 실행되는 동작이 달라진다.
-      if (key !== confirmKey) toast('열려 있는 확인 창을 먼저 닫으세요', 'warn');
+      if (key !== confirmKey) toast('열려 있는 확인 창 먼저 닫기 필요', 'warn');
       return;
     }
     setText('cfTitle', title);
@@ -494,8 +627,8 @@
     }).join('');
     // 서버 · PLC 가 끊겼거나 PLC 가 멈췄으면 알람을 모른다 — '없습니다' 가 아니라 '알 수 없음'
     var known = !t.offline && t.plc && t.plc.connected;
-    html(tbl, !known ? '<tr><td class="empty">' + downWhy(t) + ' 지금 알람을 알 수 없습니다</td></tr>'
-      : rows || '<tr><td class="empty">현재 알람이 없습니다</td></tr>');
+    html(tbl, !known ? '<tr><td class="empty">' + downWhy(t) + ' 지금 알람을 알 수 없음</td></tr>'
+      : rows || '<tr><td class="empty">현재 알람이 없음</td></tr>');
     // 원격은 '닫기' 만 — 확인 · 리셋은 조작이다
     var op = canOperate();
     Array.prototype.forEach.call(d.querySelectorAll('#alarmModal [data-am="ack"],#alarmModal [data-am="reset"]'),
@@ -545,8 +678,8 @@
       return '<div class="row2"><span>' + esc(f.name) + '</span>' +
         '<span class="sw' + (f.on ? ' on' : '') + (op ? '' : ' dis') + '" tabindex="' + (op ? 0 : -1) +
         '" role="switch" aria-checked="' + !!f.on + '" data-fault="' + esc(f.key) + '"' +
-        (op ? '' : ' title="이 PC 에서만 바꿀 수 있습니다"') + '></span></div>';
-    }).join('') || '<div class="empty">시뮬레이터가 아닙니다</div>';
+        (op ? '' : ' data-tip="이 PC 에서만 바꿀 수 있음"') + '></span></div>';
+    }).join('') || '<div class="empty">시뮬레이터가 아님</div>';
   }
 
   /* ===================== 종료 ===================== */
@@ -557,10 +690,10 @@
 
   function askExit() {
     var dirty = w.viewRecipe && w.viewRecipe.dirty && w.viewRecipe.dirty();
-    confirmAsk('프로그램을 종료할까요?',
-      'PC 가 꺼지면 PLC 가 <b>PC 통신 끊김</b> 알람을 내고 안전 정지합니다.<br>' +
-      '장비를 계속 돌려 둘 계획이면 종료하지 마세요.' +
-      (dirty ? '<br><br><b>레시피 편집기에 저장하지 않은 편집이 있습니다</b> — 종료하면 사라집니다.' : ''),
+    confirmAsk('프로그램 종료?',
+      'PC 가 꺼지면 PLC 가 <b>PC 통신 끊김</b> 알람을 내고 안전 정지함.<br>' +
+      '장비를 계속 돌려 둘 계획이면 종료 금지.' +
+      (dirty ? '<br><br><b>레시피 편집기에 저장하지 않은 편집이 있음</b> — 종료하면 사라짐.' : ''),
       T('b.exit'), function () {
         if (!w.app.send('exit') && w.pywebview && w.pywebview.api) w.pywebview.api.force_close();
       });
@@ -660,6 +793,7 @@
 
   w.core = {
     bind: bind, esc: esc, h: h, html: html, setText: setText, chip: chip, bit: bit,
+    tip: tip, tipAttr: tipAttr, tipKo: tipKo, tipHide: tipHide,
     toast: toast, setTab: setTab, fit: fit, confirmAsk: confirmAsk, closeConfirm: closeConfirm,
     busy: busy, sendBusy: sendBusy, BUSY_TIP: BUSY_TIP,
     get layout() { return curLayout || 'narrow'; },

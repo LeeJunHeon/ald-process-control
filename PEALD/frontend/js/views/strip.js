@@ -17,20 +17,20 @@
     dev: 'PLC 장비 상태(D00002)와 시퀀서 상태 — 초록 = Ready · Running, 노랑 = Paused · Stopping, 빨강 = Safe Stop, 회색 = Init · Idle',
     proc: '선택한 레시피 · 진행 막대 · 사이클 · 남은 시간, 공정이 아니면 마지막 결과',
     pr: '챔버 압력(CVG 게이지) — 공정이 아니면 베이스 압력 목표와 도달 여부, CM 을 달았으면 CM 값',
-    exh: 'Pump = 드라이(메인) 펌프 운전 · IV-E = 배기 격리 밸브(챔버와 펌프 사이) · VV = 벤트 밸브(N2 로 챔버를 대기압까지 채움)',
+    exh: 'Pump = 드라이(메인) 펌프 운전 · IV-E = 배기 격리 밸브(챔버와 펌프 사이) · VV = Vent 밸브(N2 로 챔버를 대기압까지 채움)',
     alm: '현재 PLC 알람 — 누르면 Alarm/Log 탭. 빨간 테두리 = 확인 전(부저 울림 — Alarm Ack)'
   };
 
   function el(name) { return core.bind(name, d.getElementById('strip')); }
   function txt(name, v) { var e = el(name); if (e && e.textContent !== v) e.textContent = v; }
   function cls(name, v) { var e = el(name); if (e && e.className !== v) e.className = v; }
-  function tip(name, v) { var e = el(name); if (e && e.title !== (v || '')) e.title = v || ''; }
+  function tip(name, v) { core.tip(el(name), v || ''); }        // v0.8.6: 설명창 상태 줄
 
   function build() {
     var box = d.getElementById('strip');
     if (!box || built) return;
     built = true;
-    var name = function (k) { return '<div class="sn" title="' + core.esc(TIPS[k]) + '">' + T('strip.' + k) + '</div>'; };
+    var name = function (k) { return '<div class="sn" data-tip="' + core.esc(TIPS[k]) + '">' + T('strip.' + k) + '</div>'; };
     box.innerHTML =
       '<div class="cell c-dev">' + name('dev') +
       '<div class="sv"><i class="dot" data-bind="stDevDot"></i><span class="kpi" data-bind="stDev">—</span></div>' +
@@ -85,13 +85,13 @@
       core.html(ps, (m.proc.last ? '<span class="chip">Last</span> ' : '') + core.esc(m.proc.sub));
       var pc = 'ss ' + (m.proc.subLvl === 'stop' ? 'alarm' : m.proc.subLvl || '');
       if (ps.className !== pc) ps.className = pc;
-      if (ps.title !== m.proc.sub) ps.title = m.proc.sub;
+      core.tip(ps, m.proc.sub);
     }
 
     txt('stPr', m.pr.text);
     cls('stPr', 'kpi mono' + (m.pr.lvl === 'unknown' ? ' dim' : ''));
     var un = el('stPrUn');
-    if (un) { un.hidden = !m.pr.unconf; un.title = m.pr.title; }
+    if (un) { un.hidden = !m.pr.unconf; core.tip(un, m.pr.title); }
     txt('stPrSub', m.pr.sub);
     cls('stPrSub', 'ss ' + (m.pr.subLvl || ''));
     tip('stPrSub', m.pr.sub);

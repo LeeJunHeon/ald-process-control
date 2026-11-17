@@ -95,7 +95,7 @@
     function row(path, unit) {
       var f = F[path];
       if (!f) return '';
-      return '<tr><td class="l">' + core.esc(f.label) + (f.restart ? ' <span class="chip" title="바꾸면 프로그램을 다시 시작해야 반영됩니다">Restart</span>' : '') +
+      return '<tr><td class="l">' + core.esc(f.label) + (f.restart ? ' <span class="chip" data-tip="바꾸면 프로그램을 다시 시작해야 반영됨">Restart</span>' : '') +
         '</td><td>' + inp(path) + (unit ? '<span class="unit">' + unit + '</span>' : '') + '</td></tr>';
     }
 
@@ -106,9 +106,9 @@
       '<button class="btn sm primary" data-adm="unlock" data-bind="admUnlock">' + T('b.unlock') + '</button>' +
       '<button class="btn sm" data-adm="lock" data-bind="admLock">' + T('b.lock') + '</button>' +
       '<button class="btn sm" data-adm="change" data-bind="admChange">' + T('b.changePin') + '</button></span></div>' +
-      '<div class="hint" style="margin-top:6px">설정 편집에만 PIN 이 필요합니다(레시피·수동 조작은 그대로). ' +
-      '10 분 동안 조작이 없거나 공정이 시작되면 다시 잠깁니다. PIN 을 잊었으면 프로그램을 끄고 ' +
-      'data/admin_pin.json 을 지운 뒤 다시 켜서 새로 정합니다.</div>';
+      '<div class="hint" style="margin-top:6px">설정 편집에만 PIN 이 필요(레시피·수동 조작은 그대로). ' +
+      '10 분 동안 조작이 없거나 공정이 시작되면 다시 잠김. PIN 을 잊었으면 프로그램을 끄고 ' +
+      'data/admin_pin.json 을 지운 뒤 다시 켜서 새로 정함.</div>';
 
     var plc = c.plc || {};
     L.innerHTML =
@@ -117,17 +117,17 @@
         '<div style="font-weight:700;font-size:var(--fs-xl)">' + core.esc(c.path_name || fmt.DASH) + '</div>' +
         '<div class="hint" style="margin-top:4px">' +
         (c.source === 'example'
-          ? '⚠ 예시 설정으로 실행 중입니다. 처음 저장할 때 exe 옆에 config.json 을 만듭니다.'
-          : '저장할 때마다 이전 파일을 data/config_backup 에 백업합니다(최근 20개).') + '</div>' +
+          ? '⚠ 예시 설정으로 실행 중. 처음 저장할 때 exe 옆에 config.json 을 만듦.'
+          : '저장할 때마다 이전 파일을 data/config_backup 에 백업함(최근 20개).') + '</div>' +
         '<div style="margin-top:6px"><button class="btn sm" data-cfgact="backup"' +
-        (core.canOperate() ? '' : ' disabled title="이 PC 에서만 됩니다"') + '>' + T('b.backupFolder') + '</button></div>') +
-      panel('PLC Connection', '<span class="chip" title="바꾸면 프로그램을 다시 시작해야 반영됩니다">Restart Required</span>',
+        (core.canOperate() ? '' : ' disabled data-tip="이 PC 에서만 됨"') + '>' + T('b.backupFolder') + '</button></div>') +
+      panel('PLC Connection', '<span class="chip" data-tip="바꾸면 프로그램을 다시 시작해야 반영됨">Restart Required</span>',
         tbl(row('plc.simulate') + row('plc.host') + row('plc.port') + row('plc.unit_id') +
             row('plc.timeout_ms', 'ms') + row('plc.poll_ms', 'ms') + row('plc.heartbeat_ms', 'ms') +
             '<tr><td class="l">Device ID (D00019)</td><td class="mono" data-bind="idCell">—</td></tr>' +
             '<tr><td class="l">Remote View Only (access.local_only)</td><td class="mono">' +
             ((c.access || {}).local_only === false ? 'false' : 'true') + ' <span class="dim">읽기 전용</span></td></tr>') +
-        (plc.simulate ? '<div class="hint warn" style="margin-top:6px">시뮬레이터 모드 — 실장비로 바꾸면 저장 전에 한 번 더 확인합니다.</div>' : '')) +
+        (plc.simulate ? '<div class="hint warn" style="margin-top:6px">시뮬레이터 모드 — 실장비로 바꾸면 저장 전에 한 번 더 확인함.</div>' : '')) +
       panel('Analog / Conversion', unconf.length ? '<span class="chip warn">' + T('s.unconfirmed') + ' ' + unconf.length + '</span>' : core.chip('All Confirmed', 'ok'),
         tbl(row('analog.raw_max') + row('analog.confirmed') +
             '<tr><td class="l sub" colspan="2">CVG</td></tr>' +
@@ -160,7 +160,7 @@
         '<div class="kv"><span class="k">PLC Heartbeat</span><span class="v" data-bind="dgHb">—</span></div>' +
         '<div class="kv"><span class="k">PC Heartbeat Gap (max)</span><span class="v" data-bind="dgHbGap">—</span></div>' +
         '<div class="kv"><span class="k">Event Loop Lag (10 min max)</span><span class="v" data-bind="dgLag">—</span></div>' +
-        '<div class="hint">500 ms 를 넘으면 PC 하트비트가 늦습니다 — 로그에 그때 하던 일이 남습니다.</div>' +
+        '<div class="hint">500 ms 를 넘으면 PC 하트비트가 늦음 — 로그에 그때 하던 일이 남음.</div>' +
         '<div class="kv"><span class="k">Web Server</span><span class="v">' +
         core.esc((c.server || {}).host + ':' + (c.server || {}).port) + '</span></div>');
 
@@ -183,19 +183,19 @@
     R.innerHTML =
       panel('PLC Parameters', '<span data-bind="prmChip"></span>',
         tbl(prmRows) +
-        '<div class="hint" style="margin-top:6px">저장하면 원시값으로 바꿔 PLC 에 다시 쓰고 되읽어 확인합니다. ' +
-        '0 이면 PLC 가 해당 기능을 막거나 감시하지 않습니다.</div>' +
+        '<div class="hint" style="margin-top:6px">저장하면 원시값으로 바꿔 PLC 에 다시 쓰고 되읽어 확인함. ' +
+        '0 이면 PLC 가 해당 기능을 막거나 감시하지 않음.</div>' +
         '<div class="tblx" style="margin-top:8px"><table class="tbl prmtbl"><thead><tr><th class="l">PRM / Address</th><th>' + T('v.setpoint') + '</th><th>' + T('v.written') + '</th>' +
         '<th>' + T('v.readback') + '</th><th>' + T('v.match') + '</th></tr></thead><tbody data-bind="prmBody">' +
-        '<tr><td class="l dim" colspan="5">PLC 에 연결되면 표시합니다</td></tr></tbody></table></div>') +
-      panel('MFC', '<span class="dim" title="개수는 장비 고정">Fixed by Device</span>',
+        '<tr><td class="l dim" colspan="5">PLC 에 연결되면 표시함</td></tr></tbody></table></div>') +
+      panel('MFC', '<span class="dim" data-tip="개수는 장비 고정">Fixed by Device</span>',
         '<div class="tblx"><table class="tbl form"><thead><tr><th class="l">' + T('v.number') + '</th><th>' + T('v.name') + '</th><th>' + T('v.gas') +
           '</th><th>' + T('v.fullScale') + ' sccm</th><th>' + T('v.confirmed') + '</th></tr></thead>' +
         '<tbody>' + mfcRows + '</tbody></table></div>') +
       panel('Heater', '',
         '<div class="tblx"><table class="tbl form"><thead><tr><th class="l">' + T('v.channel') + '</th><th>' + T('v.name') + '</th><th>' + T('v.enabled') +
         '</th><th>' + T('v.limit') + '</th><th>' + T('v.defaultSv') + '</th><th>' + T('v.station') + '</th></tr></thead><tbody>' + htRows + '</tbody></table></div>' +
-        '<div class="hint" style="margin-top:6px">과온 한계가 비어 있으면 PLC 소프트 과온 감시가 꺼지므로 그 채널의 설정·전원 켜기를 PC 가 막습니다.</div>') +
+        '<div class="hint" style="margin-top:6px">과온 한계가 비어 있으면 PLC 소프트 과온 감시가 꺼지므로 그 채널의 설정·전원 켜기를 PC 가 막음.</div>') +
       '<div class="cfgbar"><span data-bind="cfgCount"></span><span class="right">' +
       '<button class="btn sm" data-cfgact="revert" data-bind="cfgRevert">' + T('b.revert') + '</button>' +
       '<button class="btn sm primary" data-cfgact="review" data-bind="cfgReview">' + T('b.review') + '</button></span></div>';
@@ -210,10 +210,10 @@
     return panel('Maintenance', '<span data-bind="lcChip"></span>',
       '<div class="sub-h">Leak Check (압력 상승률)</div>' +
       '<div class="adm-row"><span class="dim" data-bind="lcProg">—</span><span class="right">' +
-      '<button class="btn sm primary" data-lc="start"' + (op ? '' : ' disabled title="' + core.esc(core.lockReason()) + '"') + '>Leak Check</button>' +
+      '<button class="btn sm primary" data-lc="start"' + (op ? '' : ' disabled data-tip="' + core.esc(core.lockReason()) + '"') + '>Leak Check</button>' +
       '<button class="btn sm" data-lc="cancel"' + (op ? '' : ' disabled') + '>' + T('b.cancel') + '</button></span></div>' +
-      '<div class="hint">명령 11 로 IV-E 를 닫고(펌프는 그대로) 안정 뒤 압력 상승률을 잽니다. 끝나면 명령 8 로 IV-E 를 다시 엽니다. ' +
-      '점검 중 프로그램을 끄면 IV-E 는 닫힌 채 남습니다 — [Pumping Start] 로 여세요.</div>' +
+      '<div class="hint">명령 11 로 IV-E 를 닫고(펌프는 그대로) 안정 뒤 압력 상승률을 잼. 끝나면 명령 8 로 IV-E 를 다시 엶. ' +
+      '점검 중 프로그램을 끄면 IV-E 는 닫힌 채 남음 — [Pumping Start] 로 열기 필요.</div>' +
       tbl(row('leakcheck.settle_s', 's') + row('leakcheck.measure_s', 's') + row('leakcheck.limit_mtorr_min', 'mTorr/min') +
           row('leakcheck.max_torr', 'Torr')) +
       '<div class="tblx"><table class="tbl lctbl"><thead><tr><th class="l">Time</th><th>Gauge</th><th>mTorr/min</th>' +
@@ -221,9 +221,9 @@
       '<div class="sub-h" style="margin-top:8px">Counters</div>' +
       '<div class="tblx"><table class="tbl mttbl"><thead><tr><th class="l">Item</th><th>Value</th><th>Limit</th>' +
       '<th>Reset At</th><th></th></tr></thead><tbody data-bind="mtBody"></tbody></table></div>' +
-      '<div class="hint">밸브 열림은 공정 끝 판정 때(정상 종료면 레시피 전체, 아니면 멈춘 위치까지)와 수동 열기에서 셉니다. ' +
-      '켜진 시간은 PLC 링크가 붙어 있는 동안(멈춤 제외)만 셉니다 — 프로그램이 꺼져 있던 동안은 모릅니다. ' +
-      '[Reset] 은 관리자 잠금 해제가 필요합니다.</div>' +
+      '<div class="hint">밸브 열림은 공정 끝 판정 때(정상 종료면 레시피 전체, 아니면 멈춘 위치까지)와 수동 열기에서 셈. ' +
+      '켜진 시간은 PLC 링크가 붙어 있는 동안(멈춤 제외)만 셈 — 프로그램이 꺼져 있던 동안은 모름. ' +
+      '[Reset] 은 관리자 잠금 해제가 필요.</div>' +
       tbl(row('maintenance.valve_opens_warn') + row('maintenance.pump_hours_warn', 'h') +
           row('maintenance.rf_hours_warn', 'h') + row('maintenance.o3_hours_warn', 'h')));
   }
@@ -246,7 +246,7 @@
       //   core.lockReason()(서버 끊김 · 원격 · 다른 장비 · 멈춤 — 모두 '이 PC 에서만' 이 아니다)
       var why = core.lockReason() || (lc.running ? '누설률 점검 중' : (lc.blocked || ''));
       st.disabled = !!why;
-      if (st.title !== why) st.title = why;
+      core.tip(st, why);
     }
     if (cn) cn.disabled = !core.canOperate() || !lc.running;
     var lb = core.bind('lcBody');
@@ -254,7 +254,7 @@
     if (lb) {
       core.html(lb, rec.length ? rec.map(function (r) {
         var res = r.Result || '';
-        return '<tr' + (r.Reason ? ' title="' + core.esc(r.Reason) + '"' : '') + '><td class="l mono">' + core.esc(r.Time || '') +
+        return '<tr' + (r.Reason ? ' data-tip="' + core.esc(r.Reason) + '"' : '') + '><td class="l mono">' + core.esc(r.Time || '') +
           '</td><td>' + core.esc(r.Gauge || '') + '</td><td class="mono">' + core.esc(r['mTorr/min'] || fmt.DASH) +
           '</td><td>' + core.chip(res, res === 'PASS' ? 'ok' : res === 'FAIL' ? 'stop' : 'warn') + '</td></tr>';
       }).join('') : '<tr><td class="l dim" colspan="4">기록 없음</td></tr>');
@@ -267,7 +267,7 @@
           '<td class="mono">' + core.esc(r.value) + (r.unit ? ' ' + core.esc(r.unit) : '') + '</td>' +
           '<td class="mono">' + (r.limit ? core.esc(r.limit) : 'Off') + '</td>' +
           '<td class="mono">' + core.esc(r.reset_at || fmt.DASH) + '</td>' +
-          '<td><button class="btn sm" data-mtreset="' + core.esc(r.key) + '" data-mtlabel="' + core.esc(r.label) + '"' + (locked() ? ' disabled title="관리자 잠금 해제 필요"' : '') +
+          '<td><button class="btn sm" data-mtreset="' + core.esc(r.key) + '" data-mtlabel="' + core.esc(r.label) + '"' + (locked() ? ' disabled data-tip="관리자 잠금 해제 필요"' : '') +
           '>Reset</button></td></tr>';
       }).join(''));
     }
@@ -280,18 +280,18 @@
     if (!b || b.disabled || !core.canOperate()) return;
     if (b.dataset.lc === 'start') {
       var lc = ((core.state || {}).live || {}).leakcheck || {};
-      core.confirmAsk('누설률 점검을 시작할까요?',
+      core.confirmAsk('누설률 점검 시작?',
         'IV-E 를 닫고(명령 11 — 펌프는 그대로) ' + core.esc(lc.settle_s) + ' s 안정 뒤 ' + core.esc(lc.measure_s) +
-        ' s 동안 압력 상승률을 잽니다.<br>끝나면 명령 8(펌핑 시작)로 IV-E 를 다시 엽니다.<br>' +
-        '점검 중에는 공정 시작 · 수동 밸브를 막습니다. 펌핑 · 벤트 · 전체 닫기를 누르면 점검을 먼저 취소합니다.',
+        ' s 동안 압력 상승률을 잼.<br>끝나면 명령 8(Pumping Start)로 IV-E 를 다시 엶.<br>' +
+        '점검 중에는 공정 시작 · 수동 밸브를 막음. 펌핑 · Vent · 전체 닫기를 누르면 점검을 먼저 취소함.',
         'Leak Check', function () { w.app.send('leak_check'); });
     } else if (b.dataset.lc === 'cancel') {
       w.app.send('leak_cancel');
     } else if (b.dataset.mtreset) {
       var key = b.dataset.mtreset;
       // v0.7.1(U6): 키(hours:pump) 대신 항목 이름
-      core.confirmAsk('정비 카운터를 리셋할까요?', '<b>' + core.esc(b.dataset.mtlabel || key) +
-        '</b> 를 0 으로 만듭니다. 이전 값은 이벤트 로그에 남습니다.',
+      core.confirmAsk('정비 카운터 리셋?', '<b>' + core.esc(b.dataset.mtlabel || key) +
+        '</b> 를 0 으로 만듦. 이전 값은 이벤트 로그에 남음.',
         'Reset', function () { w.app.send('maint_reset', { token: adm.token, key: key }); });
     }
   });
@@ -305,7 +305,7 @@
     core.setText('dgScan', conn && t.scan_max_ms != null ? core.scanText(t.scan_max_ms) : fmt.DASH);
     var sc = core.bind('dgScan');
     var stip = conn && t.scan_max_ms === 0 ? 'PLC 가 아직 쓰지 않음(D00080 = 0)' : '';
-    if (sc && sc.title !== stip) sc.title = stip;
+    core.tip(sc, stip);
     core.setText('dgHb', (t.plc || {}).stalled ? 'Stalled' : !conn ? fmt.DASH : (t.plc.hb_ok ? T('s.normal') : 'Stalled'));
     core.setText('dgHbGap', link && t.plc.hb_gap_max_ms != null
       ? t.plc.hb_gap_ms + ' ms (최대 ' + t.plc.hb_gap_max_ms + ' ms)' : fmt.DASH);
@@ -319,9 +319,9 @@
       core.html(ic, p.config_error ? core.chip('No Address', 'stop', '주소 없음 — 연결 안 함 · ' + p.config_error)
         : !conn ? fmt.DASH
           : p.id_state === 'ok' ? core.chip(core.idText(p.device_id) + ' ' + T('s.match'), 'ok')
-            : p.id_state === 'unset' ? core.chip('0 — ID Unset', 'warn', 'PLC 에 ID 가 아직 없음 — 동작은 막지 않습니다')
+            : p.id_state === 'unset' ? core.chip('0 — ID Unset', 'warn', 'PLC 에 ID 가 아직 없음 — 동작은 막지 않음')
               : p.id_state === 'wrong' ? core.chip(core.idText(p.device_id) + ' Wrong Device', 'stop', '다른 장비의 PLC')
-                : p.id_state === 'missing' ? core.chip('0 — ID Required', 'stop', '장비 ID 필수(plc.require_device_id) 가 켜져 있습니다')
+                : p.id_state === 'missing' ? core.chip('0 — ID Required', 'stop', '장비 ID 필수(plc.require_device_id) 가 켜져 있음')
                 : fmt.DASH);
     }
     var body = core.bind('prmBody');
@@ -362,7 +362,7 @@
       core.html(chip, !local ? core.chip('Read Only', 'off', core.lockReason() + ' — 편집 안 됨')
         : blocked ? core.chip('Input Blocked ' + blocked + ' s', 'stop')
           : adm.unlocked && left > 0 ? core.chip(T('s.unlocked') + ' · ' + Math.ceil(left / 60) + ' min', 'ok')
-            : (adm.has_pin ? core.chip(T('s.locked'), 'warn') : core.chip('No PIN', 'warn', 'PIN 없음 — 처음 편집할 때 정합니다')));
+            : (adm.has_pin ? core.chip(T('s.locked'), 'warn') : core.chip('No PIN', 'warn', 'PIN 없음 — 처음 편집할 때 정함')));
     }
     var bk = d.querySelector('[data-cfgact="backup"]');
     if (bk) bk.disabled = !local;
@@ -380,8 +380,8 @@
     var lock = locked();
     Array.prototype.forEach.call(d.querySelectorAll('[data-cfg]'), function (e) { e.disabled = lock; });
     var n = Object.keys(edits).length;
-    core.setText('cfgCount', lock ? '🔒 잠겨 있어 편집할 수 없습니다'
-      : (n ? '바꾼 항목 ' + n + '개 — 저장 검토를 누르세요' : 'No Changes'));
+    core.setText('cfgCount', lock ? '🔒 잠겨 있어 편집할 수 없음'
+      : (n ? '바꾼 항목 ' + n + '개 — 저장 검토 누르기 필요' : 'No Changes'));
     var rv = core.bind('cfgReview'); if (rv) rv.disabled = lock || !n;
     var rb = core.bind('cfgRevert'); if (rb) rb.disabled = !n;
   }
@@ -420,8 +420,8 @@
                  change: [['old', '현재 PIN'], ['new', '새 PIN (숫자 4~8자리)'], ['new2', '한 번 더']] }[mode];
     core.setText('pnTitle', title);
     core.setText('pnDev', ((core.state || {}).device || {}).name || '');
-    core.setText('pnHint', mode === 'setup' ? 'PIN 이 아직 없습니다. 설정 편집에 쓸 PIN 을 정하세요. PIN 은 해시로만 저장됩니다.'
-      : '이 PC 에서만 됩니다. 5 번 틀리면 5 분 동안 입력이 막힙니다.');
+    core.setText('pnHint', mode === 'setup' ? 'PIN 이 아직 없음. 설정 편집에 쓸 PIN 지정 필요. PIN 은 해시로만 저장됨.'
+      : '이 PC 에서만 됨. 5 번 틀리면 5 분 동안 입력이 막힘.');
     core.setText('pnMsg', '');
     var box = core.bind('pnRows');
     box.innerHTML = rows.map(function (r) {
@@ -488,7 +488,7 @@
     var h = '';
     if (m.blocked) h += '<div class="hint warn">' + core.esc(m.blocked) + '</div>';
     if ((m.errors || []).length) {
-      h += '<div class="cg-sec stop">검증 오류 — 저장할 수 없습니다</div><ul>' +
+      h += '<div class="cg-sec stop">검증 오류 — 저장할 수 없음</div><ul>' +
         m.errors.map(function (e) { return '<li>' + core.esc(e) + '</li>'; }).join('') + '</ul>';
     }
     if ((m.warnings || []).length) {
@@ -496,11 +496,11 @@
         m.warnings.map(function (e) { return '<li>' + core.esc(e) + '</li>'; }).join('') + '</ul>';
     }
     h += '<div class="cg-sec">바뀌는 항목 ' + (m.diff || []).length + '개' +
-      (m.first_file ? ' — ' + core.esc(m.path_name) + ' 을(를) 새로 만듭니다' : '') + '</div>' +
+      (m.first_file ? ' — ' + core.esc(m.path_name) + ' 을(를) 새로 만듦' : '') + '</div>' +
       '<table class="tbl"><thead><tr><th class="l">' + T('v.item') + '</th><th>' + T('v.before') + '</th><th>' + T('v.after') +
       '</th><th>' + T('v.raw') + '</th></tr></thead><tbody>' +
       (m.diff || []).map(function (r) {
-        return '<tr><td class="l">' + core.esc(r.label) + (r.restart ? ' ' + core.chip('Restart', '', '바꾸면 프로그램을 다시 시작해야 반영됩니다') : '') + '</td>' +
+        return '<tr><td class="l">' + core.esc(r.label) + (r.restart ? ' ' + core.chip('Restart', '', '바꾸면 프로그램을 다시 시작해야 반영됨') : '') + '</td>' +
           '<td class="mono">' + show(r.old) + '</td><td class="mono"><b>' + show(r.new) + '</b></td>' +
           '<td class="mono dim">' + (r.raw_new != null ? core.esc(r.prm + ' ' + r.raw_old + ' → ' + r.raw_new) : '') + '</td></tr>';
       }).join('') + '</tbody></table>';
@@ -512,14 +512,14 @@
         return '<li class="mono">' + core.esc(p.addr + ' ' + p.name + ': ' + p.old + ' → ' + p.new) + '</li>';
       }).join('') + '</ul>';
     }
-    if (m.restart) h += '<div class="hint warn">PLC 연결 설정은 프로그램을 다시 시작해야 반영됩니다.</div>';
+    if (m.restart) h += '<div class="hint warn">PLC 연결 설정은 프로그램을 다시 시작해야 반영됨.</div>';
     if (m.host_changed) {
-      h += '<div class="hint warn">PLC 주소가 바뀝니다 — 다시 시작하면 연결 때 장비 ID 를 확인합니다 ' +
-        '(이 장비 ' + core.esc(m.device_id) + '). 다른 장비의 PLC 면 아무것도 쓰지 않습니다.</div>';
+      h += '<div class="hint warn">PLC 주소가 바뀜 — 다시 시작하면 연결 때 장비 ID 를 확인함 ' +
+        '(이 장비 ' + core.esc(m.device_id) + '). 다른 장비의 PLC 면 아무것도 쓰지 않음.</div>';
     }
     if (m.sim_to_real) {
       h += '<div class="cg-sec stop">⚠ 시뮬레이터 → 실장비 전환</div><div class="hint warn">다시 시작하면 ' +
-        '실제 PLC 에 연결해 파라미터를 씁니다. 주소·포트가 이 장비의 PLC 인지 확인하세요.</div>';
+        '실제 PLC 에 연결해 파라미터를 씀. 주소·포트가 이 장비의 PLC 인지 확인 필요.</div>';
     }
     var b = core.bind('cgBody');
     if (b) b.innerHTML = h;

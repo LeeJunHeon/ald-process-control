@@ -64,13 +64,13 @@
       m.rows.push([T_('v.request'), !conn ? D : req ? T_('s.open') : T_('s.none')]);
       m.rows.push(['Valve Permit', !conn ? D : permit ? T_('s.yes') : T_('s.no') + (miss.length ? ' — ' + miss.join(' · ') : '')]);
       m.rows.push(['Valve Lock', mn.unlocked ? T_('s.unlocked') + ' · ' + (mn.unlock_left_s || 0) + ' s' : T_('s.locked')]);
-      if (auto) extraWhy = 'PLC 가 자동으로 다루는 밸브입니다 — 수동으로 열고 닫지 않습니다';
-      else if (!mn.unlocked) extraWhy = '밸브 조작 잠금이 걸려 있습니다 — Unlock 을 먼저 누르세요';
+      if (auto) extraWhy = 'PLC 가 자동으로 다루는 밸브 — 수동으로 열고 닫지 않음';
+      else if (!mn.unlocked) extraWhy = '밸브 조작 잠금이 걸려 있음 — Unlock 먼저 누르기 필요';
       else if (conn && !out && (mn.pending || []).indexOf(key) >= 0) {
-        extraWhy = 'PLC 가 지우지 않은 요청이 남아 있습니다(출력 꺼짐 · 래더 P50 확인) — 허가가 생기면 열릴 수 있습니다. 필요 없으면 Close';
+        extraWhy = 'PLC 가 지우지 않은 요청이 남아 있음(출력 꺼짐 · 래더 P50 확인) — 허가가 생기면 열릴 수 있음. 필요 없으면 Close';
         extraLvl = 'warn';
       } else if (conn && !permit && !out) {
-        extraWhy = 'Valve Permit 이 없어 열 수 없습니다 — 필요: ' + (miss.length ? miss.join(' · ') : 'Pump 운전 · IV-E 열림');
+        extraWhy = 'Valve Permit 이 없어 열 수 없음 — 필요: ' + (miss.length ? miss.join(' · ') : 'Pump 운전 · IV-E 열림');
       }
       btn('open', T_('b.open'), !auto && !!mn.unlocked && permit && !req && !out);
       btn('close', T_('b.close'), !auto && !!mn.unlocked && (req || out));
@@ -85,7 +85,7 @@
       m.rows.push([T_('v.setpoint'), conn ? num(mv.sv, F.flow) + ' sccm' : D]);
       m.rows.push([T_('v.fullScale'), md.full_scale_sccm == null ? 'Unset' : md.full_scale_sccm + ' sccm']);
       var fsOk = md.full_scale_sccm != null;
-      if (!fsOk) extraWhy = '풀스케일이 정해지지 않아 설정할 수 없습니다(설정 탭)';
+      if (!fsOk) extraWhy = '풀스케일이 정해지지 않아 설정할 수 없음(설정 탭)';
       m.inputs.push({ id: 'sp', label: T_('v.setpoint'), unit: 'sccm', step: 0.1, off: !!block || !fsOk });
       btn('apply', T_('b.apply'), fsOk);
     } else if (kind === 'heater') {
@@ -98,9 +98,9 @@
       m.rows.push([T_('v.status'), !conn ? D : !hv.comm_ok ? T_('s.commLost') : hv.alarm ? T_('s.ctrlAlarm')
         : hd.max_c == null ? T_('s.limitUnset') : T_('s.normal')]);
       var en = !!hd.enabled, lim = hd.max_c != null;
-      if (!en) extraWhy = '이 채널은 설정에서 쓰지 않습니다';
-      else if (!lim) extraWhy = '과온 한계가 없어 설정 · 전원 켜기를 막습니다(설정 탭)';
-      else if (conn && hv.comm_ok === false) extraWhy = hv.power_block || '온도조절기 통신 없음 — 켤 수 없습니다(끄기는 됩니다)';
+      if (!en) extraWhy = '이 채널은 설정에서 쓰지 않음';
+      else if (!lim) extraWhy = '과온 한계가 없어 설정 · 전원 켜기를 막음(설정 탭)';
+      else if (conn && hv.comm_ok === false) extraWhy = hv.power_block || '온도조절기 통신 없음 — 켤 수 없음(끄기는 됨)';
       m.inputs.push({ id: 'sp', label: T_('v.setpoint'), unit: '℃', step: 1, off: !!block || !en || !lim });
       btn('apply', T_('b.apply'), en && lim);
       btn('on', T_('b.on'), en && lim);
@@ -122,7 +122,7 @@
       var rfOk = !permitRf || (conn && bit(t.interlock, permitRf.bit));
       if (permitRf) m.rows.push(['RF Permit', conn ? (rfOk ? T_('s.normal') : 'NG') : D]);
       // ★ v0.5.1(D3): RF 허가가 NG 면 ON 을 막고 이유를 보인다(끄기는 그대로). RF Permit 은 RF 와 무관하게 생긴다
-      if (!rfOk) extraWhy = 'RF Permit NG — 허가 조건이 맞을 때만 켤 수 있습니다';
+      if (!rfOk) extraWhy = 'RF Permit NG — 허가 조건이 맞을 때만 켤 수 있음';
       m.inputs.push({ id: 'sp', label: T_('v.setpoint'), unit: 'W', step: 1, off: !!block });
       btn('on', T_('b.on'), rfOk);
       btn('off', T_('b.off'), true);
@@ -146,9 +146,9 @@
       m.rows.push(['IV-B', conn ? (am['IV-B'] ? T_('s.open') : T_('s.closed')) : D]);
       if (op) m.rows.push(['O3 Permit', conn ? (bit(t.interlock, op.bit) ? T_('s.yes') : T_('s.no')) : D]);
       m.rows.push([T_('v.offDelay'), conn && mo.o3_off_left_s > 0 ? mo.o3_off_left_s + ' s' : D]);
-      m.note = 'Line ON = 바이패스 펌프 → IV-B → O3 Permit(IV-B 뒤 5 s)을 기다린 뒤 발생기 · ON 은 입력한 Setpoint 로 켭니다';
-      if (lineOn) extraWhy = 'O3 라인이 이미 켜져 있습니다';
-      else if (waitOn > 0) extraWhy = 'O3 Permit 을 기다리는 중입니다(남은 ' + waitOn + ' s) — 허가가 서면 발생기를 켭니다';
+      m.note = 'Line ON = Bypass Pump → IV-B → O3 Permit(IV-B 뒤 5 s)을 기다린 뒤 발생기 · ON 은 입력한 Setpoint 로 켬';
+      if (lineOn) extraWhy = 'O3 Line 이미 켜져 있음';
+      else if (waitOn > 0) extraWhy = 'O3 Permit 을 기다리는 중(남은 ' + waitOn + ' s) — 허가가 서면 발생기를 켬';
       m.inputs.push({ id: 'sp', label: T_('v.setpoint'), unit: eo.o3_unit || '', step: 0.1, off: !!block });
       btn('apply', T_('b.apply'), true);
       // ★ O3 Permit 으로도, PLC 설정값(o3_sv)으로도 막지 않는다 — ON 이 허가를 만들고, 값은 입력 칸 것을 보낸다
@@ -178,7 +178,7 @@
       extraWhy = vw;
       btn('vent', T_('b.vent'), !vw);
     }
-    m.why = block ? block + ' — 조작할 수 없습니다' : busy ? BUSY_TIP : extraWhy;
+    m.why = block ? block + ' — 조작할 수 없음' : busy ? BUSY_TIP : extraWhy;
     m.whyLvl = (!block && !busy) ? extraLvl : '';
     return m;
   }
@@ -253,7 +253,7 @@
     if (anchor && anchor.classList) anchor.classList.add('fp-on');
     var m = model(kind, key, w.core.state, w.core.offline, isBusy(kind, key));
     var h = '<div class="fp-head"><span class="fp-tag" data-fpbind="title"></span>' +
-      '<button class="fp-x" data-fpa="x" title="닫기 (Esc)" aria-label="Close">✕</button></div><div class="fp-body">';
+      '<button class="fp-x" data-fpa="x" data-tip="닫기 (Esc)" aria-label="Close">✕</button></div><div class="fp-body">';
     m.rows.forEach(function (r, i) {
       h += '<div class="fp-row"><span class="k">' + w.core.esc(r[0]) + '</span><span class="v" data-fprow="' + i + '"></span></div>';
     });
@@ -346,7 +346,7 @@
       if (!e) return;
       if (e.disabled !== !x.on) e.disabled = !x.on;
       var tip = x.on ? '' : m.why;
-      if (e.title !== tip) e.title = tip;
+      core.tip(e, tip);
     });
     var why = b.querySelector('[data-fpbind="why"]');
     if (why) {
@@ -363,27 +363,27 @@
     var b = box();
     var inp = b && b.querySelector('[data-fpin="sp"]');
     var c = command(cur.kind, cur.key, a, inp ? inp.value : null);
-    if (!c) { w.core.toast('값을 넣으세요', 'warn'); return; }
+    if (!c) { w.core.toast('값 입력 필요', 'warn'); return; }
     var here = cur;
     var go = function () {
       var rid = w.Ops.send(c.pair);
       if (!rid) return;
       w.core.busy.start(busyKey(here.kind, here.key, a), rid);
-      if (cur === here) { cur.rid = rid; cur.noticed = false; result('보냈습니다 — 응답을 기다리는 중', ''); paint(); }
+      if (cur === here) { cur.rid = rid; cur.noticed = false; result('보냄 — 응답을 기다리는 중', ''); paint(); }
     };
     var val = inp ? Number(inp.value) : 0;
     if (c.confirm === 'heater') {
-      w.core.confirmAsk('히터 설정을 바꿀까요?',
-        '설정 온도를 바꿉니다. 과온 한계를 넘는 값은 PLC 가 거절합니다.<br>전원이 꺼져 있으면 온도가 오르지 않습니다.',
+      w.core.confirmAsk('Heater 설정 변경?',
+        '설정 온도를 바꿈. 과온 한계를 넘는 값은 PLC 가 거절함.<br>전원이 꺼져 있으면 온도가 오르지 않음.',
         T_('b.apply'), go);
     } else if (c.confirm === 'rf') {
-      w.core.confirmAsk('RF 를 켤까요?',
-        '<b>' + val + ' W</b> 로 RF 를 켭니다. 시험 목적이며 대기 중에만 됩니다.<br>' +
-        '압력·반사 전력 조건을 PLC 가 확인하고, 조건이 어긋나면 즉시 끕니다.', T_('b.rfOn'), go);
+      w.core.confirmAsk('RF ON?',
+        '<b>' + val + ' W</b> 로 RF 를 켬. 시험 목적이며 대기 중에만 됨.<br>' +
+        '압력·반사 전력 조건을 PLC 가 확인하고, 조건이 어긋나면 즉시 끔.', T_('b.rfOn'), go);
     } else if (c.confirm === 'o3') {
-      w.core.confirmAsk('O3 라인을 켤까요?',
-        '바이패스 펌프 → IV-B 를 켜고, O3 Permit 이 선 뒤 발생기를 켭니다(허가가 제한 시간 안에 서지 않으면 발생기를 켜지 않고 ' +
-        '바이패스 라인을 닫습니다).<br>실내 O3 감지·발생기 알람이 있으면 PLC 가 막습니다.',
+      w.core.confirmAsk('O3 Line ON?',
+        'Bypass Pump → IV-B 를 켜고, O3 Permit 이 선 뒤 발생기를 켬(허가가 제한 시간 안에 서지 않으면 발생기를 켜지 않고 ' +
+        '바이패스 라인을 닫음).<br>실내 O3 감지·발생기 알람이 있으면 PLC 가 막음.',
         T_('b.o3On'), go);
     } else if ((c.confirm || c.pair[0] === 'pump_start') && w.viewMain && w.viewMain.confirmFor) {
       // 펌핑 시작은 명령줄과 같은 규칙 — 수동 밸브 요청이 남아 있고 허가가 없을 때만 확인 창(confirmFor)

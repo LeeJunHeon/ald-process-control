@@ -76,14 +76,14 @@
       core.setText('alarmCount', T('s.unknown'));
       var why = t.offline ? '서버 연결이 끊겨' : p.stalled ? 'PLC 하트비트가 멈춰' : 'PLC 연결이 끊겨';
       tbl.innerHTML = '<tbody><tr><td class="empty" colspan="4">' + why +
-        ' 지금 알람을 알 수 없습니다</td></tr></tbody>';
+        ' 지금 알람을 알 수 없음</td></tr></tbody>';
       return;
     }
     var crit = alarms.filter(function (a) { return a.crit; }).length;
     core.setText('alarmCount', T('s.critical') + ' ' + crit + ' · ' + T('s.warning') + ' ' + (alarms.length - crit));
 
     if (!alarms.length) {
-      tbl.innerHTML = '<tbody><tr><td class="empty" colspan="4">현재 알람이 없습니다</td></tr></tbody>';
+      tbl.innerHTML = '<tbody><tr><td class="empty" colspan="4">현재 알람이 없음</td></tr></tbody>';
       return;
     }
     var html = '<thead><tr><th>' + T('v.severity') + '</th><th>' + T('v.raised') + '</th><th>' + T('v.code') +
@@ -91,8 +91,10 @@
     // v0.7.0(A1): 행을 누르면(키보드 Enter/Space 도) 아래로 원인 · 확인이 펼쳐진다
     alarms.forEach(function (a) {
       var df = def(a.code), open = !!openCode[a.code];
+      // v0.8.6: 설명창 — 한국어 알람 이름 · 원인 · 조치(device.py) · 누르면 펼침
       html += '<tr class="almrow' + (a.crit ? ' hl' : '') + '" tabindex="0" role="button" aria-expanded="' + open +
-        '" data-almcode="' + core.esc(a.code) + '" title="눌러서 원인 · 확인 보기">' +
+        '" data-almcode="' + core.esc(a.code) + '"' + core.tipKo(df.ko || a.name, df.cause ? '원인: ' + df.cause : '') +
+        core.tipAttr((df.check ? '조치: ' + df.check + String.fromCharCode(10) : '') + '누르면 원인 · 조치 펼침') + '>' +
         '<td>' + core.chip(a.crit ? T('s.critical') : T('s.warning'), a.crit ? 'stop' : 'warn') + '</td>' +
         '<td class="mono">' + core.esc(a.since) + '</td>' +
         '<td class="mono">' + core.esc(a.code) + '</td>' +
@@ -112,14 +114,14 @@
     var out = [];
     var plc = t.plc || {};
     if (t.offline) {
-      out.push(['err', '서버 연결 끊김 — 이 화면은 다시 연결될 때까지 값을 보이지 않습니다.']);
+      out.push(['err', '서버 연결 끊김 — 이 화면은 다시 연결될 때까지 값을 보이지 않음.']);
     } else if (plc.stalled) {
-      out.push(['err', 'PLC 하트비트 멈춤 — ' + (plc.addr || '') + ' 연결은 됐지만 PLC 가 스캔을 돌리지 않습니다' +
-        '(STOP 일 수 있습니다). 값은 표시하지 않고 명령을 보내지 않습니다.']);
+      out.push(['err', 'PLC 하트비트 멈춤 — ' + (plc.addr || '') + ' 연결은 됐지만 PLC 가 스캔을 돌리지 않음' +
+        '(STOP 일 수 있음). 값은 표시하지 않고 명령을 보내지 않음.']);
     } else if (!plc.connected) {
-      out.push(['err', 'PLC 연결 끊김 — ' + (plc.addr || '') + ' 에 접속하지 못했습니다. 값 표시와 명령이 멈춥니다.']);
+      out.push(['err', 'PLC 연결 끊김 — ' + (plc.addr || '') + ' 에 접속하지 못함. 값 표시와 명령이 멈춤.']);
     } else if (!plc.hb_ok) {
-      out.push(['warn', 'PLC 하트비트 멈춤 — 통신은 되는데 PLC 가 스캔을 돌리지 않습니다 (STOP 상태일 수 있습니다).']);
+      out.push(['warn', 'PLC 하트비트 멈춤 — 통신은 되는데 PLC 가 스캔을 돌리지 않음 (STOP 상태일 수 있음).']);
     }
     (plc.prm_mismatch || []).forEach(function (m) {
       out.push(['warn', 'PLC 파라미터 되읽기 불일치 — ' + m]);
@@ -135,7 +137,7 @@
       ? out.map(function (x) {
           return '<div class="pcnotice ' + x[0] + '">' + core.esc(x[1]) + '</div>';
         }).join('')
-      : '<div class="empty">프로그램 알림이 없습니다</div>');
+      : '<div class="empty">프로그램 알림이 없음</div>');
   }
 
   /* ---------- 이력 ---------- */
@@ -145,15 +147,15 @@
     var h = s.alarm_history || [];
     core.setText('histNote', '파일: data/alarms/alarms-YYYYMMDD.csv');
     if (!h.length) {
-      tbl.innerHTML = '<tbody><tr><td class="empty" colspan="5">이력이 없습니다</td></tr></tbody>';
+      tbl.innerHTML = '<tbody><tr><td class="empty" colspan="5">이력이 없음</td></tr></tbody>';
       return;
     }
     var html = '<thead><tr><th>' + T('v.raised') + '</th><th>' + T('v.cleared') + '</th><th>' + T('v.severity') +
       '</th><th>' + T('v.code') + '</th><th class="l">' + T('v.message') + '</th></tr></thead><tbody>';
     h.forEach(function (a) {
       var df = def(a.code);
-      var tip = df.cause ? '원인: ' + df.cause + String.fromCharCode(10) + '확인: ' + df.check : '';
-      html += '<tr' + (tip ? ' title="' + core.esc(tip) + '"' : '') + '><td class="mono">' + core.esc((a.date || '') + ' ' + a.since) + '</td>' +
+      html += '<tr' + core.tipKo(df.ko || a.name, df.cause ? '원인: ' + df.cause : '') + core.tipAttr(df.check ? '조치: ' + df.check : '') +
+        '><td class="mono">' + core.esc((a.date || '') + ' ' + a.since) + '</td>' +
         '<td class="mono">' + core.esc(a.cleared || fmt.DASH) + '</td>' +
         '<td>' + core.chip(a.crit ? T('s.critical') : T('s.warning'), a.crit ? 'stop' : 'warn') + '</td>' +
         '<td class="mono">' + core.esc(a.code) + '</td>' +
