@@ -94,7 +94,9 @@ def test_4_heater_note_english():
 def test_5_h2o_box_single_line():
     out = _schem(r'''
       const shown = all.filter(e => e.tag === 'text').map(e => e.textContent);
-      const titles = all.filter(e => e.a && e.a['data-tip']).map(e => e.a['data-tip']);   // v0.8.6: SVG title → 설명창 data-tip
+      // v0.8.6: SVG title → 설명창 data-tip. v0.8.7: 이름만 있던 상자(H2O)는 라벨 사전 키(data-tk — 한국어 이름 · 설명)
+      const titles = all.filter(e => e.a && e.a['data-tip']).map(e => e.a['data-tip'].split(' — ')[0])
+        .concat(all.filter(e => e.a && e.a['data-tk']).map(e => T.dict[e.a['data-tk']]));
       console.log(JSON.stringify({ shown, titles }));
     ''')
     assert "Canister R" not in out["shown"]

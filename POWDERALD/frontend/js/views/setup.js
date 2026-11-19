@@ -283,7 +283,7 @@
       core.confirmAsk('누설률 점검 시작?',
         'IV-E 를 닫고(명령 11 — 펌프는 그대로) ' + core.esc(lc.settle_s) + ' s 안정 뒤 ' + core.esc(lc.measure_s) +
         ' s 동안 압력 상승률을 잼.<br>끝나면 명령 8(Pumping Start)로 IV-E 를 다시 엶.<br>' +
-        '점검 중에는 공정 시작 · 수동 밸브를 막음. 펌핑 · Vent · 전체 닫기를 누르면 점검을 먼저 취소함.',
+        '점검 중에는 공정 시작 · 수동 밸브를 막음. Pumping Start · Pumping Stop · Vent · Close All Valves 를 누르면 점검을 먼저 취소함.',
         'Leak Check', function () { w.app.send('leak_check'); });
     } else if (b.dataset.lc === 'cancel') {
       w.app.send('leak_cancel');
@@ -381,7 +381,7 @@
     Array.prototype.forEach.call(d.querySelectorAll('[data-cfg]'), function (e) { e.disabled = lock; });
     var n = Object.keys(edits).length;
     core.setText('cfgCount', lock ? '🔒 잠겨 있어 편집할 수 없음'
-      : (n ? '바꾼 항목 ' + n + '개 — 저장 검토 누르기 필요' : 'No Changes'));
+      : (n ? '바꾼 항목 ' + n + '개 — [Review & Save] 누르기 필요' : 'No Changes'));
     var rv = core.bind('cfgReview'); if (rv) rv.disabled = lock || !n;
     var rb = core.bind('cfgRevert'); if (rb) rb.disabled = !n;
   }

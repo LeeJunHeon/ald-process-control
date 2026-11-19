@@ -52,7 +52,7 @@
     var sv = saving;
     saving = null;
     if (!sv) {
-      // ★ 기다리던 저장이 없다(그사이 [새로] · 다른 레시피 열기) — 편집 중인 레시피 · 이름 · dirty 는
+      // ★ 기다리던 저장이 없다(그사이 [New] · 다른 레시피 열기) — 편집 중인 레시피 · 이름 · dirty 는
       //   건드리지 않고 목록만 갱신한다(남아 있을 수 있는 '저장하는 중…' 은 지운다)
       if ((core.bind('rcSaveMsg') || {}).textContent === '저장하는 중…') core.setText('rcSaveMsg', '');
       drawList(core.state || {});
@@ -229,7 +229,7 @@
     var box = core.bind('rcEdit');
     if (box) box.innerHTML =
       '<div class="empty" style="padding:36px 20px;line-height:2">' +
-      '왼쪽에서 레시피를 고르거나 <b>[새로]</b> 를 눌러 만들기 필요.<br>' +
+      '왼쪽에서 레시피를 고르거나 <b>[New]</b> 를 눌러 만들기 필요.<br>' +
       '스텝(밸브·시간) · 블록(MFC' + (lim.mfc_count ? ' ' + lim.mfc_count + '채널' : '') +
       ') · 반복 그룹을 편집해 PLC 표로 올림.</div>';
     drawStatus();

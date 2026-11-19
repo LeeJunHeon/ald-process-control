@@ -537,7 +537,7 @@ def test_a1_alarm_cause_check_everywhere(clean_state):
     core = _src("frontend", "js", "core.js")
     assert "'<div class=\"am-check\">확인: '" in core
     # v0.7.1(U1): 첫 문장으로 자르지 않는다(' — ' 뒤의 안전 문구가 빠졌다) — 전부 보인다
-    assert "var ck = (defs[a.code] || {}).check || '';" in core and "firstSentence" not in core
+    assert "var df = defs[a.code] || {}, ck = df.check || '';" in core and "firstSentence" not in core   # v0.8.7: df 는 설명창에도
 
 
 # ===================== A2. 실행 정보 =====================

@@ -158,7 +158,7 @@ class LeakCheck:
         if DEV.HAS_O3:
             o3 = A.bit(aux, A.AUX_O3_GEN) or A.bit(aux, A.AUX_IVB) or A.bit(aux, A.AUX_BYPASS_PUMP)
             if o3 or getattr(link, "applied_aux", 0):
-                why.append("O3 Line 켜져 있음 — 명령 11 이 수동 보조 출력을 끄므로 수동 조작의 O3 Line 끄기 먼저 필요")
+                why.append("O3 Line 켜져 있음 — 명령 11 이 수동 보조 출력을 끄므로 [Manual…] 의 O3 Line OFF 먼저 필요")
         return why
 
     # ===================== 시작 · 취소 =====================

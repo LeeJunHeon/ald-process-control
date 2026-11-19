@@ -153,7 +153,7 @@
       var mk = w.UI.fpKo(s.structure, 'mfc:' + m.no);
       html += '<tr data-fp="mfc:' + core.esc(m.no) + '" tabindex="0" role="button"' + core.tipKo(mk[0], mk[1]) + ' data-tip="MFC' + core.esc(m.no) + ' ' +
         core.esc(m.name) + ' — 누르면 조작 창"><td class="nm">' + core.esc(m.no) + ' ' + core.esc(m.name) + '</td>' +
-        '<td class="nm" data-tip="' + core.esc(m.gas || '') + '">' + core.esc(m.gas || fmt.DASH) + '</td>' +
+        '<td class="nm">' + core.esc(m.gas || fmt.DASH) + '</td>' +
         '<td>' + (m.full_scale_sccm == null
           ? '<span class="unconf">Unset</span>'
           : core.esc(fmt.int(m.full_scale_sccm)) + '<span class="unit">sccm</span>') + '</td>' +
@@ -162,9 +162,17 @@
     });
     // 장비 전용 줄 — 이름 colspan 2(이름 + Gas) · 값 colspan 3(Full Scale + Setpoint + Actual). 값은 단위까지
     var xn = 0;
+    // v0.8.7: 장비 전용 줄의 설명창 — 한국어 이름 · 설명(첫 줄 한국어), 누르면 조작 창이면 그 말
+    var XKO = { rf: ['RF 순방향 / 반사 전력', 'RF 발생기가 내는 전력 · 되돌아오는 전력(W)'],
+                pcv: ['인라인 PCV 목표 / 위치', '압력 제어 밸브 목표 개도 · 실제 개도(%)'],
+                o3: ['O3 설정 / 실제 농도', 'O3 Generator 농도 설정 · 측정 값'],
+                o3line: ['O3 라인 상태', 'O3 Generator · Bypass Pump · IV-B(바이패스 격리 밸브)'],
+                o3off: ['O3 끄기 지연', 'O3 Generator 끈 뒤 바이패스 라인 닫기까지 남은 시간'] };
     var xrow = function (key, name, fp, title, word) {
       xn++;
-      return '<tr class="xrow"' + (fp ? ' data-fp="' + fp + '" tabindex="0" role="button"' : '') + ' data-tip="' + core.esc(title || name) + '"' +
+      var xk = XKO[key] || ['', ''];
+      return '<tr class="xrow"' + (fp ? ' data-fp="' + fp + '" tabindex="0" role="button"' : '') + core.tipKo(xk[0], xk[1]) +
+        core.tipAttr(fp ? '누르면 조작 창' : '') +
         '><td colspan="2" class="nm">' + name + '</td><td colspan="3" class="' + (word ? 'wv' : 'pv') + '" data-mx="' + key + '">—</td></tr>';
     };
     if (dev.has_rf) html += xrow('rf', 'RF Forward / Reflected', 'rf:RF');
@@ -230,8 +238,10 @@
     var q = t.seq || {};
     var rc = core.bind('sqRcpChip', root);
     if (rc) {
-      core.html(rc, !conn ? '' : core.chip(q.recipe_ok ? T('s.tableOk') : '✕ ' + T('s.tableNg'),
-        q.recipe_ok ? 'ok' : 'off', 'PLC Sum ' + fmt.hex16(q.recipe_sum)));
+      // v0.8.7: 설명창 첫 줄은 한국어 이름 — '레시피 표 검사 / PLC 가 계산한 합계 0x… · 통과(안 됨)'
+      core.html(rc, !conn ? '' : '<span class="chip ' + (q.recipe_ok ? 'ok' : 'off') + '"' +
+        core.tipKo('레시피 표 검사', 'PLC 가 계산한 합계 ' + fmt.hex16(q.recipe_sum) + ' · ' + (q.recipe_ok ? '통과' : '통과 안 됨')) + '>' +
+        core.esc(q.recipe_ok ? T('s.tableOk') : '✕ ' + T('s.tableNg')) + '</span>');
     }
     // 시퀀서 상태는 장비 상태와 다를 때만(같은 말이 두 번 보이면 읽지 않는다). 장비 상태는 상단 띠에
     var qn = q.name || '';
@@ -282,8 +292,8 @@
         var a = Math.max(0, Math.min(steps.length - n, cur - 1 - Math.floor(n / 2)));
         html = steps.slice(a, a + n).map(function (x, i) {
           var no = a + i + 1, on = no === cur;
-          return '<span class="st' + (on ? ' on' : '') + '" data-tip="' + core.esc((x.name || no) + ' · ' + fmt.ms(x.ms) + ' s') +
-            '"><b>' + no + '</b> <span class="nm">' + core.esc(x.name || '') + '</span><i>' +
+          return '<span class="st' + (on ? ' on' : '') + '"' + core.tipKo('스텝 ' + no, '레시피 스텝 · 시간') +
+            core.tipAttr((x.name || no) + ' · ' + fmt.ms(x.ms) + ' s') + '><b>' + no + '</b> <span class="nm">' + core.esc(x.name || '') + '</span><i>' +
             (on ? core.esc(fmt.ms(p.step_ms)) + ' / ' : '') + core.esc(fmt.ms(x.ms)) + ' s</i></span>';
         }).join('');
       } else {
@@ -291,7 +301,10 @@
         if (p.last_result && !run && !msg) { msg = p.last_result; last = true; }
         if (!msg && conn && !p.recipe) msg = 'Select a recipe';
         var lv = T.resultLevel(msg);
-        html = msg ? '<span class="procmsg' + (lv ? ' ' + lv : '') + '" data-tip="' + core.esc(msg) + '">' +
+        // v0.8.7: 설명창 — 안내 종류의 한국어 이름(영어 안내만 되풀이하지 않게)
+        var mk = msg === 'Select a recipe' ? ['레시피', '레시피 선택 안 됨 — Recipe 탭에서 고름', '']
+          : last ? ['마지막 결과', '바로 앞 공정의 끝 결과', msg] : ['공정 안내', '', msg];
+        html = msg ? '<span class="procmsg' + (lv ? ' ' + lv : '') + '"' + core.tipKo(mk[0], mk[1]) + core.tipAttr(mk[2]) + '>' +
           (last ? '<span class="chip">Last</span> ' : '') + core.esc(msg) + '</span>' : '';
         cls += ' msg';
       }
@@ -501,7 +514,7 @@
     if (!o3on) return cf;
     return { t: cf.t, ok: cf.ok,
       b: cf.b + '<br><br><b>O3 Line(발생기·IV-B·Bypass Pump)도 한꺼번에 꺼짐</b> — ' +
-         '순서대로 끄려면 수동 조작의 O3 Line 끄기 먼저 필요.' };
+         '순서대로 끄려면 [Manual…] 의 O3 Line OFF 먼저 필요.' };
   }
 
   /** 시작은 흐름이다 — 무엇을 올리고 무엇을 기다리는지 먼저 알려 준다. */

@@ -47,10 +47,12 @@
     return t;
   }
 
-  /** 설명창 상태 줄(전체 이름)을 단 묶음 — v0.8.6: SVG title 대신 data-tip(core 설명창) */
+  /** 설명창을 단 묶음 — v0.8.6: SVG title 대신 core 설명창. v0.8.7: 영어 이름만 되풀이하지 않게 — 이름이 라벨 사전에 있으면
+   *  같은 키(data-tk — 한국어 이름 · 설명), 없으면 설명창 없음 */
   function group(parent, title, attrs) {
     var g = el('g', attrs || {});
-    if (title) g.setAttribute('data-tip', title);
+    var k = title && w.T && w.T.keyOf ? w.T.keyOf(title) : '';
+    if (k) g.setAttribute('data-tk', k);
     parent.appendChild(g);
     return g;
   }

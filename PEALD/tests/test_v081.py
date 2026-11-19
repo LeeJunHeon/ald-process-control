@@ -185,7 +185,7 @@ def test_start_slots_short_texts(struct):
             ck("state", True), ck("alarm", True), ck("pump", True), ck("valve_ok", True),
             ck("base", False, cur=759.67, target=0.05), ck("recipe", True)]
     bad_id = [ck("plc", True), ck("device_id", False, short="0x0000", detail="읽은 ID 0x0000 / 이 장비 … — ID 없음")]
-    o3 = base + [ck("o3", False, action="o3_on", detail="O3 Line 먼저 켜기 필요")]
+    o3 = base + [ck("o3", False, action="o3_on", detail="O3 Line ON 먼저 필요")]
     out = _ui(r'''
       const r = [DATA.a, DATA.b, DATA.c].map(ch => UI.startSlots(DATA.slots, { recipe: 'R', checks: ch }, { conn: true }));
       console.log(JSON.stringify(r));''', {"slots": slots, "a": base, "b": bad_id, "c": o3})
@@ -198,7 +198,7 @@ def test_start_slots_short_texts(struct):
     assert it(out[1], "Device ID")["text"].startswith("읽은 ID 0x0000")                 # 아니면 detail
     if DEV.HAS_O3:
         o = it(out[2], "O3 Line")
-        assert o["o3btn"] is True and o["text"] == "O3 Line 먼저 켜기 필요"              # 단추가 보이면 글은 title 로(panels)
+        assert o["o3btn"] is True and o["text"] == "O3 Line ON 먼저 필요"              # 단추가 보이면 글은 title 로(panels)
     panels = _src("js", "views", "panels.js")
     assert "if (dd) dd.hidden = !!it.o3btn;" in panels
     i = panels.index('<span class="scd"')
@@ -218,8 +218,8 @@ def test_tables_fixed_columns_and_texts():
     assert "data-hout" not in main and "out_pct" in main
     assert "T('s.on') + (h.comm_ok && h.out_pct != null ? ' ' + fmt.int(h.out_pct) + ' %' : '')" in main
     assert "(!conn || h.power == null) ? fmt.DASH" in main and "T('s.off')" in main
-    # MFC — Gas 말줄임 + title, 장비 줄 2/3, Powder 발생기 줄 이름
-    assert '<td class="nm" data-tip="\' + core.esc(m.gas || \'\') + \'">' in main
+    # MFC — Gas 말줄임(v0.8.7: 가스 이름(N2 · O2)은 한국어로 덧붙일 것이 없어 설명창 없음), 장비 줄 2/3, Powder 발생기 줄 이름
+    assert '<td class="nm">\' + core.esc(m.gas || fmt.DASH) + \'</td>' in main
     assert '<td colspan="2" class="nm">' in main and '<td colspan="3" class="' in main
     assert "'Gen · Bypass Pump · IV-B'" in main and "'Generator · Bypass Pump · IV-B'" not in main
     assert "dense(tbl, room, mfc.length + xn)" in main and "dense(tbl, room, n)" in main

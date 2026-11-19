@@ -183,7 +183,10 @@ def _schem(body: str):
 def test_a3_schematic_font_floor_and_full_names():
     out = _schem(r'''
       const texts = all.filter(e => e.tag === 'text');
-      const titles = all.filter(e => e.a && e.a['data-tip']).map(e => e.a['data-tip']);   // v0.8.6: SVG title → 설명창 data-tip
+      // v0.8.6: SVG title → 설명창 data-tip. v0.8.7: 누르는 상자는 '전체 이름 — 누르면 조작 창'(첫 줄은 한국어 이름),
+      //   이름만 있던 상자는 영어만 되풀이하지 않게 라벨 사전 키(data-tk — 한국어 이름 · 설명)
+      const titles = all.filter(e => e.a && e.a['data-tip']).map(e => e.a['data-tip'].split(' — ')[0])
+        .concat(all.filter(e => e.a && e.a['data-tk']).map(e => T.dict[e.a['data-tk']]));
       const shown = texts.map(e => e.textContent);
       console.log(JSON.stringify({ min: Math.min(...texts.map(e => Number(e.a['font-size']))), titles, shown,
                                    vb: svg.a.viewBox }));

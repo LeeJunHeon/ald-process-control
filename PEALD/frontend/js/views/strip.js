@@ -68,10 +68,14 @@
     if (m.dev.trip && w.viewMain && w.viewMain.tripTip) {
       trip = 'PC Trip — ' + w.viewMain.tripTip(t.plc || {}, (t.state || {}).code === 6);
     }
-    tip('stDevSub', trip || m.dev.title);
+    // v0.8.7: 설명창 — 한국어 상태 이름 · 뜻(첫 줄 한국어), PC 트립이면 그 안내를 상태 줄로
+    var dk = m.dev.ko || ['', ''];
+    core.tipSet(el('stDevSub'), dk[0], dk[1], trip);
+    core.tipSet(el('stDev'), dk[0], dk[1], '');
 
     txt('stProc', m.proc.text);
-    tip('stProc', m.proc.title);
+    var pk = m.proc.ko || ['', ''];
+    core.tipSet(el('stProc'), pk[0], pk[1], m.proc.title);
     cls('stProc', 'kpi name' + (m.proc.dim ? ' dim' : ''));
     var bar = el('stProcBar');
     if (bar) {
@@ -85,16 +89,18 @@
       core.html(ps, (m.proc.last ? '<span class="chip">Last</span> ' : '') + core.esc(m.proc.sub));
       var pc = 'ss ' + (m.proc.subLvl === 'stop' ? 'alarm' : m.proc.subLvl || '');
       if (ps.className !== pc) ps.className = pc;
-      core.tip(ps, m.proc.sub);
+      var sk = m.proc.subKo || ['', ''];
+      core.tipSet(ps, sk[0], sk[1], sk[0] ? m.proc.sub : '');
     }
 
     txt('stPr', m.pr.text);
     cls('stPr', 'kpi mono' + (m.pr.lvl === 'unknown' ? ' dim' : ''));
     var un = el('stPrUn');
-    if (un) { un.hidden = !m.pr.unconf; core.tip(un, m.pr.title); }
+    if (un) { un.hidden = !m.pr.unconf; core.tipSet(un, m.pr.unconf ? '환산 미확정' : '', '', m.pr.title); }
     txt('stPrSub', m.pr.sub);
     cls('stPrSub', 'ss ' + (m.pr.subLvl || ''));
-    tip('stPrSub', m.pr.sub);
+    var rk = m.pr.ko || ['', ''];
+    core.tipSet(el('stPrSub'), rk[0], rk[1], '');
 
     m.exh.forEach(function (x, i) {
       txt('stExN' + i, x.name);

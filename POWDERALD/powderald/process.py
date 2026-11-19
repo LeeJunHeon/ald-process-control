@@ -158,7 +158,7 @@ class ProcessRunner:
         if DEV.HAS_O3:
             ok = A.bit(ilk, A.ILK_O3_OK)
             out.append({"key": "o3", "label": "O3 Permit", "ok": ok,
-                        "detail": "준비됨" if ok else "O3 Line 먼저 켜기 필요",
+                        "detail": "준비됨" if ok else "O3 Line ON 먼저 필요",
                         "action": None if ok else "o3_on"})
             # ★ 래더의 공정 시작 조건은 O3 허가(바이패스 펌프·IV-B·5 s·알람 없음·O3 한계 > 0)만 보고
             #   발생기 요청은 보지 않는다 — 발생기만 꺼진 채 시작하면 O3 없이 돈다. O3 를 쓰는
@@ -166,7 +166,7 @@ class ProcessRunner:
             if _uses_o3(self.recipe):
                 gen = A.bit(s[A.D_AUX_OUT], A.AUX_O3_GEN)
                 out.append({"key": "o3_gen", "label": "O3 Generator ON", "ok": gen,
-                            "detail": "켜짐" if gen else "레시피가 O3 를 씀 — [O3 Line 켜기]로 발생기 켜기 필요",
+                            "detail": "켜짐" if gen else "레시피가 O3 를 씀 — [O3 Line ON] 으로 O3 Generator 켜기 필요",
                             "action": None if gen else "o3_on"})
 
         from .leakcheck import leak

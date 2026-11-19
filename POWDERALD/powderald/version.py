@@ -1,4 +1,4 @@
 """version.py — 프로그램 이름과 버전. 배포할 때마다 여기만 고친다."""
 APP_NAME = "Powder ALD Process Control"
-APP_VERSION = "0.8.6"
-BUILD_DATE = "2026-11-17"
+APP_VERSION = "0.8.7"
+BUILD_DATE = "2026-11-19"

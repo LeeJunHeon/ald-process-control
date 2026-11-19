@@ -53,7 +53,7 @@ HB_WATCH_S = 0.7                                                  # 제어 프�
 HB_WATCH_BAD_S = 1.3                                              # 와치독 PRM 이 0 이거나 이상할 때
 DEVICE_WORD = DEV.KEY.upper()                                     # ID 0 일 때 칠 이름(PEALD / POWDERALD)
 ATTACHED_MSG = ("거절: 제어 프로그램이 이 PLC 에 붙어 있음(PC 하트비트 D01000 이 바뀜) — 프로그램을 끄고 쓰거나, "
-                "프로그램의 조작 창으로 필요")
+                "프로그램의 조작 창 사용 필요")
 
 PRM_NAMES = {
     A.D_PRM_PC_WDT_MS: "PC 하트비트 끊김 판정 ms", A.D_PRM_BASE_PRESS: "베이스 압력(CVG 원시값)",
@@ -306,14 +306,14 @@ def cmd_write(args, mb: Modbus, is_fake: bool) -> int:
         bad = [a for a in addrs if area_of(a) == "other"]
         print(f"거절: D{bad[0]:05d} 는 쓰기 허용 목록 밖(명령 데이터 D01004~D01042 · 레시피 D02000~D03119 · "
               "하트비트 · 명령 D01000~D01003 · PRM D01100~D01124 만). PLC 작업 이미지(D04xxx)는 래더가 바로 요청으로 "
-              "써서 다음 스캔에 밸브가 열리거나 RF 가 켜질 수 있음 — 정말 써야 하면 --raw 를 주고 주소를 한 번 더 치기 필요")
+              "써서 다음 스캔에 밸브가 열리거나 RF 가 켜질 수 있음 — 정말 써야 하면 --raw 를 주고 주소를 한 번 더 입력 필요")
         return 3
     # ★ v0.6.2(D1): 확인은 누적이다 — 허용 목록 밖이 섞였다고 하트비트 · 명령 · PRM · 히터의 WRITE 확인을 건너뛰지 않는다
     strong = [a for a in addrs if area_of(a) in ("guard", "prm") or a in HEATER_WORDS]
     if dev_id == 0:
         # ★ v0.6.2(D5): ID 렁 전 PLC — --force(다른 장비도 통과) 대신 이 장비 이름을 치게
         print("★ 장비 ID 없음(0 — ID 렁 전): PLC 로 장비를 확인할 수 없음 — 이 PLC 가 이 장비 것인지 직접 확인 필요")
-        ans = _pkg.ask(f"이 장비 이름({DEVICE_WORD}) 그대로 치기 필요 > ")
+        ans = _pkg.ask(f"이 장비 이름({DEVICE_WORD}) 그대로 입력 필요 > ")
         if _refuse_eof(ans):
             return 1
         if ans.strip() != DEVICE_WORD:
@@ -321,7 +321,7 @@ def cmd_write(args, mb: Modbus, is_fake: bool) -> int:
             return 1
     if "other" in kinds:
         print("★ 허용 목록 밖(--raw) — 명령 12 의 검사 · 프로그램의 수동 잠금을 건너뛰고 래더가 바로 씀")
-        ans = _pkg.ask(f"주소를 한 번 더 치기 필요(D{addr:05d}) > ")
+        ans = _pkg.ask(f"주소를 한 번 더 입력 필요(D{addr:05d}) > ")
         if _refuse_eof(ans):
             return 1
         try:
@@ -343,7 +343,7 @@ def cmd_write(args, mb: Modbus, is_fake: bool) -> int:
             print("★ 히터 전원 · 설정 온도 요청 워드 — 프로그램의 다음 명령 13(히터 적용)이 이 값을 그대로 반영함"
                   "(화면에서 히터 하나만 바꿔도 12 채널 전부를 이 워드에서 읽어 씀). 확인이 끝나면 되돌리기 필요:")
             print("  " + revert_line(args, addr, old))
-        print("쓰려면 WRITE 치기 필요")
+        print("쓰려면 WRITE 입력 필요")
         ans = _pkg.ask("> ")
         if _refuse_eof(ans):
             return 1
@@ -419,7 +419,7 @@ def parse_args(argv=None):
     ap.add_argument("--ctl-port", type=int, default=0, help="가짜 PLC 제어 포트(기본 --port + 1)")
     ap.add_argument("--config", default="", help="환산에 쓸 설정 파일(기본: 프로그램 config.json, 없으면 예시 설정)")
     ap.add_argument("--yes", action="store_true", help="y 확인 생략 — 가짜 PLC 에만('WRITE' · 주소 다시 치기는 생략 안 함)")
-    ap.add_argument("--force", action="store_true", help="장비 ID 가 달라도 쓴다(쓰지 마기 필요 — 다른 장비 PLC 일 수 있다)")
+    ap.add_argument("--force", action="store_true", help="장비 ID 가 달라도 쓴다(쓰지 말 것 — 다른 장비 PLC 일 수 있음)")
     ap.add_argument("--raw", action="store_true", help="허용 목록 밖 주소도 쓴다(주소를 한 번 더 쳐야 한다)")
     sub = ap.add_subparsers(dest="cmd", required=True)
     p = sub.add_parser("status")

@@ -281,7 +281,7 @@ header {
 
 /* ===================== 설명창 (v0.8.6 — core.js) ===================== */
 #tipbox {
-  position: fixed; z-index: 95; pointer-events: none;
+  position: fixed; z-index: 1000; pointer-events: none;      /* v0.8.7: 어떤 창(알람 창 100 · 확인 창 90 · 조작 창)보다 위 */
   max-width: min(440px, calc(100vw - 8px)); padding: 6px 10px; border-radius: var(--r-2);
   border: 1px solid var(--line-2); background: var(--panel); color: var(--ink);
   box-shadow: var(--shadow-lg); line-height: 1.45; white-space: normal; overflow-wrap: anywhere;

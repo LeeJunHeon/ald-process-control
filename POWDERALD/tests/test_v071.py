@@ -481,6 +481,7 @@ def test_u1_alarm_modal_shows_whole_check():
       var tbl = {};
       const bind = () => tbl, html = (e, h) => { e.innerHTML = h; }, chip = t => t, T = k => k,
             esc = s => String(s), downWhy = () => '', canOperate = () => true,
+            tipKo = () => '', tipAttr = () => '',            // v0.8.7: 알람 이름의 설명창(여기서는 '확인: …' 줄만 본다)
             d = { querySelectorAll: () => [] };
       %s
       renderAlarmModal();

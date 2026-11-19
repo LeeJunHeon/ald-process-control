@@ -182,6 +182,16 @@
   }
   T.dict = D;
   T.tips = TIP;
+  var BY_LABEL = null;
+  /** v0.8.7: 영어 라벨 글자 → 같은 키(없으면 '') — T() 로 그린 라벨 · 배관도 상자 이름에 같은 설명창을 찾는다 */
+  T.keyOf = function (label) {
+    if (!BY_LABEL) {
+      BY_LABEL = {};
+      Object.keys(D).forEach(function (k) { if (!Object.prototype.hasOwnProperty.call(BY_LABEL, D[k])) BY_LABEL[D[k]] = k; });
+    }
+    var s = String(label == null ? '' : label).replace(/\s+/g, ' ').trim();
+    return s && Object.prototype.hasOwnProperty.call(BY_LABEL, s) ? BY_LABEL[s] : '';
+  };
   /** v0.8.6: 설명창 [한국어 이름, 설명] — 없으면 null */
   T.tip = function (key) {
     return Object.prototype.hasOwnProperty.call(TIP, key) ? TIP[key] : null;

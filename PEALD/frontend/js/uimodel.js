@@ -89,7 +89,16 @@
     hb: ['PLC Stalled', 'PLC 하트비트를 확인하는 중']
   };
 
+  // v0.8.7: 상태 띠 설명창 — 장비 상태(D00001) · 시퀀서 상태(D00020) 코드의 한국어 이름 · 뜻(첫 줄은 한국어 이름)
+  var STATE_KO = { 0: ['초기화', 'PLC 시작 중'], 1: ['대기', '공정 아님'], 2: ['공정 준비', '블록 준비 · 조건 확인'],
+                   3: ['공정 중', '레시피 실행 중'], 4: ['일시정지', '스텝 끝에서 멈춤'], 5: ['사이클 후 정지 중', '이번 사이클 끝나면 정지'],
+                   6: ['안전 정지', 'PLC 가 장비를 세움 — 원인 제거 후 Alarm Reset'] };
+  var SEQ_KO = { 0: '시퀀서 대기', 1: '시퀀서 조건 확인', 2: '시퀀서 표 복사', 3: '시퀀서 블록 준비', 4: '시퀀서 스텝 실행',
+                 5: '시퀀서 다음 스텝 계산', 6: '시퀀서 완료', 7: '시퀀서 일시정지', 8: '시퀀서 중단' };
+  var DOWN_KO = { offline: '서버 끊김', noaddr: 'PLC 주소 없음', stalled: 'PLC 멈춤', lost: 'PLC 끊김', hb: 'PLC 확인 중' };
+
   /** 상단 띠 다섯 칸 { dev, proc, pr, exh[pump, ive, vv], alm } — 각 {text, lvl, sub, subLvl, title}.
+   *  v0.8.7: dev.ko · pr.ko · proc.ko · proc.subKo = 설명창 [한국어 이름, 설명](없으면 null — 설명창 없음)
    *  lvl: ok · warn · alarm · off(빈 원) · unknown(점선). 칸 자리 · 수는 늘 같다(값 · 색만 바뀐다). */
   function stripModel(state, live, offline) {
     var s = state || {}, t = live || {}, str = s.structure || {}, dev = s.device || {};
@@ -99,12 +108,14 @@
 
     /* --- DEVICE STATE --- */
     if (!conn) {
-      out.dev = { text: DOWN[ls][0], lvl: 'unknown', sub: DOWN[ls][1], subLvl: '', title: DOWN[ls][1] };
+      out.dev = { text: DOWN[ls][0], lvl: 'unknown', sub: DOWN[ls][1], subLvl: '', title: '', ko: [DOWN_KO[ls] || '모름', DOWN[ls][1]] };
     } else {
       var st = t.state || {}, seq = t.seq || {};
       var name = st.code === ST_STOPPING ? 'Stopping' : (st.name || DASH);
       var sub = (st.code === ST_STOPPING ? 'after Cycle · ' : '') + 'Sequencer · ' + (seq.name || DASH);
-      out.dev = { text: name, lvl: LV[stateLevel(st.code)], sub: sub, subLvl: '', title: (st.name || '') + ' — ' + sub };
+      var sk = STATE_KO[st.code] || ['모름', ''];
+      out.dev = { text: name, lvl: LV[stateLevel(st.code)], sub: sub, subLvl: '', title: '',
+                  ko: [sk[0], sk[1] + (SEQ_KO[seq.code] != null ? ' · ' + SEQ_KO[seq.code] : '')] };
       if (ls === 'id') {
         out.dev.lvl = 'alarm';
         out.dev.sub = 'Device ID mismatch — 조작 잠김';
@@ -120,7 +131,9 @@
     var run = !!p.running;
     var rname = p.recipe ? p.recipe + (p.number ? ' · No. ' + p.number : '') : '';
     out.proc = { text: conn ? (rname || 'No recipe selected') : DASH, lvl: '', dim: conn && !rname,
-                 sub: '', subLvl: '', last: false, bar: 0, barLvl: '', title: rname };
+                 sub: '', subLvl: '', last: false, bar: 0, barLvl: '', title: rname,
+                 ko: !conn ? null : rname ? ['레시피', '지금 고른 레시피 · PLC 표 번호'] : ['레시피', '레시피 선택 안 됨 — Recipe 탭에서 고름'],
+                 subKo: null };
     if (run && p.total_ms) {
       out.proc.bar = Math.max(0, Math.min(1, 1 - (p.remaining_ms || 0) / p.total_ms));
       out.proc.barLvl = (p.paused || p.stop_reserved) ? 'warn' : 'ok';
@@ -133,12 +146,15 @@
       var head = p.adopted ? 'Adopted' : cyc;
       out.proc.sub = [head, rem].filter(Boolean).join(' · ');
       out.proc.subLvl = (p.paused || p.stop_reserved) ? 'warn' : '';
+      out.proc.subKo = ['공정 진행', p.adopted ? '이어받은 공정 · 남은 시간' : '블록 사이클 회차 · 남은 시간'];
     } else if (p.phase && p.phase !== 'idle' && p.message) {
       out.proc.sub = p.message;
       out.proc.subLvl = 'warn';
+      out.proc.subKo = ['시작 절차', '레시피 올리기 · 베이스 압력 기다림 · 시작 명령'];
     } else if (p.last_result) {
       out.proc.sub = p.last_result;
       out.proc.last = true;
+      out.proc.subKo = ['마지막 결과', '바로 앞 공정의 끝 결과'];
       out.proc.subLvl = root.T && root.T.resultLevel ? root.T.resultLevel(p.last_result) : '';
     }
 
@@ -146,16 +162,18 @@
     var pr = conn ? (t.pressure || {}) : {};
     var unconf = (s.unconfirmed || []).indexOf('CVG Pressure') >= 0;
     out.pr = { text: conn ? f.torr(pr.cvg) : DASH, unit: 'Torr · CVG', unconf: unconf, lvl: conn ? '' : 'unknown',
-               sub: '', subLvl: '', title: unconf ? 'CVG 환산이 확정되지 않음(Settings — 환산 확인)' : '' };
+               sub: '', subLvl: '', title: unconf ? 'CVG 환산이 확정되지 않음(Settings — 환산 확인)' : '', ko: null };
     if (conn && run) {
       var ex = t.extra || {};
       out.pr.sub = 'In process' + (dev.has_pcv ? ' · PCV ' + f.pct(ex.pcv_pv) + ' %' : '') +
         (pr.cm_installed ? ' · CM ' + f.torr(pr.cm) : '');
+      out.pr.ko = ['공정 중 압력', '공정 중' + (dev.has_pcv ? ' · PCV 개도' : '') + (pr.cm_installed ? ' · CM 압력' : '')];
     } else if (conn) {
       var base = find(p.checks, function (c) { return c.key === 'base'; });
       if (base) {
         out.pr.sub = 'Base ' + f.torr(base.target) + ' · ' + (base.ok ? 'reached' : 'not reached');   // 단위는 윗줄(Torr · CVG)
         out.pr.subLvl = base.ok ? '' : 'warn';
+        out.pr.ko = ['베이스 압력', '목표 ' + f.torr(base.target) + ' Torr · ' + (base.ok ? '도달' : '아직 미도달')];
       }
       if (pr.cm_installed) out.pr.sub += (out.pr.sub ? ' · ' : '') + 'CM ' + f.torr(pr.cm);
     } else {

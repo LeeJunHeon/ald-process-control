@@ -699,7 +699,7 @@ def _manual_allowed():
     if _leak().running:
         return False, "누설률 점검 중에는 수동 밸브를 조작할 수 없음"
     if time.monotonic() >= state.manual_unlock_until:
-        return False, "수동 조작이 잠겨 있음 — 잠금 해제 먼저 켜기 필요"
+        return False, "수동 조작이 잠겨 있음 — Unlock 먼저 켜기 필요"
     return True, ""
 
 

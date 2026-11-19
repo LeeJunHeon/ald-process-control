@@ -83,6 +83,16 @@
   function tipKo(name, desc) {
     return (name ? ' data-tipn="' + esc(name) + '"' : '') + (desc ? ' data-tipd="' + esc(desc) + '"' : '');
   }
+  /** v0.8.7: 요소의 한국어 이름 · 설명 · 상태 줄을 한 번에(바뀐 것만) — 상태 띠처럼 값에 따라 이름이 바뀌는 곳 */
+  function tipSet(el, name, desc, extra) {
+    if (!el) return;
+    [['data-tipn', name], ['data-tipd', desc]].forEach(function (kv) {
+      var v = kv[1] ? String(kv[1]) : '';
+      if ((el.getAttribute(kv[0]) || '') === v) return;
+      if (v) el.setAttribute(kv[0], v); else el.removeAttribute(kv[0]);
+    });
+    tip(el, extra);
+  }
   /** 요소의 지금 상태 줄(data-tip)을 바꾼다(같으면 그대로) — 예전 title 자리 */
   function tip(el, text) {
     if (!el) return;
@@ -92,15 +102,9 @@
     if (tipFor === el && tipEl && !tipEl.hidden) tipPaint();
   }
   // T() 로 그린 영어 라벨(단추 · 표 머리 · 상태 글자) — 글자가 사전 값과 똑같으면 같은 키의 설명창(data-t 를 따로 달지 않아도)
-  var labelKey = null;
   function keyOfLabel(e) {
-    if (!labelKey) {
-      labelKey = {};
-      var D = (w.T && w.T.dict) || {};
-      Object.keys(D).forEach(function (k) { if (!(D[k] in labelKey)) labelKey[D[k]] = k; });
-    }
     var s = (e.textContent || '').replace(/\s+/g, ' ').trim();
-    return s && s.length <= 40 && Object.prototype.hasOwnProperty.call(labelKey, s) ? labelKey[s] : '';
+    return s.length <= 40 && w.T && w.T.keyOf ? w.T.keyOf(s) : '';
   }
   function tipTarget(node) {
     var e = node && node.nodeType === 1 ? node : (node && node.parentElement);
@@ -126,6 +130,8 @@
     if (n) out.push(['b', n]); else if (t && t[0]) out.push(['b', t[0]]);
     if (dd) out.push(['d', dd]); else if (!n && t && t[1]) out.push(['d', t[1]]);
     String(e.getAttribute('data-tip') || '').split('\n').forEach(function (s) { if (s) out.push(['x', s]); });
+    // v0.8.7: 첫 줄은 한국어 이름이어야 한다 — 한국어로 덧붙일 것이 없으면(영어 글만 되풀이) 띄우지 않는다
+    if (out.length && !/[가-힣]/.test(out[0][1])) return [];
     return out;
   }
   function tipPaint() {
@@ -619,10 +625,12 @@
     var rows = (t.alarms || []).map(function (a) {
       // v0.7.0(A1): 이름 아래 작게 '확인: …'. ★ v0.7.1(U1): 자르지 않는다 — ' — ' 뒤에 안전 문구(원인을 찾기 전에 다시
       //   시작하지 않는다 · 출입을 막는다 · 공정 중에는 열지 않는다)가 있다. 길면 줄바꿈
-      var ck = (defs[a.code] || {}).check || '';
+      var df = defs[a.code] || {}, ck = df.check || '';
+      // v0.8.7: 알람 이름에 Alarm/Log 탭 알람 표와 같은 설명창(한국어 알람 이름 · 원인 · 조치) — 창 안 '확인: …' 줄은 그대로
       return '<tr><td>' + chip(a.crit ? T('s.critical') : T('s.warning'), a.crit ? 'stop' : 'warn') + '</td>' +
         '<td class="mono">' + esc(a.since) + '</td>' +
-        '<td class="l">' + esc(a.name) + (ck ? '<div class="am-check">확인: ' + esc(ck) + '</div>' : '') +
+        '<td class="l"><span class="am-name"' + tipKo(df.ko || a.name, df.cause ? '원인: ' + df.cause : '') +
+        tipAttr(ck ? '조치: ' + ck : '') + '>' + esc(a.name) + '</span>' + (ck ? '<div class="am-check">확인: ' + esc(ck) + '</div>' : '') +
         '</td></tr>';
     }).join('');
     // 서버 · PLC 가 끊겼거나 PLC 가 멈췄으면 알람을 모른다 — '없습니다' 가 아니라 '알 수 없음'
@@ -793,7 +801,10 @@
 
   w.core = {
     bind: bind, esc: esc, h: h, html: html, setText: setText, chip: chip, bit: bit,
-    tip: tip, tipAttr: tipAttr, tipKo: tipKo, tipHide: tipHide,
+    tip: tip, tipAttr: tipAttr, tipKo: tipKo, tipHide: tipHide, tipSet: tipSet,
+    /** 설명창이 뜨기까지의 머무름(ms) — 시험이 화면 전체를 빨리 훑을 때만 바꾼다 */
+    get tipDelay() { return TIP_DELAY_MS; },
+    set tipDelay(v) { TIP_DELAY_MS = Math.max(0, Number(v) || 0); },
     toast: toast, setTab: setTab, fit: fit, confirmAsk: confirmAsk, closeConfirm: closeConfirm,
     busy: busy, sendBusy: sendBusy, BUSY_TIP: BUSY_TIP,
     get layout() { return curLayout || 'narrow'; },
