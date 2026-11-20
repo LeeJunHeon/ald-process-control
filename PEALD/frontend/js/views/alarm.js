@@ -93,7 +93,7 @@
       var df = def(a.code), open = !!openCode[a.code];
       // v0.8.6: 설명창 — 한국어 알람 이름 · 원인 · 조치(device.py) · 누르면 펼침
       html += '<tr class="almrow' + (a.crit ? ' hl' : '') + '" tabindex="0" role="button" aria-expanded="' + open +
-        '" data-almcode="' + core.esc(a.code) + '"' + core.tipKo(df.ko || a.name, df.cause ? '원인: ' + df.cause : '') +
+        '" data-almcode="' + core.esc(a.code) + '"' + core.tipKo(df.ko || '알람', df.cause ? '원인: ' + df.cause : '') +
         core.tipAttr((df.check ? '조치: ' + df.check + String.fromCharCode(10) : '') + '누르면 원인 · 조치 펼침') + '>' +
         '<td>' + core.chip(a.crit ? T('s.critical') : T('s.warning'), a.crit ? 'stop' : 'warn') + '</td>' +
         '<td class="mono">' + core.esc(a.since) + '</td>' +
@@ -154,7 +154,7 @@
       '</th><th>' + T('v.code') + '</th><th class="l">' + T('v.message') + '</th></tr></thead><tbody>';
     h.forEach(function (a) {
       var df = def(a.code);
-      html += '<tr' + core.tipKo(df.ko || a.name, df.cause ? '원인: ' + df.cause : '') + core.tipAttr(df.check ? '조치: ' + df.check : '') +
+      html += '<tr' + core.tipKo(df.ko || '알람', df.cause ? '원인: ' + df.cause : '') + core.tipAttr(df.check ? '조치: ' + df.check : '') +
         '><td class="mono">' + core.esc((a.date || '') + ' ' + a.since) + '</td>' +
         '<td class="mono">' + core.esc(a.cleared || fmt.DASH) + '</td>' +
         '<td>' + core.chip(a.crit ? T('s.critical') : T('s.warning'), a.crit ? 'stop' : 'warn') + '</td>' +

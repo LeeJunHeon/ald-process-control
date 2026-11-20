@@ -64,13 +64,14 @@
       return '<div class="dl-item' + (it.name === cur ? ' on' : '') + '" tabindex="0" data-dlname="' + core.esc(it.name) + '">' +
         '<div class="a"><span class="mono">' + core.esc((it.started || '').slice(0, 16)) + '</span>' +
         // ★ v0.4.14: 긴 결과는 칩 안에서 말줄임 + title 에 전체 글(768 폭에서 칸을 넘어 시각을 세 줄로 밀던 것)
-        core.chip(res || '진행 중?', lvl, res || '진행 중?') + '</div>' +
+        // v0.8.8: 잘린 글 전체를 보이는 설명창은 한국어 이름을 스스로 갖는다(글이 영어 · 숫자뿐이어도 뜨게)
+        core.chip(res || '진행 중?', lvl, res || '진행 중?', ['공정 결과', '이 공정의 끝 결과']) + '</div>' +
         '<div class="b">' + core.esc(it.recipe || '') +
         (it.number != null ? ' <span class="dim">#' + core.esc(it.number) + '</span>' : '') +
         // v0.7.0(A2): 작업자 · 시료
         // v0.7.1(U5): 띄어쓰기 없는 긴 시료 이름이 시간 · 줄 수를 밀어내지 않게 — 줄임표 + title
-        ((it.operator || it.sample) ? ' <span class="dim dl-who" data-tip="' +
-          core.esc([it.operator, it.sample].filter(Boolean).join(' · ')) + '">· ' +
+        ((it.operator || it.sample) ? ' <span class="dim dl-who"' + core.tipKo('작업자 · 시료', '공정 시작 때 넣은 값') +
+          core.tipAttr([it.operator, it.sample].filter(Boolean).join(' · ')) + '>· ' +
           core.esc([it.operator, it.sample].filter(Boolean).join(' · ')) + '</span>' : '') +
         '<span class="dim right">' + (it.took_s != null ? fmt.hms(it.took_s) : fmt.DASH) +
         (it.rows != null ? ' · ' + core.esc(it.rows) + ' rows' : '') + (it.guessed ? ' (추정)' : '') + '</span></div></div>';
@@ -98,7 +99,8 @@
           ((m.operator || m.sample || m.memo)
             ? '<div class="dim dl-run">' + (m.operator ? 'Operator ' + core.esc(m.operator) : '') +
               (m.sample ? (m.operator ? ' · ' : '') + 'Sample ' + core.esc(m.sample) : '') +
-              (m.memo ? '<div class="dl-memo" data-tip="' + core.esc(m.memo) + '">' + core.esc(m.memo) + '</div>' : '') + '</div>'
+              (m.memo ? '<div class="dl-memo"' + core.tipKo('메모', '공정 시작 때 넣은 메모') + core.tipAttr(m.memo) + '>' +
+                core.esc(m.memo) + '</div>' : '') + '</div>'
             : '');
       }
       buildPicker();

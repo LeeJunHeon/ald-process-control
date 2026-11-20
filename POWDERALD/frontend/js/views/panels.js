@@ -192,7 +192,7 @@
         setTxt(row.querySelector('.evt'), ts);
         var mm = row.querySelector('.evm');
         setTxt(mm, e ? e.msg : '');
-        setTitle(mm, e ? e.msg : '');
+        core.tipSet(mm, e ? '이벤트' : '', '', e ? e.msg : '');      // v0.8.8: 잘린 글 전체 — 한국어 이름을 스스로
       });
     }
   };

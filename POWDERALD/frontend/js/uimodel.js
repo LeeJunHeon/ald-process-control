@@ -510,7 +510,7 @@
     stateLevel: stateLevel, linkState: linkState, stripModel: stripModel, alreadyWhy: alreadyWhy,
     checkDetail: checkDetail, startSlots: startSlots,
     lamp: lamp, annunciator: annunciator, annRows: annRows, ANN_TIPS: ANN_TIPS,
-    valveStrip: valveStrip, fpKo: fpKo, events: events, toastMerge: toastMerge, toastText: toastText, busyStore: busyStore
+    valveStrip: valveStrip, fpKo: fpKo, events: events, seqKo: function (code) { return SEQ_KO[code] || ''; }, toastMerge: toastMerge, toastText: toastText, busyStore: busyStore
   };
   if (typeof module !== 'undefined' && module.exports) module.exports = UI;
   else root.UI = UI;

@@ -533,7 +533,7 @@ def test_a1_alarm_cause_check_everywhere(clean_state):
     assert defs["A0-06"]["cause"].startswith("PC 하트비트가 PC Heartbeat Timeout 넘게 멈춤")
     assert defs["A0-00"]["check"].startswith("버튼을 돌려 풀고 원인을 없앤 뒤 Alarm Reset")
     alarm = _src("frontend", "js", "views", "alarm.js")
-    assert 'tabindex="0" role="button" aria-expanded="' in alarm and "almhelp" in alarm and "core.tipKo(df.ko || a.name" in alarm
+    assert 'tabindex="0" role="button" aria-expanded="' in alarm and "almhelp" in alarm and "core.tipKo(df.ko || '알람'" in alarm   # v0.8.8
     core = _src("frontend", "js", "core.js")
     assert "'<div class=\"am-check\">확인: '" in core
     # v0.7.1(U1): 첫 문장으로 자르지 않는다(' — ' 뒤의 안전 문구가 빠졌다) — 전부 보인다

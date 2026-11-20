@@ -61,8 +61,9 @@
     el.innerHTML = markup;
   }
 
-  function chip(text, level, tip) {
-    return '<span class="chip ' + (level || '') + '"' + tipAttr(tip) + '>' + esc(text) + '</span>';
+  /** 칩. tip = 설명창 상태 줄, ko = [한국어 이름, 설명](v0.8.8 — 상태 줄에 한글이 없을 수 있으면 이름을 준다) */
+  function chip(text, level, tip, ko) {
+    return '<span class="chip ' + (level || '') + '"' + (ko ? tipKo(ko[0], ko[1]) : '') + tipAttr(tip) + '>' + esc(text) + '</span>';
   }
 
   /* ===================== 설명창 (v0.8.6) ===================== */
@@ -74,6 +75,10 @@
   var TIP_DELAY_MS = 400;
   var TIP_SEL = '[data-tip],[data-tk],[data-t],[data-tipn]';
   var tipEl = null, tipTimer = 0, tipFor = null, tipXY = null, tipByFocus = false, tipTick = 0;
+  // v0.8.8: 안전망(첫 줄에 한글이 없으면 띄우지 않음)에 걸린 설명창은 조용히 버리지 않는다 — 횟수 · 마지막 요소를 세고
+  //   (시험이 core.tipDropped 로 읽음) 콘솔에 알린다. 정상 화면에서는 0 — 한글이 없을 수 있는 글(사용자 글 · 파일 이름 ·
+  //   계열 · 밸브 이름 · PLC/설정의 영어 이름)을 다는 자리는 한국어 이름(data-tipn · data-tk)을 스스로 갖는다
+  var tipDrop = { count: 0, el: null, first: '', html: '' };
 
   /** 템플릿용 ' data-tip="…"'(없으면 '') */
   function tipAttr(text) {
@@ -112,11 +117,17 @@
     if (e.closest('canvas,[data-notip],.chartpanel .panel-body,.dl-chart,#tipbox')) return null;
     var hit = e.closest(TIP_SEL);
     // 가까운 라벨(세 단계 안 — 그보다 먼 칸 설명창보다 먼저)
+    // ★ v0.8.8: 라벨 글자로 찾은 키는 data-tka 에 두고 늘 지금 글자로 다시 찾는다. 예전에는 data-tk 로 굳어서 값이 바뀌는
+    //   글자(상단 띠 ALARM 'No Alarm' → '1 Critical')에 옛 키가 남아 알람 중에도 '알람 없음' 설명창이 떴다
     for (var x = e, i = 0; x && i < 3; x = x.parentElement, i++) {
       if (x === hit && (hit.hasAttribute('data-t') || hit.hasAttribute('data-tk') || hit.hasAttribute('data-tipn'))) break;
-      if (x.nodeType === 1 && x.children.length <= 1 && keyOfLabel(x)) {
-        x.setAttribute('data-tk', keyOfLabel(x));
-        return x;
+      if (x.nodeType === 1 && x.children.length <= 1) {
+        var lk = keyOfLabel(x);
+        if (lk) {
+          if (x.getAttribute('data-tka') !== lk) x.setAttribute('data-tka', lk);
+          return x;
+        }
+        if (x.hasAttribute('data-tka')) x.removeAttribute('data-tka');
       }
       if (x === hit) break;
     }
@@ -124,15 +135,23 @@
   }
   function tipLines(e) {
     var out = [];
-    var k = e.getAttribute('data-tk') || e.getAttribute('data-t');
+    var k = e.getAttribute('data-tk') || e.getAttribute('data-t') || (e.hasAttribute('data-tka') ? keyOfLabel(e) : '');
     var t = k && w.T && w.T.tip ? w.T.tip(k) : null;
     var n = e.getAttribute('data-tipn'), dd = e.getAttribute('data-tipd');
     if (n) out.push(['b', n]); else if (t && t[0]) out.push(['b', t[0]]);
     if (dd) out.push(['d', dd]); else if (!n && t && t[1]) out.push(['d', t[1]]);
     String(e.getAttribute('data-tip') || '').split('\n').forEach(function (s) { if (s) out.push(['x', s]); });
     // v0.8.7: 첫 줄은 한국어 이름이어야 한다 — 한국어로 덧붙일 것이 없으면(영어 글만 되풀이) 띄우지 않는다
-    if (out.length && !/[가-힣]/.test(out[0][1])) return [];
+    if (out.length && !/[가-힣]/.test(out[0][1])) { tipDropOne(e, out[0][1]); return []; }
     return out;
+  }
+  function tipDropOne(e, first) {
+    var html = String(e.outerHTML || '').slice(0, 160);
+    if (html !== tipDrop.html && w.console && w.console.warn) w.console.warn('설명창 안전망: 첫 줄에 한글 없음 — ' + first + ' · ' + html);
+    tipDrop.count++;
+    tipDrop.el = e;
+    tipDrop.first = first;
+    tipDrop.html = html;
   }
   function tipPaint() {
     var e = tipFor;
@@ -629,7 +648,7 @@
       // v0.8.7: 알람 이름에 Alarm/Log 탭 알람 표와 같은 설명창(한국어 알람 이름 · 원인 · 조치) — 창 안 '확인: …' 줄은 그대로
       return '<tr><td>' + chip(a.crit ? T('s.critical') : T('s.warning'), a.crit ? 'stop' : 'warn') + '</td>' +
         '<td class="mono">' + esc(a.since) + '</td>' +
-        '<td class="l"><span class="am-name"' + tipKo(df.ko || a.name, df.cause ? '원인: ' + df.cause : '') +
+        '<td class="l"><span class="am-name"' + tipKo(df.ko || '알람', df.cause ? '원인: ' + df.cause : '') +
         tipAttr(ck ? '조치: ' + ck : '') + '>' + esc(a.name) + '</span>' + (ck ? '<div class="am-check">확인: ' + esc(ck) + '</div>' : '') +
         '</td></tr>';
     }).join('');
@@ -805,6 +824,9 @@
     /** 설명창이 뜨기까지의 머무름(ms) — 시험이 화면 전체를 빨리 훑을 때만 바꾼다 */
     get tipDelay() { return TIP_DELAY_MS; },
     set tipDelay(v) { TIP_DELAY_MS = Math.max(0, Number(v) || 0); },
+    /** v0.8.8: 안전망에 걸려 띄우지 않은 횟수 · 마지막 첫 줄 · 요소(앞 160 자). 정상 화면에서는 count 0 */
+    get tipDropped() { return { count: tipDrop.count, first: tipDrop.first, html: tipDrop.html }; },
+    get tipDroppedEl() { return tipDrop.el; },
     toast: toast, setTab: setTab, fit: fit, confirmAsk: confirmAsk, closeConfirm: closeConfirm,
     busy: busy, sendBusy: sendBusy, BUSY_TIP: BUSY_TIP,
     get layout() { return curLayout || 'narrow'; },

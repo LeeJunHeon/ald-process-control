@@ -521,7 +521,8 @@ def test_u4_u5_u6_small():
     main = _src("frontend", "js", "views", "main.js")
     assert "core.chip('Trip', 'warn'" in main and "t.state.code === ST_SAFE_STOP" in main and "code === 6" not in main
     dl = _src("frontend", "js", "views", "datalog.js")
-    assert 'dl-who" data-tip="' in dl and 'dl-memo" data-tip="' in dl
+    # v0.8.8: 잘린 글 전체를 보이는 설명창 — 한국어 이름을 스스로 갖는다(작업자 · 시료 · 메모가 영어뿐이어도 뜨게)
+    assert "dl-who\"' + core.tipKo('작업자 · 시료'" in dl and "dl-memo\"' + core.tipKo('메모'" in dl
     css = _src("frontend", "css", "style.css")
     assert "-webkit-line-clamp: 2" in css and ".dl-item .b .dl-who {" in css and "text-overflow: ellipsis" in css
     html = _src("frontend", "index.html")

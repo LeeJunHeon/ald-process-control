@@ -254,7 +254,8 @@
     if (lb) {
       core.html(lb, rec.length ? rec.map(function (r) {
         var res = r.Result || '';
-        return '<tr' + (r.Reason ? ' data-tip="' + core.esc(r.Reason) + '"' : '') + '><td class="l mono">' + core.esc(r.Time || '') +
+        // v0.8.8: 사유는 파일에서 읽은 글 — 한국어 이름을 스스로(글에 한글이 없어도 뜨게)
+        return '<tr' + (r.Reason ? core.tipKo('점검 사유', '') + core.tipAttr(r.Reason) : '') + '><td class="l mono">' + core.esc(r.Time || '') +
           '</td><td>' + core.esc(r.Gauge || '') + '</td><td class="mono">' + core.esc(r['mTorr/min'] || fmt.DASH) +
           '</td><td>' + core.chip(res, res === 'PASS' ? 'ok' : res === 'FAIL' ? 'stop' : 'warn') + '</td></tr>';
       }).join('') : '<tr><td class="l dim" colspan="4">기록 없음</td></tr>');

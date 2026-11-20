@@ -41,7 +41,7 @@ def test_tooltip_z_index_is_above_every_window():
 def test_alarm_modal_names_get_the_same_tooltip_as_the_alarm_table():
     core = open(os.path.join(FRONT, "js", "core.js"), encoding="utf-8").read()
     body = core[core.index("function renderAlarmModal"):core.index("function renderAlarmModal") + 2000]
-    assert "tipKo(df.ko || a.name, df.cause ? '원인: ' + df.cause : '')" in body
+    assert "tipKo(df.ko || '알람', df.cause ? '원인: ' + df.cause : '')" in body   # v0.8.8: 정의에 없는 코드도 첫 줄은 한국어
     assert "tipAttr(ck ? '조치: ' + ck : '')" in body
     assert "'<div class=\"am-check\">확인: ' + esc(ck)" in body             # 창 안 '확인: …' 줄은 그대로
 

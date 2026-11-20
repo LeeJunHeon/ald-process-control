@@ -311,7 +311,7 @@
         core.esc(lim.step_ms_max || 3276700) + '" data-rcs="time_ms" value="' + attr(st.time_ms) + '"></td>' +
         valves.map(function (v) {
           return '<td><span class="cb' + (hasValve(st, v) ? ' on' : '') +
-            '" tabindex="0" role="checkbox" data-tip="' + core.esc(v) + '" data-rcv="' + core.esc(v) + '"></span></td>';
+            '" tabindex="0" role="checkbox"' + valveTip(v) + ' data-rcv="' + core.esc(v) + '"></span></td>';
         }).join('') +
         ((core.state.device || {}).has_rf
           ? '<td><span class="cb' + (st.rf ? ' on' : '') + '" tabindex="0" role="checkbox" data-rcflag="rf"></span></td>' : '') +
@@ -422,6 +422,11 @@
   function attr(v) { return core.esc((v === null || v === undefined) ? '' : v); }
 
   function hasValve(st, tag) { return arr(st.valves).indexOf(tag) >= 0; }
+  /** v0.8.8: 스텝 표 밸브 칸의 설명창 — 그 밸브의 한국어 이름 · 설명(장비 구조 — 밸브 띠 · 조작 창 · 배관도와 같은 출처) */
+  function valveTip(tag) {
+    var ko = w.UI.fpKo((core.state || {}).structure, 'valve:' + tag);
+    return core.tipKo(ko[0] || '밸브', ko[1]) + core.tipAttr(tag + ' — 켜면 이 스텝에서 열림');
+  }
 
   /** 목록이 아닌 값(형식이 틀린 파일)은 빈 목록으로 그린다 — 오류는 서버 검증이 알려 준다. */
   function arr(v) { return Array.isArray(v) ? v : []; }

@@ -83,7 +83,7 @@
       items[i].hidden = true;
       hid.unshift(items[i].textContent);
       more.textContent = '+' + hid.length;
-      core.tip(more, hid.join('\n'));
+      core.tipSet(more, '가린 범례', '칸이 좁아 가려진 계열', hid.join('\n'));     // v0.8.8: 계열 이름은 영어 — 한국어 이름을 줌
     }
     if (!hid.length) more.remove();
   }

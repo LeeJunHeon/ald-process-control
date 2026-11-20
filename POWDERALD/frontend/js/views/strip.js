@@ -24,7 +24,6 @@
   function el(name) { return core.bind(name, d.getElementById('strip')); }
   function txt(name, v) { var e = el(name); if (e && e.textContent !== v) e.textContent = v; }
   function cls(name, v) { var e = el(name); if (e && e.className !== v) e.className = v; }
-  function tip(name, v) { core.tip(el(name), v || ''); }        // v0.8.6: 설명창 상태 줄
 
   function build() {
     var box = d.getElementById('strip');
@@ -114,7 +113,8 @@
     txt('stAlmText', m.alm.text);
     txt('stAlmSub', m.alm.sub);
     cls('stAlmSub', 'ss ' + (m.alm.subLvl || ''));
-    tip('stAlm', (m.alm.title ? m.alm.title + '\n' : '') + TIPS.alm);
+    // v0.8.8: 알람 줄('Critical · Gas Leak · 09:04:05')은 영어 — 한국어 이름 '현재 알람' 을 첫 줄로
+    core.tipSet(el('stAlm'), '현재 알람', TIPS.alm, m.alm.title || '');
   }
 
   if (d && d.addEventListener) {

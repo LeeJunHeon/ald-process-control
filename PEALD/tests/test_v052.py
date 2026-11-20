@@ -66,7 +66,7 @@ def test_a3_legend_two_lines_then_more():
     assert ".legend-inline { max-height: 30px; line-height: 15px;" in css           # 두 줄(15 × 2)
     assert ".chartpanel .panel-head { height: auto; min-height: 30px;" in css
     js = _src("js", "views", "trend.js")
-    assert "fitLegend(box);" in js and "more.textContent = '+' + hid.length;" in js and "core.tip(more, hid.join" in js
+    assert "fitLegend(box);" in js and "more.textContent = '+' + hid.length;" in js and "core.tipSet(more, '가린 범례', '칸이 좁아 가려진 계열', hid.join" in js   # v0.8.8: 설명창 한국어 이름
 
 
 # ===================== A6. 남은 한글 라벨 =====================

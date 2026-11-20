@@ -245,11 +245,13 @@
     }
     // 시퀀서 상태는 장비 상태와 다를 때만(같은 말이 두 번 보이면 읽지 않는다). 장비 상태는 상단 띠에
     var qn = q.name || '';
-    core.html(core.bind('pqSeq', root), conn && t.state && qn && qn !== t.state.name ? core.chip(qn, 'off', 'Sequencer') : '');
+    // v0.8.8: 시퀀서 이름(Check · Step Run …)은 영어 — 한국어 이름과 지금 단계 뜻
+    core.html(core.bind('pqSeq', root), conn && t.state && qn && qn !== t.state.name
+      ? core.chip(qn, 'off', w.UI.seqKo(q.code), ['시퀀서 상태', 'PLC 시퀀서 단계 — 장비 상태와 다를 때만 보임']) : '');
     // v0.7.0(P7): 남은 PC 끊김 트립 — 작은 표시. v0.7.1(U4): 짧은 글 'Trip'(자세한 것은 툴팁)
     var trip = conn && t.plc && t.plc.pc_trip;
     core.html(core.bind('pqTrip', root), trip && t.state
-      ? core.chip('Trip', 'warn', 'PC Trip — ' + tripTip(t.plc, t.state.code === ST_SAFE_STOP)) : '');
+      ? core.chip('Trip', 'warn', 'PC Trip — ' + tripTip(t.plc, t.state.code === ST_SAFE_STOP), ['PC 트립', 'PC 끊김 트립이 남아 있음']) : '');
 
     var p = conn ? (t.process || {}) : {};
     var run = !!p.running;
