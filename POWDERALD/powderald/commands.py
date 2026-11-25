@@ -540,6 +540,8 @@ async def refresh_plc_recipe():
         return
     info = R.from_plc_words(words)
     info["name"] = storage.find_by_number(info["number"]) or ""
+    # v0.8.9: 화면의 PLC Check 칩은 이 값이 아니라 live 의 D00029(Operation 탭 Table 칩과 같은 출처)를 따른다. 이 값도 같은
+    #   상태 사본에서 온다 — 올리기 직후에는 올리기가 방금 읽은 값이 사본에 얹혀 있다(PlcLink.read_fresh)
     info["plc_ok"] = bool(link.status[A.D_RECIPE_OK])
     state.plc_recipe = info
 

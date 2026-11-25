@@ -10,7 +10,7 @@ import pytest
 
 from peald import addresses as A
 from peald.modbus import ModbusClient, ModbusError, ModbusTimeout
-from conftest import free_port, wait_until
+from conftest import close_server, free_port, wait_until
 
 
 async def client_for(port, **kw):
@@ -85,6 +85,8 @@ async def test_timeout_drops_socket():
             await reader.read(-1)           # 응답을 보내지 않는다
         except Exception:                   # noqa: BLE001
             pass
+        finally:
+            writer.close()                  # ★ v0.8.9: 닫지 않으면 Python 3.12 의 wait_closed() 가 끝나지 않는다
 
     port = free_port()
     srv = await asyncio.start_server(swallow, "127.0.0.1", port)
@@ -96,8 +98,7 @@ async def test_timeout_drops_socket():
         assert not c.connected              # 소켓을 버렸다
         await c.close()
     finally:
-        srv.close()
-        await asyncio.wait_for(srv.wait_closed(), 2)
+        await close_server(srv)
 
 
 async def test_connect_failure_when_nothing_listens():

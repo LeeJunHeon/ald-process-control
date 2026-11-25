@@ -38,7 +38,7 @@ from powderald.convert import Converters, heater_raw
 from powderald.modbus import ModbusClient, ModbusError, ModbusTimeout
 from powderald.state import state
 
-from conftest import FakeSim, free_port, wait_until
+from conftest import FakeSim, close_server, free_port, wait_until
 from test_process import wired, notices, heater_channels  # noqa: F401 (픽스처)
 
 
@@ -64,6 +64,8 @@ async def _raw_server(mode):
                 await w.drain()
         except (asyncio.IncompleteReadError, ConnectionError, OSError):
             pass
+        finally:
+            w.close()                       # ★ v0.8.9: 남은 연결을 닫는다(Python 3.12 의 wait_closed() 가 기다린다)
     srv = await asyncio.start_server(client, "127.0.0.1", 0)
     return srv, srv.sockets[0].getsockname()[1]
 
@@ -90,7 +92,7 @@ async def test_modbus_malformed_response_drops_socket(mode, op):
         assert "응답 형식 오류" in str(e2.value)
     finally:
         await c.close()
-        srv.close()
+        await close_server(srv)
 
 
 async def test_modbus_exception_response_keeps_socket():
@@ -105,7 +107,7 @@ async def test_modbus_exception_response_keeps_socket():
         assert c.connected
     finally:
         await c.close()
-        srv.close()
+        await close_server(srv)
 
 
 def _plc_ctl():
@@ -138,7 +140,7 @@ async def test_plc_ctl_modbus_malformed_response_is_io_error(mode):
     try:
         await asyncio.to_thread(run)
     finally:
-        srv.close()
+        await close_server(srv)
 
 
 # ===================== 1. PLC 링크 — 응답 이상을 한 번씩 넣는 시뮬레이터 서버 =====================

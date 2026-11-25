@@ -529,7 +529,7 @@ class ProcessRunner:
         다르면 이유 문구, 같으면 ''."""
         link = self.state.link
         try:
-            head = await link.client.read_holding(A.D_RECIPE_SUM_PLC, 2)
+            head = await link.read_fresh(A.D_RECIPE_SUM_PLC, 2)        # v0.8.9: 상태 사본에도(Table 칩이 같은 값)
             no = (await link.client.read_holding(A.D_RCP_NO, 1))[0]
         except Exception as e:  # noqa: BLE001
             return f"PLC 표를 확인하지 못함 ({logger.clean(e, 120)})"
@@ -544,7 +544,7 @@ class ProcessRunner:
         머리는 맞는데 첫 블록·그룹·스텝 항목이 틀리면 시작 때 적재에서 거절된다."""
         link = self.state.link
         try:
-            head = await link.client.read_holding(A.D_RECIPE_SUM_PLC, 2)
+            head = await link.read_fresh(A.D_RECIPE_SUM_PLC, 2)        # v0.8.9: 상태 사본에도(Table 칩이 같은 값)
             a0 = (await link.client.read_holding(A.D_ALARM0, 1))[0]
             # ★ 래더는 결과 3 을 그 스캔에 쓰고 b13 은 다음 스캔 P35 에서 공개한다 — 몇 스캔 더 본다
             for _ in range(3):

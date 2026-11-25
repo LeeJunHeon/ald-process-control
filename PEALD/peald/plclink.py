@@ -120,6 +120,7 @@ class PlcLink:
         self.write_ok = False
         self.client.write_guard = lambda: not self.write_ok
         self.status = [0] * A.STATUS_COUNT      # 마지막으로 읽은 상태 영역
+        self._fresh = None                      # v0.8.9: (요청 시각, 자리, 값) — 직접 읽어 사본에 얹은 상태 영역 값
         self.applied = [0] * A.APPLIED_COUNT    # PLC 가 실제로 반영한 값 (읽기 전용 영역)
         self.display = [0] * A.DISPLAY_COUNT    # 실제 출력 중인 설정값
         self.cmd_regs = []                      # D01000~D01042 되읽은 값 (1 s)
@@ -130,6 +131,7 @@ class PlcLink:
 
         self._cmd_no = 0
         self._cmd_lock = asyncio.Lock()
+        self._rcp_lock = asyncio.Lock()        # v0.8.9: 레시피 올리기 ↔ 레시피 영역 되읽기(요약) 순서
         self._cmd_seq = 0               # SEQ_CODES 명령을 보낼 때마다(시작·끝) +1 — 주기 비교에서 뺀다
         self.pending_toasts = []        # v0.8.2: (수준, 글) — PLC 가 스스로 지운 요청. event_loop 가 모든 화면에 토스트로
         self._seen = None               # (반영 밸브, 반영 보조, 그때의 _cmd_seq)
@@ -263,6 +265,7 @@ class PlcLink:
         self.connected = False
         self.write_ok = False
         self.status = [0] * A.STATUS_COUNT
+        self._fresh = None
         self.display = [0] * A.DISPLAY_COUNT
         self.cmd_regs = []
         self._seen = None
@@ -522,6 +525,15 @@ class PlcLink:
         t0 = time.monotonic()
         regs = await self.client.read_holding(A.STATUS_BASE, A.STATUS_COUNT)
         self.rtt_ms = int((time.monotonic() - t0) * 1000)
+        f = self._fresh
+        if f is not None:
+            if t0 < f[0]:
+                # ★ v0.8.9: 이 주기 읽기는 직접 읽기보다 먼저 보냈다(요청은 보낸 순서대로 처리된다) — 직접 읽은 값이 더 새롭다.
+                #   끝나는 것이 늦어도(바쁜 이벤트 루프) 그 값을 옛 값으로 덮지 않는다
+                regs = list(regs)
+                regs[f[1]:f[1] + len(f[2])] = f[2]
+            else:
+                self._fresh = None
         self.status = regs
         self._check_id(regs)                # ★ 매 읽기마다 — ID 가 바뀌면 즉시 쓰기를 멈춘다
         hb = regs[A.D_PLC_HB]
@@ -640,6 +652,23 @@ class PlcLink:
             return False
         return (time.monotonic() - self._plc_hb_at) <= PLC_HB_STALL_S
 
+    # ===================== 상태 영역 직접 읽기 (v0.8.9) =====================
+    async def read_fresh(self, addr: int, count: int):
+        """상태 영역(D00000~D00080)의 일부를 직접 읽고, 읽은 값을 사본(self.status)에도 바로 얹는다.
+        ★ 같은 사실은 한 출처 — 직접 읽어 확인한 직후에 화면 · 판단이 한 주기 묵은 주기 읽기 값을 내지 않게
+          (예: 레시피를 올려 D00029 = 1 을 확인했는데 화면은 '✕ PLC Check NG'). 그보다 먼저 보낸 주기 읽기가 나중에
+          끝나도 덮지 않는다(_read_status 가 요청 시각을 비교)."""
+        t_q = time.monotonic()
+        regs = await self.client.read_holding(addr, count)
+        i0 = addr - A.STATUS_BASE
+        if 0 <= i0 and i0 + count <= A.STATUS_COUNT and self.connected:
+            vals = [int(v) & 0xFFFF for v in regs]
+            s = list(self.status)
+            s[i0:i0 + count] = vals
+            self.status = s
+            self._fresh = (t_q, i0, vals)
+        return regs
+
     # ===================== 레시피 올리기 =====================
     async def upload_recipe(self, words, checksum: int):
         """스텝·블록·그룹 영역을 먼저 쓰고 헤더를 마지막에 쓴다 → 되읽어 비교 →
@@ -650,6 +679,13 @@ class PlcLink:
         반환: (성공, 설명)"""
         if self.blocked_reason():
             return False, self.blocked_reason()
+        # ★ v0.8.9: 올리는 동안(쓰기 ~ PLC 검사 통과 확인)은 레시피 영역 되읽기(read_recipe_area — '지금 PLC' 요약)가 기다린다 —
+        #   반쯤 올라간 표나 PLC 가 아직 검사하지 않은 표를 읽어 화면에 '✕ PLC Check NG' 를 잠깐 내지 않게.
+        #   읽는 순서만 바뀐다(읽고 쓰는 주소 · 값은 그대로)
+        async with self._rcp_lock:
+            return await self._upload_recipe(words, checksum)
+
+    async def _upload_recipe(self, words, checksum: int):
         body_from = A.D_RCP_STEP_BASE - A.RCP_SUM_BASE
         try:
             async with self._cmd_lock:
@@ -664,12 +700,14 @@ class PlcLink:
 
             # PLC 는 대기 중 1 s 마다 검사한다 — 쓰기 직후 값은 이전 레시피 것일 수 있다.
             deadline = time.monotonic() + 3.0
+            # ★ v0.8.9: 읽은 합계 · 통과(D00028 · D00029)는 상태 사본에도 바로 얹는다(read_fresh) — 올린 직후 화면의
+            #   PLC Check · Table 칩이 한 주기 묵은 '불합격' 을 내지 않게
             while time.monotonic() < deadline:
-                regs = await self.client.read_holding(A.D_RECIPE_SUM_PLC, 2)
+                regs = await self.read_fresh(A.D_RECIPE_SUM_PLC, 2)
                 if regs[0] == (checksum & 0xFFFF) and regs[1] == 1:
                     return True, "PLC 검사 통과"
                 await asyncio.sleep(0.1)
-            regs = await self.client.read_holding(A.D_RECIPE_SUM_PLC, 2)
+            regs = await self.read_fresh(A.D_RECIPE_SUM_PLC, 2)
             return False, (f"PLC 표 검사에 실패함 "
                            f"(PLC 합계 {regs[0]:#06x} / 보낸 합계 {checksum:#06x}, 통과 {regs[1]})")
         except (ModbusTimeout, ModbusError, OSError) as e:
@@ -680,7 +718,8 @@ class PlcLink:
         if not self.connected:
             return None
         try:
-            return await self.client.read_holding(A.RCP_SUM_BASE, A.RCP_AREA_COUNT)
+            async with self._rcp_lock:              # v0.8.9: 올리는 중이면 끝난 뒤에 읽는다
+                return await self.client.read_holding(A.RCP_SUM_BASE, A.RCP_AREA_COUNT)
         except (ModbusTimeout, ModbusError, OSError):
             return None
 

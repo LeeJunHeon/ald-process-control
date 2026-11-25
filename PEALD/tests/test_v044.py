@@ -24,7 +24,7 @@ from peald.convert import Converters
 from peald.process import ProcessRunner, IDLE, BASE_WAIT
 from peald.state import state
 
-from conftest import o3_line_live, valve_permit_live, wait_until, free_port
+from conftest import close_server, o3_line_live, valve_permit_live, wait_until, free_port
 
 pytest.importorskip("fastapi.testclient")
 from fastapi.testclient import TestClient          # noqa: E402
@@ -361,20 +361,24 @@ class DropProxy:
         self.dropped = 0
         self.server = None
         self.port = 0
+        self._writers = set()       # v0.8.9: 남은 연결(멈출 때 닫는다)
 
     async def start(self):
         self.server = await asyncio.start_server(self._client, "127.0.0.1", 0)
         self.port = self.server.sockets[0].getsockname()[1]
 
     async def stop(self):
-        self.server.close()
+        # ★ v0.8.9: 남은 연결을 닫고 서버 닫힘을 기다린다(Python 3.12 의 wait_closed() 는 열린 연결을 기다린다)
+        await close_server(self.server, self._writers)
 
     async def _client(self, cr, cw):
+        self._writers.add(cw)
         try:
             ur, uw = await asyncio.open_connection("127.0.0.1", self.target)
         except OSError:
             cw.close()
             return
+        self._writers.add(uw)
 
         async def up():
             try:

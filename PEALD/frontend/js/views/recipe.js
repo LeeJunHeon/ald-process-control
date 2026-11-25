@@ -32,6 +32,7 @@
   var PENDING_MS = 5000;
   var reqNo = 0;            // 검증 요청 번호 — 마지막 요청의 답만 쓴다(늦게 온 옛 답이 덮지 않게)
   var lastPlcConn = null;
+  var lastPlcOk = null;     // v0.8.9: 마지막으로 본 live D00029(PLC Check 칩)
 
   /* ===================== 서버에서 오는 것 ===================== */
   w.app.on('recipe', function (m) {
@@ -178,7 +179,9 @@
       : run ? '공정 중 — 저장·올리기는 공정이 끝난 뒤에 가능'
         : (flow ? '시작 절차 진행 중 — 끝나거나 대기 취소 뒤에 바꿀 수 있음' : ''));
     var conn = core.plcOk() + '|' + core.offline;           // PLC 끊김 ↔ 서버 끊김도 다시 그린다
-    if (conn !== lastPlcConn) { lastPlcConn = conn; drawPlcRow(core.state || {}); }
+    // v0.8.9: PLC Check 칩은 live 의 D00029 를 따른다 — 그 값이 바뀌어도 다시 그린다
+    var ok = t.seq && t.seq.recipe_ok != null ? !!t.seq.recipe_ok : null;
+    if (conn !== lastPlcConn || (ok !== null && ok !== lastPlcOk)) { lastPlcConn = conn; drawPlcRow(core.state || {}); }
     var nb = d.querySelector('[data-rcbtn="new"]');
     if (nb) nb.disabled = false;
   }
@@ -198,11 +201,18 @@
     }).join('') : '<div class="empty">저장된 레시피가 없음 — [New] 누르기 필요</div>');
   }
 
-  /** 지금 PLC 에 올라가 있는 레시피 한 줄. */
+  /** 지금 PLC 에 올라가 있는 레시피 한 줄.
+   *  ★ v0.8.9: PLC Check OK/NG 는 Operation 탭 Table 칩과 같은 실시간 상태(live 의 D00029 — seq.recipe_ok)를 따른다 —
+   *    두 칩이 어긋날 수 없다. 예전에는 되읽기 요약(plc_recipe.plc_ok — 그때의 상태 사본)을 써서, 올리기 직후 사본이 한 주기
+   *    묵었으면 다음 되읽기(5 s)까지 '✕ PLC Check NG' 가 남았다. 요약(이름 · 번호 · 스텝 · 블록 · 합계)은 되읽기 그대로.
+   *    PLC 가 끊기면 마지막으로 본 D00029 (본 적이 없으면 요약 값). */
   function drawPlcRow(s) {
     var e = core.bind('rcPlc');
     if (!e) return;
     var p = s.plc_recipe || {};
+    var seq = (s.live || {}).seq;
+    if (seq && seq.recipe_ok != null && core.plcOk()) lastPlcOk = !!seq.recipe_ok;
+    var okNow = lastPlcOk != null ? lastPlcOk : !!p.plc_ok;
     // ★ PLC 가 끊겼으면 마지막으로 읽은 것일 뿐이다 — 흐리게 · 'PLC 끊김'
     var conn = core.plcOk();
     var row = e.closest('.plcrow');
@@ -214,7 +224,7 @@
       core.html(e, pre + '<span class="dim">PLC 에 올라간 레시피 표가 없음(번호 0)</span>');
       return;
     }
-    core.html(e, pre + core.chip(p.plc_ok ? 'PLC Check OK' : '✕ PLC Check NG', p.plc_ok ? 'ok' : 'warn') +
+    core.html(e, pre + core.chip(okNow ? 'PLC Check OK' : '✕ PLC Check NG', okNow ? 'ok' : 'warn') +
       ' <b>' + core.esc(p.name || '(이름 모름)') + '</b>' +
       ' <span class="mono dim">' + T('v.number') + ' ' + core.esc(p.number) + ' · ' + T('v.step') + ' ' + core.esc(p.step_count) +
       ' · ' + T('v.block') + ' ' + core.esc(p.block_count) + ' · Sum ' + fmt.hex16(p.checksum) + '</span>' +

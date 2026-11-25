@@ -81,6 +81,20 @@ def free_port() -> int:
         return s.getsockname()[1]
 
 
+async def close_server(srv, writers=(), timeout=2.0):
+    """시험이 세운 asyncio 서버를 닫는다 — 남은 연결(writers)을 먼저 닫고 서버를 닫은 뒤 닫힘을 기다린다.
+    ★ v0.8.9: Python 3.12 의 Server.wait_closed() 는 남은 연결이 모두 닫힐 때까지 기다린다(3.13 은 아니다) —
+      핸들러가 writer 를 닫지 않으면 3.12 에서만 시간 초과가 난다. 그래서 시험 서버의 핸들러는 끝날 때 writer 를 닫고,
+      뒷정리는 이 함수로 한다(프로그램의 시뮬레이터 stop() 과 같은 순서)."""
+    for w in list(writers):
+        try:
+            w.close()
+        except Exception:  # noqa: BLE001
+            pass
+    srv.close()
+    await asyncio.wait_for(srv.wait_closed(), timeout)
+
+
 @pytest.fixture
 async def sim(cfg):
     """내장 시뮬레이터 + Modbus 서버. 배속을 올려 대기 시간을 줄인다."""

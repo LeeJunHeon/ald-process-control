@@ -8,6 +8,9 @@
  *   레시피: 그때 레시피 사본(읽기 전용).
  * ★ 화면에서 지우기는 두지 않는다 — 정리는 보존 기간으로만 한다.
  * ★ 열기 · 표 요청마다 번호를 붙여 가장 최근 요청의 응답만 그린다(늦게 온 옛 응답이 덮지 않게).
+ * ★ v0.8.9: 목록은 서버를 따른다 — 탭에 들어올 때 · 기록이 시작되거나 끝날 때(live 의 datalog.active · file 이 바뀔 때) ·
+ *   [Refresh] 때 다시 읽는다(주기 폴링 없음). 다시 읽어도 고른 기록 · 목록 스크롤 · 날짜 · 글 필터 · 그래프 확대 구간은 그대로.
+ *   열어 둔 기록이 '기록 중' 이었다가 끝나면 상세(결과 · 그래프 · 표)도 다시 읽는다.
  * ★ 한 그래프 안 선끼리 색이 겹치지 않고, 설정값은 그 현재값과 같은 색의 점선(chart.js colorMap).
  * ============================================================ */
 (function (w, d) {
@@ -21,7 +24,10 @@
   var charts = {};
   var hidden = {};
   var zoom = null;          // [x0, x1] 초
-  var openNo = 0, tableNo = 0;
+  var openNo = 0, tableNo = 0, listNo = 0;
+  var seenTab = '';         // v0.8.9: 마지막으로 본 탭 — 이 탭에 들어오는 순간을 안다
+  var dlSig = null;         // v0.8.9: 마지막으로 본 기록 상태(live 의 datalog.active · file)
+  var stale = false;        // v0.8.9: 기록이 시작 · 끝나 목록이 서버와 다를 수 있다 — 이 탭이면 바로, 아니면 들어올 때 읽는다
 
   function render() {
     ['p', 'm', 't', 'x'].forEach(function (k) {
@@ -35,21 +41,61 @@
     });
     folderLock();
     if (core.tab === 'datalog') {
-      if (!items.length) refresh();
+      if (entering() || stale) refresh();
       draw();
     }
   }
 
+  /** 이 탭에 막 들어왔나(탭 전환 때 core 가 render 를 부른다 — 전체 상태 때의 render 와 가른다) */
+  function entering() {
+    var e = core.tab === 'datalog' && seenTab !== 'datalog';
+    seenTab = core.tab;
+    return e;
+  }
+
+  /** live 마다 — 기록이 시작되거나 끝났으면(datalog.active · file) 목록을 다시 읽는다. */
+  function update(t) {
+    folderLock();
+    var dl = t && !t.offline ? t.datalog : null;
+    if (dl) {
+      var sig = (dl.active ? '1' : '0') + '|' + (dl.file || '');
+      if (dlSig !== null && sig !== dlSig) stale = true;
+      dlSig = sig;
+    }
+    var e = entering();
+    if (core.tab === 'datalog' && (e || stale)) refresh();
+  }
+
   function refresh() {
+    stale = false;
+    var my = ++listNo;
     fetch('api/datalog/list').then(function (r) { return r.json(); }).then(function (js) {
-      items = js.items || [];
-      paintList();
-    }).catch(function () { core.toast('데이터 로그 목록을 읽지 못함', 'warn'); });
+      if (my !== listNo) return;            // ★ 가장 최근 요청의 목록만(늦게 온 옛 목록이 덮지 않게)
+      var next = js.items || [];
+      var was = find(items, cur), now = find(next, cur);
+      var same = JSON.stringify(next) === JSON.stringify(items);
+      items = next;
+      if (!same) paintList();
+      // 열어 둔 기록이 끝났거나(기록 중 → 끝 결과) 내용이 바뀌었으면 상세도 다시 — 확대 구간 · 보기 · 표 쪽은 그대로
+      if (cur && was && now && (was.writing !== now.writing || was.result !== now.result || was.rows !== now.rows)) {
+        open(cur, true);
+      }
+    }).catch(function () {
+      if (my === listNo) core.toast('데이터 로그 목록을 읽지 못함', 'warn');
+    });
+  }
+
+  function find(list, name) {
+    if (!name) return null;
+    for (var i = 0; i < list.length; i++) if (list[i].name === name) return list[i];
+    return null;
   }
 
   function paintList() {
     var box = core.bind('dlList');
     if (!box) return;
+    // v0.8.9: 다시 그려도 보던 자리(맨 위가 아니면 보던 기록이 같은 높이) · 포커스를 지킨다
+    var keep = listAnchor(box);
     var day = (core.bind('dlDate') || {}).value || '';
     var txt = ((core.bind('dlText') || {}).value || '').trim().toLowerCase();
     var list = items.filter(function (it) {
@@ -76,10 +122,41 @@
         '<span class="dim right">' + (it.took_s != null ? fmt.hms(it.took_s) : fmt.DASH) +
         (it.rows != null ? ' · ' + core.esc(it.rows) + ' rows' : '') + (it.guessed ? ' (추정)' : '') + '</span></div></div>';
     }).join('') || '<div class="empty">데이터 로그가 없음</div>';
+    listRestore(box, keep);
   }
 
-  function open(name) {
-    cur = name; zoom = null; offset = 0;
+  /** 목록의 보던 자리 — {top, name(칸 위 끝에 걸린 첫 기록), dy(그 기록의 칸 안 높이)} · 포커스가 있던 기록 */
+  function listAnchor(box) {
+    var a = { top: box.scrollTop, name: '', dy: 0, focus: '' };
+    var f = d.activeElement;
+    if (f && box.contains(f) && f.dataset) a.focus = f.dataset.dlname || '';
+    if (a.top > 0) {
+      var y0 = box.getBoundingClientRect().top;
+      var rows = box.querySelectorAll('[data-dlname]');
+      for (var i = 0; i < rows.length; i++) {
+        var r = rows[i].getBoundingClientRect();
+        if (r.bottom > y0) { a.name = rows[i].dataset.dlname; a.dy = r.top - y0; break; }
+      }
+    }
+    return a;
+  }
+  function listRestore(box, a) {
+    var byName = function (n) {
+      var rows = box.querySelectorAll('[data-dlname]');
+      for (var i = 0; i < rows.length; i++) if (rows[i].dataset.dlname === n) return rows[i];
+      return null;
+    };
+    box.scrollTop = a.top;                                // 맨 위였으면 맨 위 — 새 기록이 위에 보인다
+    var r = a.name ? byName(a.name) : null;
+    if (r) box.scrollTop += (r.getBoundingClientRect().top - box.getBoundingClientRect().top) - a.dy;
+    var fr = a.focus ? byName(a.focus) : null;
+    if (fr && d.activeElement !== fr) { try { fr.focus({ preventScroll: true }); } catch (e) { /* 없음 */ } }
+  }
+
+  /** 기록 하나를 연다. keep(v0.8.9 — 같은 기록을 다시 읽을 때): 확대 구간 · 표 쪽 · 보기를 그대로 */
+  function open(name, keep) {
+    if (!keep || name !== cur) { zoom = null; offset = 0; }
+    cur = name;
     var my = ++openNo;
     paintList();
     core.setText('dlName', name);
@@ -240,6 +317,6 @@
     core.tip(fb, tip);
   }
 
-  core.register('datalog', { render: render, update: function () { folderLock(); } });
+  core.register('datalog', { render: render, update: update });
   w.viewDatalog = { refresh: refresh, open: open, charts: charts };
 })(window, document);
